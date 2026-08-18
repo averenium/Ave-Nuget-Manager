@@ -1,0 +1,125 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // ── Full one-shot build: ext host + webview ──────────────────────────────
+      "label": "build:all",
+      "type": "shell",
+      "command": "npm run build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": ["$tsc"]
+    },
+
+    {
+      // ── Extension host TypeScript only (fast re-build on change) ─────────────
+      "label": "build:ext",
+      "type": "shell",
+      "command": "npm run build:ext",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": ["$tsc"]
+    },
+
+    {
+      // ── Webview Vite build only ───────────────────────────────────────────────
+      "label": "build:webview",
+      "type": "shell",
+      "command": "npm run build:webview",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+
+    {
+      // ── Watch mode: starts tsc --watch + vite --watch in parallel ────────────
+      // Used by the "Run Extension (watch)" launch config.
+      // Reload the Extension Development Host with Ctrl+Shift+P → "Reload Window"
+      // after files rebuild.
+      "label": "build:watch",
+      "dependsOn": ["watch:ext", "watch:webview"],
+      "dependsOrder": "parallel",
+      "group": "build",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+
+    {
+      "label": "watch:ext",
+      "type": "shell",
+      "command": "npm run watch:ext",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "label": "tsc watch"
+      },
+      "problemMatcher": {
+        "owner": "typescript",
+        "source": "ts",
+        "applyTo": "closedDocuments",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": "$tsc",
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Starting compilation in watch mode|Starting incremental compilation",
+          "endsPattern": "Watching for file changes|Found 0 errors"
+        }
+      }
+    },
+
+    {
+      "label": "watch:webview",
+      "type": "shell",
+      "command": "npm run watch:webview",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "label": "vite watch"
+      },
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(error|warning):\\s+(.*)$",
+          "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "vite",
+          "endsPattern": "built in"
+        }
+      }
+    },
+
+    {
+      // ── Run tests via terminal ────────────────────────────────────────────────
+      "label": "test",
+      "type": "shell",
+      "command": "npm test",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

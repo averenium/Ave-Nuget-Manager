@@ -1,0 +1,110 @@
+{
+  "name": "averenium-nuget-manager",
+  "displayName": "Averenium NuGet Manager",
+  "description": "NuGet package manager for .NET solutions and projects, inspired by JetBrains Rider",
+  "version": "0.1.0",
+  "publisher": "averenium",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["nuget", "dotnet", "csharp", "fsharp", "package manager"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Averenium NuGet Manager",
+      "properties": {
+        "averenium.nugetManager.includePrerelease": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include pre-release packages in search results"
+        },
+        "averenium.nugetManager.enrichConcurrency": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "Maximum number of parallel dotnet CLI processes when fetching latest package versions"
+        }
+      }
+    },
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "averenium-nuget-panel",
+          "title": "NuGet Manager",
+          "icon": "$(package)"
+        }
+      ]
+    },
+    "views": {
+      "averenium-nuget-panel": [
+        {
+          "id": "averenium.nugetManagerView",
+          "name": "NuGet Manager",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "averenium.nugetManager.open",
+        "title": "NuGet Management",
+        "category": "C# Solution / C# Project"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "averenium.nugetManager.open",
+          "when": "resourceExtname =~ /\\.(sln|slnx|csproj|fsproj)$/ || explorerResourceIsFolder",
+          "group": "navigation@100"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "averenium.nugetManager.open",
+          "title": "C# Solution / C# Project: NuGet Management"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run build:ext && npm run build:webview",
+    "build:ext": "tsc -p tsconfig.json",
+    "build:webview": "vite build --config vite.webview.config.ts",
+    "watch": "npm run watch:ext & npm run watch:webview",
+    "watch:ext": "tsc -p tsconfig.json --watch",
+    "watch:webview": "vite build --config vite.webview.config.ts --watch",
+    "test": "jest --runInBand",
+    "test:unit": "jest --testPathPatterns='src/test/unit'",
+    "test:property": "jest --testPathPatterns='src/test/property'",
+    "lint": "eslint src --ext .ts,.tsx",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "fast-check": "4.8.0"
+  },
+  "devDependencies": {
+    "@types/jest": "30.0.0",
+    "@types/node": "26.1.0",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@types/vscode": "1.85.0",
+    "@vitejs/plugin-react": "6.0.3",
+    "@vscode/vsce": "3.9.2",
+    "jest": "30.4.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "ts-jest": "29.4.11",
+    "typescript": "6.0.3",
+    "vite": "8.1.3",
+    "vitest": "4.1.9",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/user-event": "14.6.1",
+    "jsdom": "29.1.1"
+  }
+}

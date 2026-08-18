@@ -1,0 +1,14 @@
+{
+  "recommendations": [
+    // TypeScript / Node tooling
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+
+    // Extension authoring helpers
+    "connor4312.esbuild-problem-matchers",
+
+    // Test runner UI
+    "hbenl.vscode-test-explorer",
+    "kavod-io.vscode-jest-test-adapter"
+  ]
+}

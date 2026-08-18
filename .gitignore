@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+*.vsix
+*.js.map
+.DS_Store
+Thumbs.db
+/tmp/
+*.log

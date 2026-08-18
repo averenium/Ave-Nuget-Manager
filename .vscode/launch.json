@@ -1,0 +1,60 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // ── Main debug config: F5 builds everything then launches Extension Host ──
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ],
+      "preLaunchTask": "build:all",
+      "sourceMaps": true,
+      "smartStep": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/dist/**",
+        "!**/node_modules/**"
+      ]
+    },
+    {
+      // ── Watch mode: rebuild on save, relaunch manually with Ctrl+Shift+F5 ──
+      "name": "Run Extension (watch)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ],
+      "preLaunchTask": "build:watch",
+      "sourceMaps": true,
+      "smartStep": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/dist/**",
+        "!**/node_modules/**"
+      ]
+    },
+    {
+      // ── Run Jest tests inside the debugger ──
+      "name": "Debug Tests",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/jest",
+      "runtimeArgs": [
+        "--runInBand",
+        "--no-coverage"
+      ],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "sourceMaps": true,
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ]
+    }
+  ]
+}

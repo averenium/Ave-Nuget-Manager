@@ -3,6 +3,8 @@ import { useNugetManager } from '../context/NugetManagerContext';
 import { PackageRow } from './PackageRow';
 import { matchesQuery, sortByRelevance } from '../utils/search';
 import type { InstalledPackage } from '../../types';
+import { findingsAffectingPackage, vulnerabilityAffectRank } from '../../vulnerabilities';
+import { compareSemVer } from '../../semver';
 
 function PackagesSkeleton() {
   return (
@@ -28,9 +30,19 @@ function groupById(packages: InstalledPackage[]): Map<string, InstalledPackage[]
   return map;
 }
 
+function packageHasUpdate(pkg: InstalledPackage): boolean {
+  if (!pkg.latestVersion || !pkg.resolvedVersion) return false;
+  return compareSemVer(pkg.latestVersion, pkg.resolvedVersion) > 0;
+}
+
+function withUnionedDeps(entries: InstalledPackage[]): InstalledPackage {
+  const deps = [...new Set(entries.flatMap((e) => e.dependencies ?? []))];
+  return deps.length > 0 ? { ...entries[0], dependencies: deps } : entries[0];
+}
+
 export function InstalledList() {
   const { state, dispatch } = useNugetManager();
-  const { installed, implicit, searchQuery, isLoadingPackages } = state.packages;
+  const { installed, implicit, searchQuery, isLoadingPackages, vulnerabilities } = state.packages;
 
   // implicit versions by parent package id
   const implicitByParent: Record<string, string[]> = {};
@@ -45,13 +57,25 @@ export function InstalledList() {
 
   // Deduplicate by id — use the first entry as the representative row
   const grouped = groupById(filtered);
-  const uniquePackages = [...grouped.values()].map((entries) => entries[0]);
+  const uniquePackages = [...grouped.values()].map(withUnionedDeps);
 
   const displayed = searchQuery.length >= 2
     ? sortByRelevance(uniquePackages, searchQuery)
-    : uniquePackages;
+    : [...uniquePackages].sort((a, b) => {
+      const va = vulnerabilityAffectRank(vulnerabilities, a.id, a.dependencies);
+      const vb = vulnerabilityAffectRank(vulnerabilities, b.id, b.dependencies);
+      if (va !== vb) return vb - va;
+      const ua = packageHasUpdate(a) ? 1 : 0;
+      const ub = packageHasUpdate(b) ? 1 : 0;
+      if (ua !== ub) return ub - ua;
+      return a.id.localeCompare(b.id);
+    });
 
   const totalUnique = groupById(installed).size;
+  const vulnPkgCount = uniquePackages.filter((pkg) => {
+    const { direct, via } = findingsAffectingPackage(vulnerabilities, pkg.id, pkg.dependencies);
+    return direct.length + via.length > 0;
+  }).length;
 
   return (
     <section className="pkg-section" aria-label="Installed packages">
@@ -61,6 +85,7 @@ export function InstalledList() {
           <span>
             {displayed.length}
             {displayed.length !== totalUnique && `/${totalUnique}`}
+            {vulnPkgCount > 0 ? ` · ${vulnPkgCount} vuln` : ''}
           </span>
         )}
       </div>
@@ -82,6 +107,7 @@ export function InstalledList() {
                 selected={state.detail.selectedPackageId === pkg.id}
                 implicitVersions={implicitByParent[pkg.id]}
                 allProjectEntries={allEntries}
+                findings={vulnerabilities}
                 onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
               />
             );

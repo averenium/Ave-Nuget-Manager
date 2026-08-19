@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useReducer, useCallback } from 'react';
-import { compareSemVer } from '../utils/search';
+import { compareSemVer } from '../../semver';
+import { fileNameNoExt } from '../utils/pathUtils';
+import { pathsEqual, packageIdsEqual } from '../../pathCompare';
+import { formatBatchUpdateError, preserveInstalledEnrichment } from '../../batchUpdates';
 import type {
   WorkspaceScope,
   InstalledPackage,
@@ -9,22 +12,66 @@ import type {
   PackageSource,
   NuGetConfigFile,
   LogEntry,
+  OperationFailure,
+  BatchUpdateJob,
+  VulnerabilityFinding,
 } from '../../types';
 import type { ExtensionMessage } from '../../messages';
+import { sendMessage, onMessage } from '../vscodeApi';
 
 /** Returns true only when latestVersion is strictly newer than installed version */
 function hasUpdate(pkg: InstalledPackage): boolean {
   if (!pkg.latestVersion || !pkg.resolvedVersion) return false;
-  // compareSemVer > 0 means latestVersion > resolvedVersion
   return compareSemVer(pkg.latestVersion, pkg.resolvedVersion) > 0;
 }
-import { sendMessage, onMessage } from '../vscodeApi';
 
-// ─── State shape ──────────────────────────────────────────────────────────────
+function formatOperationError(msg: {
+  operation: 'install' | 'remove';
+  packageId: string;
+  failures: OperationFailure[];
+  rollbackApplied?: boolean;
+  canRollback?: boolean;
+}): string {
+  const verb = msg.operation === 'install' ? 'Install/update' : 'Remove';
+  const header = `${verb} of ${msg.packageId} failed`;
+  const rollbackNote = msg.rollbackApplied
+    ? 'PackageReference was rolled back to the previous version.'
+    : msg.canRollback
+      ? 'Project file still has the new version. Use Rollback to restore the previous PackageReference.'
+      : null;
+  const blocks = msg.failures.map((f) => {
+    const name = fileNameNoExt(f.projectPath);
+    return `${name}:\n${f.stderr}`;
+  });
+  return [header, rollbackNote, ...blocks].filter(Boolean).join('\n\n');
+}
+
+function withoutLoading(set: Set<string>, paths: string[]): Set<string> {
+  const next = new Set(set);
+  for (const existing of set) {
+    if (paths.some((p) => pathsEqual(existing, p))) next.delete(existing);
+  }
+  return next;
+}
+
+function withoutPaths(errors: Record<string, string>, paths: string[]): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(errors).filter(([k]) => !paths.some((p) => pathsEqual(k, p))),
+  );
+}
+
+function setProjectVersion(
+  versions: Record<string, string>,
+  projectPath: string,
+  version: string,
+): Record<string, string> {
+  const existing = Object.keys(versions).find((k) => pathsEqual(k, projectPath));
+  return { ...versions, [existing ?? projectPath]: version };
+}
 
 export interface AppState {
   scope: WorkspaceScope | null;
-  activeTab: 'packages' | 'sources' | 'log';
+  activeTab: 'packages' | 'sources' | 'updates' | 'log';
   packages: {
     installed: InstalledPackage[];
     implicit: ImplicitPackage[];
@@ -36,6 +83,7 @@ export interface AppState {
     enrichProgress: { done: number; total: number } | null;
     /** True while dotnet list commands are in flight (before INSTALLED_PACKAGES arrives) */
     isLoadingPackages: boolean;
+    vulnerabilities: VulnerabilityFinding[];
   };
   sources: {
     configChain: NuGetConfigFile[];
@@ -43,6 +91,11 @@ export interface AppState {
   };
   log: {
     entries: LogEntry[];
+  };
+  updates: {
+    jobs: BatchUpdateJob[];
+    activeJobId: string | null;
+    versionsByPackageId: Record<string, string[]>;
   };
   detail: {
     selectedPackageId: string | null;
@@ -56,6 +109,7 @@ export interface AppState {
   };
   dotnetMissing: boolean;
   globalError: string | null;
+  pendingRollback: boolean;
 }
 
 const initialState: AppState = {
@@ -71,9 +125,11 @@ const initialState: AppState = {
     prerelease: true,
     enrichProgress: null,
     isLoadingPackages: false,
+    vulnerabilities: [],
   },
   sources: { configChain: [], allSources: [] },
   log: { entries: [] },
+  updates: { jobs: [], activeJobId: null, versionsByPackageId: {} },
   detail: {
     selectedPackageId: null,
     metadata: null,
@@ -86,6 +142,7 @@ const initialState: AppState = {
   },
   dotnetMissing: false,
   globalError: null,
+  pendingRollback: false,
 };
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -100,7 +157,8 @@ export type Action =
   | { type: 'SET_DETAIL_LOADING'; loading: boolean }
   | { type: 'SET_PROJECT_VERSION'; projectPath: string; version: string }
   | { type: 'SET_PROJECT_LOADING'; projectPath: string; loading: boolean }
-  | { type: 'SET_PROJECT_ERROR'; projectPath: string; error: string | null };
+  | { type: 'SET_PROJECT_ERROR'; projectPath: string; error: string | null }
+  | { type: 'DISMISS_GLOBAL_ERROR' };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -119,11 +177,23 @@ function reducer(state: AppState, action: Action): AppState {
         packages: { ...state.packages, selectedSources: action.sources },
       };
 
-    case 'SET_PRERELEASE':
+    case 'SET_PRERELEASE': {
+      const installed = state.packages.installed.map((pkg) => ({
+        ...pkg,
+        latestVersion: undefined,
+      }));
+      const unique = new Set(installed.map((pkg) => pkg.id.toLowerCase())).size;
       return {
         ...state,
-        packages: { ...state.packages, prerelease: action.prerelease },
+        packages: {
+          ...state.packages,
+          prerelease: action.prerelease,
+          installed,
+          enrichProgress: unique > 0 ? { done: 0, total: unique } : null,
+        },
+        updates: { ...state.updates, versionsByPackageId: {} },
       };
+    }
 
     case 'SELECT_PACKAGE':
       return {
@@ -158,7 +228,15 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'SET_PROJECT_LOADING': {
       const set = new Set(state.detail.projectLoadingSet);
-      action.loading ? set.add(action.projectPath) : set.delete(action.projectPath);
+      if (action.loading) {
+        set.add(action.projectPath);
+        return {
+          ...state,
+          globalError: null,
+          detail: { ...state.detail, projectLoadingSet: set },
+        };
+      }
+      set.delete(action.projectPath);
       return { ...state, detail: { ...state.detail, projectLoadingSet: set } };
     }
 
@@ -175,6 +253,9 @@ function reducer(state: AppState, action: Action): AppState {
         },
       };
 
+    case 'DISMISS_GLOBAL_ERROR':
+      return { ...state, globalError: null };
+
     case 'MSG':
       return applyExtensionMessage(state, action.msg);
 
@@ -189,6 +270,8 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       return {
         ...state,
         scope: msg.scope,
+        globalError: null,
+        pendingRollback: false,
         sources: { configChain: msg.configChain, allSources: msg.sources },
         packages: {
           ...state.packages,
@@ -198,21 +281,40 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           available: [],
           isLoadingPackages: true,
           enrichProgress: null,
+          vulnerabilities: [],
           selectedSources: msg.sources.filter((s) => s.enabled).map((s) => s.name),
           prerelease: msg.includePrerelease,
         },
+        updates: { ...state.updates, versionsByPackageId: {} },
       };
 
-    case 'INSTALLED_PACKAGES':
+    case 'INSTALLED_PACKAGES': {
+      let projectVersions = state.detail.projectVersions;
+      if (state.detail.selectedPackageId) {
+        for (const pkg of msg.packages) {
+          if (packageIdsEqual(pkg.id, state.detail.selectedPackageId)) {
+            projectVersions = setProjectVersion(projectVersions, pkg.projectPath, pkg.resolvedVersion);
+          }
+        }
+      }
+      const installed = preserveInstalledEnrichment(msg.packages, state.packages.installed);
+      const uniqueIds = new Set(installed.map((pkg) => pkg.id.toLowerCase()));
+      const withLatest = new Set(
+        installed.filter((pkg) => pkg.latestVersion).map((pkg) => pkg.id.toLowerCase()),
+      );
       return {
         ...state,
         packages: {
           ...state.packages,
-          installed: msg.packages,
+          installed,
           isLoadingPackages: false,
-          enrichProgress: { done: 0, total: msg.packages.length },
+          enrichProgress: uniqueIds.size === 0 || withLatest.size >= uniqueIds.size
+            ? null
+            : { done: withLatest.size, total: uniqueIds.size },
         },
+        detail: { ...state.detail, projectVersions },
       };
+    }
 
     case 'ENRICH_PROGRESS': {
       const finished = msg.done >= msg.total;
@@ -224,6 +326,12 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         },
       };
     }
+
+    case 'VULNERABILITIES':
+      return {
+        ...state,
+        packages: { ...state.packages, vulnerabilities: msg.findings },
+      };
 
     case 'PACKAGE_INFO_UPDATE': {
       // Update latestVersion + sourceName for all installed packages with this id
@@ -246,6 +354,38 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
     case 'IMPLICIT_PACKAGES':
       return { ...state, packages: { ...state.packages, implicit: msg.packages } };
 
+    case 'INSTALLED_PACKAGES_PATCH': {
+      let installed = [...state.packages.installed];
+      for (const patch of msg.packages) {
+        let found = false;
+        installed = installed.map((pkg) => {
+          if (packageIdsEqual(pkg.id, patch.id) && pathsEqual(pkg.projectPath, patch.projectPath)) {
+            found = true;
+            return {
+              ...pkg,
+              requestedVersion: patch.requestedVersion,
+              resolvedVersion: patch.resolvedVersion,
+            };
+          }
+          return pkg;
+        });
+        if (!found) installed.push(patch);
+      }
+      let projectVersions = state.detail.projectVersions;
+      if (state.detail.selectedPackageId) {
+        for (const patch of msg.packages) {
+          if (packageIdsEqual(patch.id, state.detail.selectedPackageId)) {
+            projectVersions = setProjectVersion(projectVersions, patch.projectPath, patch.resolvedVersion);
+          }
+        }
+      }
+      return {
+        ...state,
+        packages: { ...state.packages, installed, isLoadingPackages: false },
+        detail: { ...state.detail, projectVersions },
+      };
+    }
+
     case 'SEARCH_RESULTS':
       return {
         ...state,
@@ -258,11 +398,24 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         detail: { ...state.detail, metadata: msg.metadata, isLoading: false, error: null },
       };
 
-    case 'ALL_VERSIONS':
+    case 'ALL_VERSIONS': {
+      const key = msg.packageId.toLowerCase();
+      const selected = state.detail.selectedPackageId;
+      const matchesDetail = !!selected && packageIdsEqual(selected, msg.packageId);
       return {
         ...state,
-        detail: { ...state.detail, allVersions: msg.versions },
+        updates: {
+          ...state.updates,
+          versionsByPackageId: {
+            ...state.updates.versionsByPackageId,
+            [key]: msg.versions,
+          },
+        },
+        detail: !selected || matchesDetail
+          ? { ...state.detail, allVersions: msg.versions }
+          : state.detail,
       };
+    }
 
     case 'LOG_ENTRIES':
       return { ...state, log: { entries: msg.entries } };
@@ -279,17 +432,144 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
     case 'DOTNET_NOT_FOUND':
       return { ...state, dotnetMissing: true };
 
-    case 'ERROR':
+    case 'ERROR': {
+      const text = [msg.message, msg.details].filter(Boolean).join('\n');
+      const isListRefresh = msg.message === 'Failed to refresh package list';
+      const isRestore = msg.message === 'Restore failed';
+      if (isRestore) {
+        return {
+          ...state,
+          globalError: state.pendingRollback || state.globalError ? state.globalError : text,
+          packages: { ...state.packages, isLoadingPackages: false },
+        };
+      }
       return {
         ...state,
-        detail: { ...state.detail, isLoading: false, error: msg.message },
+        globalError: isListRefresh ? (state.globalError ?? text) : state.globalError,
+        packages: { ...state.packages, isLoadingPackages: false },
+        detail: {
+          ...state.detail,
+          isLoading: false,
+          error: isListRefresh || isRestore ? state.detail.error : text,
+        },
       };
+    }
 
     case 'OPERATION_SUCCESS':
-    case 'OPERATION_ERROR':
+      return {
+        ...state,
+        globalError: null,
+        pendingRollback: false,
+        packages: { ...state.packages, isLoadingPackages: false },
+        detail: {
+          ...state.detail,
+          projectErrors: withoutPaths(state.detail.projectErrors, msg.affectedProjects),
+          projectLoadingSet: withoutLoading(state.detail.projectLoadingSet, msg.affectedProjects),
+        },
+      };
+
+    case 'OPERATION_ERROR': {
+      const affected = [
+        ...msg.failures.map((f) => f.projectPath),
+        ...msg.succeededProjects,
+      ];
+      const projectErrors = { ...state.detail.projectErrors };
+      for (const f of msg.failures) {
+        projectErrors[f.projectPath] = f.stderr;
+      }
+      return {
+        ...state,
+        globalError: formatOperationError(msg),
+        pendingRollback: msg.canRollback === true,
+        packages: { ...state.packages, isLoadingPackages: false },
+        detail: {
+          ...state.detail,
+          projectErrors,
+          projectLoadingSet: withoutLoading(state.detail.projectLoadingSet, affected),
+        },
+      };
+    }
+
+    case 'ROLLBACK_COMPLETE':
+      return {
+        ...state,
+        globalError: null,
+        pendingRollback: false,
+        packages: { ...state.packages, isLoadingPackages: false },
+        detail: { ...state.detail, projectLoadingSet: new Set(), projectErrors: {} },
+      };
+
     case 'OPERATION_TIMEOUT':
-      // Packages will refresh via INSTALLED_PACKAGES / IMPLICIT_PACKAGES messages
-      return state;
+      return {
+        ...state,
+        globalError: `Operation timed out:\n${msg.command}`,
+        packages: { ...state.packages, isLoadingPackages: false },
+        detail: { ...state.detail, projectLoadingSet: new Set() },
+      };
+
+    case 'BATCH_UPDATE_STARTED':
+      return {
+        ...state,
+        activeTab: 'updates',
+        globalError: null,
+        updates: {
+          ...state.updates,
+          activeJobId: msg.job.id,
+          jobs: [msg.job, ...state.updates.jobs].slice(0, 10),
+        },
+      };
+
+    case 'BATCH_UPDATE_ITEM':
+      return {
+        ...state,
+        updates: {
+          ...state.updates,
+          jobs: state.updates.jobs.map((job) => {
+            if (job.id !== msg.jobId) return job;
+            return {
+              ...job,
+              items: job.items.map((item) =>
+                item.packageId === msg.packageId
+                  ? {
+                      ...item,
+                      status: msg.status,
+                      succeededProjects: msg.succeededProjects,
+                      completedProjects: msg.completedProjects ?? msg.succeededProjects,
+                      error: msg.error,
+                    }
+                  : item,
+              ),
+            };
+          }),
+        },
+      };
+
+    case 'BATCH_UPDATE_FINISHED': {
+      const jobs = state.updates.jobs.map((job) =>
+        job.id === msg.jobId ? { ...job, finishedAt: Date.now() } : job,
+      );
+      const job = jobs.find((j) => j.id === msg.jobId);
+      const dump = job ? formatBatchUpdateError(job.items, msg.canRollback) : null;
+      return {
+        ...state,
+        pendingRollback: msg.canRollback === true,
+        globalError: dump ?? state.globalError,
+        updates: { ...state.updates, jobs },
+      };
+    }
+
+    case 'REFRESH_STARTED':
+      return {
+        ...state,
+        globalError: null,
+        pendingRollback: false,
+        updates: {
+          ...state.updates,
+          jobs: state.updates.jobs.map((job) => (
+            job.finishedAt ? { ...job, stale: true } : job
+          )),
+        },
+      };
 
     default:
       return state;
@@ -308,10 +588,17 @@ const NugetManagerContext = createContext<NugetManagerContextValue | null>(null)
 
 export function NugetManagerProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const dispatchRef = React.useRef(dispatch);
+  dispatchRef.current = dispatch;
 
-  // Wire up incoming messages from the extension host
+  // Subscribe before WEBVIEW_READY so INIT_STATE is not lost.
   React.useEffect(() => {
-    const off = onMessage((msg) => dispatch({ type: 'MSG', msg }));
+    const off = onMessage((msg) => dispatchRef.current({ type: 'MSG', msg }));
+    const w = window as Window & { __nugetWebviewReady?: boolean };
+    if (!w.__nugetWebviewReady) {
+      w.__nugetWebviewReady = true;
+      sendMessage({ type: 'WEBVIEW_READY' });
+    }
     return off;
   }, []);
 

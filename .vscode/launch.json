@@ -21,7 +21,9 @@
       ]
     },
     {
-      // ── Watch mode: rebuild on save, relaunch manually with Ctrl+Shift+F5 ──
+      // ── Watch: tsc --watch + vite build --watch ─────────────────────────────
+      // Webview reloads when dist/webview/bundle.js changes.
+      // Host TS still needs Reload Window (Ctrl+R) in the Extension Development Host.
       "name": "Run Extension (watch)",
       "type": "extensionHost",
       "request": "launch",

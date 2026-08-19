@@ -29,16 +29,14 @@ export class CliRunner {
       const child = spawn('dotnet', command.args, {
         cwd: command.cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
-        // On Windows we need 'shell' for PATH resolution; on POSIX dotnet is a
-        // real executable so shell is not needed.
-        shell: process.platform === 'win32',
+        windowsHide: true,
       });
 
-      child.stdout.setEncoding('utf-8');
-      child.stderr.setEncoding('utf-8');
+      child.stdout?.setEncoding('utf-8');
+      child.stderr?.setEncoding('utf-8');
 
-      child.stdout.on('data', (chunk: string) => stdoutChunks.push(chunk));
-      child.stderr.on('data', (chunk: string) => stderrChunks.push(chunk));
+      child.stdout?.on('data', (chunk: string) => stdoutChunks.push(chunk));
+      child.stderr?.on('data', (chunk: string) => stderrChunks.push(chunk));
 
       // ── Timeout handling ─────────────────────────────────────────────────
       const timer = setTimeout(() => {

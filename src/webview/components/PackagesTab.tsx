@@ -1,19 +1,42 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { SourceFilterDropdown } from './SourceFilterDropdown';
 import { InstalledList } from './InstalledList';
 import { ImplicitList } from './ImplicitList';
 import { AvailableList } from './AvailableList';
 import { PackageDetailPanel } from './PackageDetailPanel';
+import { SplitPane } from './SplitPane';
+import { measureTextWidth } from '../utils/measureText';
+import { PrereleaseToggle } from './PrereleaseToggle';
 
 const DEBOUNCE_MS = 300;
 const MIN_QUERY_LEN = 2;
+const DEFAULT_LIST_RATIO = 0.5;
+const MIN_LIST_PX = 160;
+const MIN_DETAIL_PX = 180;
+const LIST_ROW_CHROME_PX = 50;
+const TITLE_GAP_PX = 6;
 
 export function PackagesTab() {
   const { state, dispatch, send } = useNugetManager();
-  const { searchQuery, selectedSources, prerelease, enrichProgress } = state.packages;
+  const { searchQuery, selectedSources, prerelease, enrichProgress, installed, implicit, available } = state.packages;
   const { allSources } = state.sources;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tabRef = useRef<HTMLDivElement>(null);
+  const [autoListWidthPx, setAutoListWidthPx] = useState<number | null>(null);
+
+  const titleRows = useMemo(() => {
+    const byId = new Map<string, string>();
+    const add = (id: string, source?: string) => {
+      const src = (source ?? '').toLowerCase();
+      const prev = byId.get(id) ?? '';
+      if (!byId.has(id) || src.length > prev.length) byId.set(id, src);
+    };
+    for (const pkg of installed) add(pkg.id, pkg.sourceName);
+    for (const pkg of implicit) add(pkg.id);
+    for (const pkg of available) add(pkg.id, pkg.sourceName);
+    return [...byId.entries()].map(([id, source]) => ({ id, source }));
+  }, [installed, implicit, available]);
 
   const doSearch = useCallback(
     (q: string, sources: string[], pr: boolean) => {
@@ -42,7 +65,6 @@ export function PackagesTab() {
     }
   };
 
-  // Re-search when sources or prerelease toggle changes
   useEffect(() => {
     if (searchQuery.length >= MIN_QUERY_LEN) {
       doSearch(searchQuery, selectedSources, prerelease);
@@ -55,9 +77,36 @@ export function PackagesTab() {
     [],
   );
 
+  useEffect(() => {
+    const el = tabRef.current;
+    if (!el) return;
+
+    const apply = () => {
+      const bodyWidth = el.clientWidth;
+      if (bodyWidth <= 0) return;
+      const cap = Math.floor(bodyWidth * DEFAULT_LIST_RATIO);
+      const max = Math.max(MIN_LIST_PX, bodyWidth - MIN_DETAIL_PX);
+      const cs = getComputedStyle(el);
+      const nameFont = `500 ${cs.fontSize} ${cs.fontFamily}`;
+      const sourceFont = `10px ${cs.fontFamily}`;
+      let contentW = 0;
+      for (const row of titleRows) {
+        let w = measureTextWidth(row.id, nameFont);
+        if (row.source) w += TITLE_GAP_PX + measureTextWidth(row.source, sourceFont);
+        if (w > contentW) contentW = w;
+      }
+      const desired = titleRows.length === 0 ? MIN_LIST_PX : contentW + LIST_ROW_CHROME_PX;
+      setAutoListWidthPx(Math.min(max, Math.max(MIN_LIST_PX, Math.round(Math.min(desired, cap)))));
+    };
+
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [titleRows]);
+
   return (
-    <div className="packages-tab">
-      {/* ── Toolbar: refresh + search + sources + prerelease ── */}
+    <div className="split-tab" ref={tabRef}>
       <div className="pkg-toolbar">
         <button
           className="pkg-toolbar__refresh"
@@ -83,40 +132,27 @@ export function PackagesTab() {
           onChange={(s) => dispatch({ type: 'SET_SELECTED_SOURCES', sources: s })}
         />
 
-        {/* Progress indicator — shown while enriching */}
         {enrichProgress && (
           <span className="pkg-toolbar__progress" aria-live="polite">
             {enrichProgress.done}/{enrichProgress.total}
           </span>
         )}
 
-        <label className="pkg-toolbar__prerelease">
-          <input
-            type="checkbox"
-            checked={prerelease}
-            onChange={(e) => {
-              dispatch({ type: 'SET_PRERELEASE', prerelease: e.target.checked });
-              send({ type: 'SET_PRERELEASE_SETTING', prerelease: e.target.checked });
-            }}
-          />
-          Pre-release
-        </label>
+        <PrereleaseToggle />
       </div>
 
-      {/* ── Split: list left / detail right ── */}
-      <div className="pkg-body">
-        <div className="packages-left">
-          <div className="packages-left__scroll">
+      <SplitPane
+        autoListWidthPx={autoListWidthPx}
+        splitLabel="Resize package list"
+        left={
+          <>
             <InstalledList />
             <ImplicitList />
             <AvailableList />
-          </div>
-        </div>
-
-        <div className="packages-right">
-          <PackageDetailPanel />
-        </div>
-      </div>
+          </>
+        }
+        right={<PackageDetailPanel />}
+      />
     </div>
   );
 }

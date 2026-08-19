@@ -4,6 +4,8 @@ import type {
   AvailablePackage,
   PackageMetadata,
   CliResult,
+  PackageListResult,
+  VulnerabilityFinding,
 } from '../types';
 
 /**
@@ -17,32 +19,26 @@ import type {
 export interface INuGetBackend {
   /**
    * List all installed AND transitive packages for a solution in one CLI call.
-   * CLI: `dotnet list <solutionPath> package --include-transitive --format json`
+   * CLI: `dotnet list <solutionPath> package --include-transitive --format json --no-restore`
    */
-  listAllForSolution(solutionPath: string): Promise<{
-    installed: InstalledPackage[];
-    implicit: ImplicitPackage[];
-  }>;
+  listAllForSolution(solutionPath: string): Promise<PackageListResult>;
 
   /**
    * List all installed AND transitive packages for a project in one CLI call.
-   * CLI: `dotnet list <projectPath> package --include-transitive --format json`
+   * CLI: `dotnet list <projectPath> package --include-transitive --format json --no-restore`
    */
-  listAllForProject(projectPath: string): Promise<{
-    installed: InstalledPackage[];
-    implicit: ImplicitPackage[];
-  }>;
+  listAllForProject(projectPath: string): Promise<PackageListResult>;
 
   /**
    * List packages explicitly referenced in a project file.
-   * CLI: `dotnet list <projectPath> package --format json`
+   * CLI: `dotnet list <projectPath> package --format json --no-restore`
    * @deprecated Use listAllForProject for efficiency.
    */
   listInstalled(projectPath: string): Promise<InstalledPackage[]>;
 
   /**
    * List all transitive (implicit) packages for a project.
-   * CLI: `dotnet list <projectPath> package --include-transitive --format json`
+   * CLI: `dotnet list <projectPath> package --include-transitive --format json --no-restore`
    */
   listTransitive(projectPath: string): Promise<ImplicitPackage[]>;
 
@@ -108,4 +104,16 @@ export interface INuGetBackend {
    * CLI: `dotnet remove <projectPath> package <packageId>`
    */
   removePackage(projectPath: string, packageId: string): Promise<CliResult>;
+
+  /**
+   * Restore a project or solution so assets match the project files.
+   * CLI: `dotnet restore <projectOrSolutionPath>`
+   */
+  restoreProject(projectPath: string): Promise<CliResult>;
+
+  /**
+   * Known vulnerabilities for top-level and transitive packages.
+   * CLI: `dotnet list <path> package --vulnerable --include-transitive --format json --no-restore`
+   */
+  listVulnerable(projectOrSolutionPath: string): Promise<VulnerabilityFinding[]>;
 }

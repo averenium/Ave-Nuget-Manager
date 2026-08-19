@@ -1,6 +1,8 @@
 import React from 'react';
 import { compareSemVer } from '../utils/search';
-import type { InstalledPackage, ImplicitPackage, AvailablePackage } from '../../types';
+import type { InstalledPackage, ImplicitPackage, AvailablePackage, VulnerabilityFinding } from '../../types';
+import { findingsAffectingPackage } from '../../vulnerabilities';
+import { PkgListRow } from './PkgListRow';
 
 /** Extract project name from absolute path without using Node's path module */
 function projectName(absolutePath: string): string {
@@ -15,13 +17,20 @@ interface Props {
   implicitVersions?: string[];
   /** All project entries for this package id — used to show version conflicts */
   allProjectEntries?: Array<{ projectPath: string; resolvedVersion: string }>;
+  findings?: VulnerabilityFinding[];
   onClick: () => void;
 }
 
 const MAX_VERSIONS_INLINE = 3;
 
+function formatFindingLine(finding: VulnerabilityFinding, viaPackage?: string): string {
+  const sev = finding.severity.toUpperCase();
+  const label = finding.id ?? finding.title ?? finding.url ?? 'advisory';
+  return viaPackage ? `via ${viaPackage} · ${sev}: ${label}` : `${sev}: ${label}`;
+}
+
 export function PackageRow({
-  pkg, kind, selected, implicitVersions, allProjectEntries, onClick,
+  pkg, kind, selected, implicitVersions, allProjectEntries, findings, onClick,
 }: Props) {
   const installed = kind === 'installed' ? (pkg as InstalledPackage) : undefined;
   const implicit  = kind === 'implicit'  ? (pkg as ImplicitPackage)  : undefined;
@@ -67,40 +76,45 @@ export function PackageRow({
     ? projectVersionMap.map((e) => `${e.projectName}: ${e.version}`).join('\n')
     : undefined;
 
+  const deps = installed?.dependencies ?? implicit?.dependencies;
+  const { direct, via } = kind === 'available'
+    ? { direct: [] as VulnerabilityFinding[], via: [] as VulnerabilityFinding[] }
+    : findingsAffectingPackage(findings ?? [], pkg.id, deps);
+  const vulnTitle = [...direct.map((f) => formatFindingLine(f)), ...via.map((f) => formatFindingLine(f, f.packageId))]
+    .join('\n') || undefined;
+
   return (
-    <div
-      className={[
-        'pkg-row',
-        selected ? 'pkg-row--selected' : '',
-        hasUpdate ? 'pkg-row--has-update' : '',
-      ].filter(Boolean).join(' ')}
-      role="option"
-      aria-selected={selected ?? false}
-      onClick={onClick}
-      tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); }}
+    <PkgListRow
+      name={pkg.id}
+      selected={selected}
+      hasUpdate={hasUpdate}
+      hasVulnerability={direct.length + via.length > 0}
+      vulnerabilityVia={direct.length === 0 && via.length > 0}
+      vulnerabilityTitle={vulnTitle}
+      onActivate={onClick}
+      aside={sourceName ? (
+        <span className="pkg-row__source" title={sourceName}>{sourceName}</span>
+      ) : null}
     >
-      <div className="pkg-row__left">
-        <span className="pkg-row__name">{pkg.id}</span>
+      <div className="pkg-row__meta">
         <span
           className={hasMultipleVersions ? 'pkg-row__version pkg-row__version--multi' : 'pkg-row__version'}
           title={versionTooltip}
         >
-          {versionLabel}
+          {kind !== 'available' ? versionLabel : ''}
           {highestImplicit && (
             <span className="pkg-row__implicit" title={implicitVersions?.join(', ')}>
               ({highestImplicit})
             </span>
           )}
         </span>
-      </div>
-
-      <div className="pkg-row__right">
-        {sourceName && <span className="pkg-row__source">{sourceName}</span>}
-        <span className={`pkg-row__latest${hasUpdate ? ' pkg-row__latest--update' : ''}`}>
-          {latestDisplay}
+        <span
+          className={`pkg-row__latest${hasUpdate ? ' pkg-row__latest--update' : ''}`}
+          title={latestVersion ? `Available: ${latestVersion}` : undefined}
+        >
+          {kind === 'implicit' && !latestVersion ? '' : latestDisplay}
         </span>
       </div>
-    </div>
+    </PkgListRow>
   );
 }

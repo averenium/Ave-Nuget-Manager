@@ -25,6 +25,10 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
   // Callback to call when the view is first resolved (set by broker)
   private _onViewReady?: () => void;
 
+  /** React has subscribed — outbound messages can be delivered. */
+  private _clientReady = false;
+  private readonly _outboundQueue: ExtensionMessage[] = [];
+
   constructor(private readonly _extensionUri: vscode.Uri) {}
 
   // ─── WebviewViewProvider implementation ───────────────────────────────────
@@ -66,6 +70,8 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
       this._handlerDisposables.forEach((d) => d.dispose());
       this._handlerDisposables = [];
       this._view = undefined;
+      this._htmlBuilt = false;
+      this._clientReady = false;
     });
 
     // Notify the broker that the view is now available
@@ -98,9 +104,38 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
     return this._currentScope;
   }
 
-  /** Send a typed message to the webview. No-op if the view is not yet resolved. */
+  get isClientReady(): boolean {
+    return this._clientReady;
+  }
+
+  /** Rebuild HTML so a newly compiled bundle is picked up (watch mode). */
+  reloadHtml(): void {
+    if (!this._view) return;
+    this._clientReady = false;
+    this._outboundQueue.length = 0;
+    this._view.webview.html = this._buildHtml(this._view.webview);
+    this._htmlBuilt = true;
+  }
+
+  /** Send a typed message to the webview. Queued until React signals WEBVIEW_READY. */
   postMessage(message: ExtensionMessage): void {
-    this._view?.webview.postMessage(message);
+    if (!this._view || !this._clientReady) {
+      this._outboundQueue.push(message);
+      return;
+    }
+    void this._view.webview.postMessage(message);
+  }
+
+  /**
+   * Flush queued host→webview messages. Called when the webview sends WEBVIEW_READY
+   * (listener is already attached on the React side).
+   */
+  markClientReady(): void {
+    this._clientReady = true;
+    const queued = this._outboundQueue.splice(0);
+    for (const message of queued) {
+      void this._view?.webview.postMessage(message);
+    }
   }
 
   /**
@@ -141,18 +176,19 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
 
   private _buildHtml(webview: vscode.Webview): string {
     const nonce = randomUUID().replace(/-/g, '');
+    const cacheBust = Date.now().toString();
 
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview', 'bundle.js'),
-    );
+    ).with({ query: `v=${cacheBust}` });
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview', 'bundle.css'),
-    );
+    ).with({ query: `v=${cacheBust}` });
 
     const csp = [
       `default-src 'none'`,
       `style-src ${webview.cspSource} 'nonce-${nonce}'`,
-      `script-src 'nonce-${nonce}'`,
+      `script-src ${webview.cspSource} 'nonce-${nonce}'`,
       `font-src ${webview.cspSource}`,
       `img-src ${webview.cspSource} https: data:`,
     ].join('; ');

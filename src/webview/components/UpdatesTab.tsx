@@ -1,0 +1,514 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNugetManager } from '../context/NugetManagerContext';
+import {
+  collectFamilyGroups,
+  collectOtherItems,
+  collectUpdatableItems,
+  familyItemsAtVersion,
+  intersectVersions,
+  sortVersionsDesc,
+  suggestedFamilyVersion,
+  type FamilyGroup,
+} from '../../batchUpdates';
+import { compareSemVer } from '../../semver';
+import { fileNameNoExt } from '../utils/pathUtils';
+import { SplitPane } from './SplitPane';
+import { VersionSelect } from './VersionSelector';
+import { PkgListRow } from './PkgListRow';
+import { PrereleaseToggle } from './PrereleaseToggle';
+import { DetailHeader } from './DetailHeader';
+import type { BatchUpdateItem, BatchUpdateJob, BatchUpdateItemView } from '../../types';
+
+type Selection =
+  | { type: 'all' }
+  | { type: 'other' }
+  | { type: 'family'; family: string; fromVersion: string };
+
+function statusLabel(item: BatchUpdateItemView): string {
+  switch (item.status) {
+    case 'pending': return 'Queued';
+    case 'running': return 'Updating…';
+    case 'ok': return 'Updated';
+    case 'error': return 'Failed';
+    case 'timeout': return 'Timed out';
+    default: return item.status;
+  }
+}
+
+function selectionKey(sel: Selection | null): string {
+  if (!sel) return '';
+  if (sel.type === 'all') return 'all';
+  if (sel.type === 'other') return 'other';
+  return `family:${sel.family}@${sel.fromVersion}`;
+}
+
+function jobMatchesSelection(job: BatchUpdateJob, sel: Selection | null): boolean {
+  if (!sel) return false;
+  if (sel.type === 'all' || sel.type === 'other') return job.kind === sel.type;
+  return job.kind === 'family' && (job.family ?? '') === sel.family;
+}
+
+function itemCompletedCount(item: BatchUpdateItemView): number {
+  if (item.status === 'pending') return 0;
+  if (item.status !== 'running') return item.projects.length;
+  return item.completedProjects?.length ?? item.succeededProjects.length;
+}
+
+function itemFailedCount(item: BatchUpdateItemView): number {
+  const succeeded = item.succeededProjects.length;
+  if (item.status === 'error' || item.status === 'timeout') {
+    return Math.max(0, item.projects.length - succeeded);
+  }
+  if (item.status === 'running') {
+    return Math.max(0, itemCompletedCount(item) - succeeded);
+  }
+  return 0;
+}
+
+function jobProgress(job: BatchUpdateJob) {
+  const packageTotal = job.items.length;
+  const packageDone = job.items.filter((i) => i.status !== 'pending' && i.status !== 'running').length;
+  const projectTotal = job.items.reduce((n, i) => n + i.projects.length, 0);
+  const projectDone = job.items.reduce((n, i) => n + itemCompletedCount(i), 0);
+  return { packageTotal, packageDone, projectTotal, projectDone };
+}
+
+function batchProgressLabel(job: BatchUpdateJob): string {
+  const p = jobProgress(job);
+  return `${p.packageDone}/${p.packageTotal} pkg · ${p.projectDone}/${p.projectTotal} proj`;
+}
+
+function projectNames(projects: string[]): string {
+  return projects.map(fileNameNoExt).join(', ');
+}
+
+function VersionPair({
+  from,
+  to,
+  highlight,
+  failed,
+}: {
+  from: string;
+  to: string;
+  highlight?: boolean;
+  failed?: boolean;
+}) {
+  const showTo = !!to && to !== from;
+  return (
+    <div className="pkg-row__meta pkg-row__meta--pair">
+      <span className="pkg-row__version">{from}</span>
+      {showTo ? <span className="pkg-row__arrow" aria-hidden="true">→</span> : null}
+      {showTo ? (
+        <span className={`pkg-row__latest${highlight ? ' pkg-row__latest--update' : ''}${failed ? ' pkg-row__latest--fail' : ''}`}>
+          {to}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function GroupRow({
+  name,
+  count,
+  selected,
+  hasUpdate,
+  fromLabel,
+  toLabel,
+  onActivate,
+}: {
+  name: string;
+  count: number;
+  selected: boolean;
+  hasUpdate: boolean;
+  fromLabel?: string;
+  toLabel?: string;
+  onActivate: () => void;
+}) {
+  return (
+    <PkgListRow
+      name={name}
+      selected={selected}
+      hasUpdate={hasUpdate}
+      onActivate={onActivate}
+      aside={<span className="pkg-row__source">{count}</span>}
+    >
+      {fromLabel ? (
+        <VersionPair from={fromLabel} to={toLabel ?? ''} highlight={hasUpdate && !!toLabel} />
+      ) : null}
+    </PkgListRow>
+  );
+}
+
+export function UpdatesTab() {
+  const { state, send } = useNugetManager();
+  const { installed, prerelease, enrichProgress, isLoadingPackages } = state.packages;
+  const { jobs, versionsByPackageId = {} } = state.updates;
+  const configFiles = state.sources.configChain.map((c) => c.filePath);
+  const batchBusy = jobs.some((j) => !j.finishedAt);
+
+  const updatable = collectUpdatableItems(installed);
+  const families = collectFamilyGroups(installed);
+  const otherItems = collectOtherItems(installed, families);
+
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [familyTarget, setFamilyTarget] = useState('');
+  const [resultLockKey, setResultLockKey] = useState('');
+  const requestedRef = useRef('');
+
+  const selectedFamily: FamilyGroup | undefined =
+    selection?.type === 'family'
+      ? families.find((g) => g.family === selection.family && g.fromVersion === selection.fromVersion)
+      : undefined;
+
+  const familyIds = selectedFamily?.members.map((m) => m.packageId) ?? [];
+
+  useEffect(() => {
+    if (!selectedFamily || configFiles.length === 0) return;
+    const key = `${familyIds.join('|')}::${prerelease}`;
+    if (requestedRef.current === key) return;
+    requestedRef.current = key;
+    for (const packageId of familyIds) {
+      send({ type: 'GET_ALL_VERSIONS', packageId, configFiles, prerelease });
+    }
+  }, [selectedFamily, familyIds.join('|'), prerelease, configFiles.join(','), send]);
+
+  const familyVersions = useMemo(() => {
+    if (!selectedFamily) return [];
+    const lists = selectedFamily.members.map(
+      (m) => versionsByPackageId[m.packageId.toLowerCase()] ?? [],
+    );
+    const loaded = lists.filter((l) => l.length > 0);
+    const suggested = suggestedFamilyVersion(selectedFamily.members, selectedFamily.fromVersion);
+    const extras = suggested ? [suggested] : [];
+    if (loaded.length === selectedFamily.members.length) {
+      return sortVersionsDesc([...intersectVersions(loaded), ...extras]);
+    }
+    return sortVersionsDesc([...loaded.flat(), ...extras]);
+  }, [selectedFamily, versionsByPackageId]);
+
+  useEffect(() => {
+    if (!selectedFamily) {
+      setFamilyTarget('');
+      return;
+    }
+    setFamilyTarget((current) => {
+      if (current && familyVersions.includes(current)) return current;
+      const suggested = suggestedFamilyVersion(selectedFamily.members, selectedFamily.fromVersion);
+      if (suggested && (familyVersions.length === 0 || familyVersions.includes(suggested))) {
+        return suggested;
+      }
+      const newer = familyVersions.find((v) => compareSemVer(v, selectedFamily.fromVersion) > 0);
+      return newer ?? familyVersions[0] ?? suggested ?? '';
+    });
+  }, [selectionKey(selection), familyVersions.join(','), selectedFamily?.fromVersion]);
+
+  const previewItems: BatchUpdateItem[] =
+    selection?.type === 'all' ? updatable
+      : selection?.type === 'other' ? otherItems
+        : selectedFamily
+          ? familyItemsAtVersion(selectedFamily.members, familyTarget)
+          : [];
+
+  const previewRows = selection?.type === 'family' && selectedFamily
+    ? selectedFamily.members.map((m) => ({
+        packageId: m.packageId,
+        fromVersion: m.fromVersion,
+        toVersion: familyTarget || m.latestVersion || m.fromVersion,
+        skipped: !familyTarget || familyTarget === m.fromVersion,
+        projects: m.projects,
+      }))
+    : previewItems.map((i) => ({
+        packageId: i.packageId,
+        fromVersion: i.fromVersion,
+        toVersion: i.toVersion,
+        skipped: false,
+        projects: i.projects,
+      }));
+
+  const listRows = selection?.type === 'family'
+    ? previewRows
+    : previewRows.filter((row) => !row.skipped);
+  const showPackageList = listRows.length > 0;
+
+  const runningJob = jobs.find((j) => !j.finishedAt);
+  const selKey = selectionKey(selection);
+
+  useEffect(() => {
+    if (runningJob) setResultLockKey(selKey);
+  }, [runningJob?.id]);
+
+  useEffect(() => {
+    if (resultLockKey && selKey !== resultLockKey) setResultLockKey('');
+  }, [selKey]);
+
+  const lockedJob = resultLockKey && selKey === resultLockKey && selection
+    ? jobs.find((j) => jobMatchesSelection(j, selection))
+    : undefined;
+  useEffect(() => {
+    if (lockedJob?.stale) setResultLockKey('');
+  }, [lockedJob?.stale]);
+
+  const resultJob = runningJob
+    ?? (lockedJob && !lockedJob.stale && lockedJob.finishedAt ? lockedJob : undefined);
+
+  const startBatch = () => {
+    if (previewItems.length === 0) return;
+    setResultLockKey(selKey);
+    if (selection?.type === 'all' || selection?.type === 'other') {
+      send({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: selection.type,
+        includePrerelease: prerelease,
+        items: previewItems,
+      });
+      return;
+    }
+    if (selection?.type === 'family' && selectedFamily) {
+      send({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'family',
+        family: selectedFamily.family,
+        includePrerelease: prerelease,
+        items: previewItems,
+      });
+    }
+  };
+
+  const title = selection?.type === 'all'
+    ? 'All'
+    : selection?.type === 'other'
+      ? 'Other'
+      : selectedFamily
+        ? `${selectedFamily.family}.*`
+        : '';
+
+  return (
+    <div className="split-tab">
+      <div className="pkg-toolbar">
+        <button
+          className="pkg-toolbar__refresh"
+          title="Force refresh (clears cache)"
+          aria-label="Force refresh packages"
+          disabled={batchBusy}
+          onClick={() => send({ type: 'FORCE_REFRESH' })}
+        >
+          ↺
+        </button>
+        {runningJob ? (
+          <span className="pkg-toolbar__progress" aria-live="polite">
+            {batchProgressLabel(runningJob)}
+          </span>
+        ) : enrichProgress ? (
+          <span className="pkg-toolbar__progress" aria-live="polite">
+            {enrichProgress.done}/{enrichProgress.total}
+          </span>
+        ) : null}
+        <span className="pkg-toolbar__spacer" />
+        <PrereleaseToggle />
+      </div>
+
+      <SplitPane
+        splitLabel="Resize update groups"
+        left={
+          <section className="pkg-section" aria-label="Update groups">
+            <div className="pkg-section__header">
+              Groups
+              {!isLoadingPackages && <span>{2 + families.length}</span>}
+            </div>
+            {isLoadingPackages && <div className="empty-state">Loading packages…</div>}
+            <div className="pkg-section__list" role="listbox" aria-label="Update groups">
+              <GroupRow
+                name="All"
+                count={updatable.length}
+                selected={selection?.type === 'all'}
+                hasUpdate={updatable.length > 0}
+                onActivate={() => setSelection({ type: 'all' })}
+              />
+              <div className="update-groups__rule" />
+              {families.map((g) => {
+                const selected = selection?.type === 'family'
+                  && selection.family === g.family
+                  && selection.fromVersion === g.fromVersion;
+                const suggested = suggestedFamilyVersion(g.members, g.fromVersion);
+                return (
+                  <GroupRow
+                    key={`${g.family}@${g.fromVersion}`}
+                    name={`${g.family}.*`}
+                    count={g.updateCount}
+                    selected={selected}
+                    hasUpdate={g.updateCount > 0}
+                    fromLabel={g.fromVersion}
+                    toLabel={suggested ?? ''}
+                    onActivate={() => setSelection({
+                      type: 'family',
+                      family: g.family,
+                      fromVersion: g.fromVersion,
+                    })}
+                  />
+                );
+              })}
+              {families.length > 0 && <div className="update-groups__rule" />}
+              <GroupRow
+                name="Other"
+                count={otherItems.length}
+                selected={selection?.type === 'other'}
+                hasUpdate={otherItems.length > 0}
+                onActivate={() => setSelection({ type: 'other' })}
+              />
+            </div>
+          </section>
+        }
+        right={
+          !selection && !resultJob ? (
+            <div className="detail-panel__empty">Select All, a family, or Other to preview updates</div>
+          ) : (
+            <div className="detail-panel">
+              {selection && (
+                <DetailHeader
+                  name={title}
+                  actions={(
+                    <button
+                      type="button"
+                      className="btn btn--icon btn--primary"
+                      disabled={batchBusy || previewItems.length === 0}
+                      title={selection.type === 'family'
+                        ? `Update ${previewItems.length} package(s) to ${familyTarget}`
+                        : `Update ${previewItems.length} package(s) to latest`}
+                      aria-label="Update"
+                      onClick={startBatch}
+                    >
+                      ↑
+                    </button>
+                  )}
+                >
+                  {selection.type === 'family' && (
+                    <VersionSelect
+                      versions={familyVersions}
+                      selected={familyTarget}
+                      label="Target version for family"
+                      onChange={setFamilyTarget}
+                    />
+                  )}
+                </DetailHeader>
+              )}
+
+              {resultJob && <BatchJobList job={resultJob} />}
+
+              {selection && !resultJob && (
+                !showPackageList ? (
+                  <div className="empty-state">
+                    {selection.type === 'all' || selection.type === 'other'
+                      ? enrichProgress
+                        ? 'Waiting for latest versions…'
+                        : selection.type === 'other'
+                          ? 'No updates outside families for the current Pre-release setting.'
+                          : 'All packages are up to date for the current Pre-release setting.'
+                      : 'Choose a newer version to update this family.'}
+                  </div>
+                ) : (
+                  <section className="pkg-section" aria-label="Packages to update">
+                    <div className="pkg-section__header">
+                      Packages
+                      <span>
+                        {listRows.length} pkg · {listRows.reduce((n, r) => n + r.projects.length, 0)} proj
+                      </span>
+                    </div>
+                    <div className="pkg-section__list">
+                      {listRows.map((row) => (
+                        <PkgListRow
+                          key={row.packageId}
+                          name={row.packageId}
+                          muted={row.skipped}
+                          hasUpdate={!row.skipped}
+                          aside={(
+                            <span className="pkg-row__source" title={projectNames(row.projects)}>
+                              {row.projects.length} proj
+                            </span>
+                          )}
+                        >
+                          <VersionPair
+                            from={row.fromVersion}
+                            to={row.skipped ? row.fromVersion : row.toVersion}
+                            highlight={!row.skipped}
+                          />
+                        </PkgListRow>
+                      ))}
+                    </div>
+                  </section>
+                )
+              )}
+            </div>
+          )
+        }
+      />
+    </div>
+  );
+}
+
+function ProjectBar({ item }: { item: BatchUpdateItemView }) {
+  const total = item.projects.length;
+  if (total === 0) return null;
+  const okPct = (100 * item.succeededProjects.length) / total;
+  const failPct = (100 * itemFailedCount(item)) / total;
+  const done = itemCompletedCount(item);
+  return (
+    <div
+      className="pkg-row__bar"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={total}
+      aria-valuenow={done}
+      aria-label={`${done} of ${total} projects`}
+    >
+      <span className="pkg-row__bar-ok" style={{ width: `${okPct}%` }} />
+      <span className="pkg-row__bar-fail" style={{ width: `${failPct}%` }} />
+    </div>
+  );
+}
+
+function rowTone(item: BatchUpdateItemView): string {
+  if (item.status === 'ok') return 'pkg-row--ok';
+  if (item.status === 'error' || item.status === 'timeout') return 'pkg-row--fail';
+  if (item.status === 'running') return 'pkg-row--running';
+  return '';
+}
+
+function BatchJobList({ job }: { job: BatchUpdateJob }) {
+  const stale = !!job.stale;
+  return (
+    <section className="pkg-section" aria-label="Batch progress">
+      <div className="pkg-section__list">
+        {job.items.map((item) => {
+          const total = item.projects.length;
+          const done = itemCompletedCount(item);
+          const failed = item.status === 'error' || item.status === 'timeout';
+          return (
+            <PkgListRow
+              key={item.packageId}
+              className={stale ? undefined : rowTone(item)}
+              name={item.packageId}
+              nameTitle={item.error ?? `${item.packageId} · ${projectNames(item.projects)}`}
+              muted={stale}
+              aside={(
+                <span
+                  className="pkg-row__source"
+                  title={`${statusLabel(item)} · ${projectNames(item.projects)}`}
+                >
+                  {done}/{total}
+                </span>
+              )}
+            >
+              <VersionPair
+                from={item.fromVersion}
+                to={item.toVersion}
+                highlight={!stale && item.status === 'ok'}
+                failed={!stale && failed}
+              />
+              {!stale && <ProjectBar item={item} />}
+            </PkgListRow>
+          );
+        })}
+      </div>
+    </section>
+  );
+}

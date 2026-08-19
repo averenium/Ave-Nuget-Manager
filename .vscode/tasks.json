@@ -43,10 +43,9 @@
     },
 
     {
-      // ── Watch mode: starts tsc --watch + vite --watch in parallel ────────────
-      // Used by the "Run Extension (watch)" launch config.
-      // Reload the Extension Development Host with Ctrl+Shift+P → "Reload Window"
-      // after files rebuild.
+      // ── Watch: tsc --watch + vite build --watch ──────────────────────────────
+      // Webview: save React/CSS → bundle rebuild → panel reloads HTML.
+      // Host: after tsc rebuilds, reload the Extension Development Host (Ctrl+R).
       "label": "build:watch",
       "dependsOn": ["watch:ext", "watch:webview"],
       "dependsOrder": "parallel",
@@ -89,7 +88,7 @@
       "presentation": {
         "reveal": "silent",
         "panel": "dedicated",
-        "label": "vite watch"
+        "label": "vite build watch"
       },
       "problemMatcher": {
         "owner": "vite",
@@ -99,8 +98,8 @@
         },
         "background": {
           "activeOnStart": true,
-          "beginsPattern": "vite",
-          "endsPattern": "built in"
+          "beginsPattern": "vite|build started",
+          "endsPattern": "built in|watching for"
         }
       }
     },

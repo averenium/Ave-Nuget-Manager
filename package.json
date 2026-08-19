@@ -1,19 +1,46 @@
 {
   "name": "averenium-nuget-manager",
-  "displayName": "Averenium NuGet Manager",
-  "description": "NuGet package manager for .NET solutions and projects, inspired by JetBrains Rider",
+  "displayName": "AVE NuGet Manager",
+  "description": "Preview: NuGet manager for .NET solutions and projects (Packages, Groups, Sources, Log). Requires the .NET SDK.",
   "version": "0.1.0",
+  "preview": true,
   "publisher": "averenium",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "pricing": "Free",
+  "homepage": "https://github.com/averenium/Ave-Nuget-Manager",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/averenium/Ave-Nuget-Manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/averenium/Ave-Nuget-Manager/issues"
+  },
+  "qna": "marketplace",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "categories": ["Other", "Programming Languages"],
   "keywords": ["nuget", "dotnet", "csharp", "fsharp", "package manager"],
+  "extensionKind": ["workspace"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Runs `dotnet` against workspace project files."
+    },
+    "virtualWorkspaces": {
+      "supported": false
+    }
+  },
   "activationEvents": ["onStartupFinished"],
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
-      "title": "Averenium NuGet Manager",
+      "title": "AVE NuGet Manager",
       "properties": {
         "averenium.nugetManager.includePrerelease": {
           "type": "boolean",
@@ -26,6 +53,17 @@
           "minimum": 1,
           "maximum": 16,
           "description": "Maximum number of parallel dotnet CLI processes when fetching latest package versions"
+        },
+        "averenium.nugetManager.onFailedUpdate": {
+          "type": "string",
+          "enum": ["rollback", "keep"],
+          "default": "rollback",
+          "markdownDescription": "When a package update writes the project file but restore fails (e.g. NU1605):\n\n- **rollback**: restore the previous `PackageReference` (and `Directory.Packages.props` if it changed).\n- **keep**: leave the new version and show a **Rollback** button in the error banner."
+        },
+        "averenium.nugetManager.vulnerabilityScript": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional script that adds extra vulnerability findings. Receives a JSON snapshot on stdin (`scope`, `installed`, `implicit`) and must print a JSON array of findings (or `{ \"findings\": [...] }`) on stdout. Relative paths resolve from the workspace folder. See the extension docs for the finding shape."
         }
       }
     },
@@ -33,7 +71,7 @@
       "panel": [
         {
           "id": "averenium-nuget-panel",
-          "title": "NuGet Manager",
+          "title": "NuGet",
           "icon": "$(package)"
         }
       ]
@@ -42,7 +80,7 @@
       "averenium-nuget-panel": [
         {
           "id": "averenium.nugetManagerView",
-          "name": "NuGet Manager",
+          "name": "NuGet",
           "type": "webview"
         }
       ]
@@ -82,12 +120,12 @@
     "test:unit": "jest --testPathPatterns='src/test/unit'",
     "test:property": "jest --testPathPatterns='src/test/property'",
     "lint": "eslint src --ext .ts,.tsx",
-    "package": "vsce package"
-  },
-  "dependencies": {
-    "fast-check": "4.8.0"
+    "package": "vsce package --pre-release",
+    "package:release": "vsce package",
+    "publish:preview": "vsce publish --pre-release"
   },
   "devDependencies": {
+    "fast-check": "4.8.0",
     "@types/jest": "30.0.0",
     "@types/node": "26.1.0",
     "@types/react": "19.2.17",

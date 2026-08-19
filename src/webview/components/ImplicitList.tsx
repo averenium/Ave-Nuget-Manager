@@ -3,6 +3,7 @@ import { useNugetManager } from '../context/NugetManagerContext';
 import { PackageRow } from './PackageRow';
 import { matchesQuery, sortByRelevance } from '../utils/search';
 import type { ImplicitPackage } from '../../types';
+import { findingsAffectingPackage, vulnerabilityAffectRank } from '../../vulnerabilities';
 
 function groupById(packages: ImplicitPackage[]): Map<string, ImplicitPackage[]> {
   const map = new Map<string, ImplicitPackage[]>();
@@ -14,9 +15,14 @@ function groupById(packages: ImplicitPackage[]): Map<string, ImplicitPackage[]> 
   return map;
 }
 
+function withUnionedDeps(entries: ImplicitPackage[]): ImplicitPackage {
+  const deps = [...new Set(entries.flatMap((e) => e.dependencies ?? []))];
+  return deps.length > 0 ? { ...entries[0], dependencies: deps } : entries[0];
+}
+
 export function ImplicitList() {
   const { state, dispatch } = useNugetManager();
-  const { implicit, installed, searchQuery, isLoadingPackages } = state.packages;
+  const { implicit, installed, searchQuery, isLoadingPackages, vulnerabilities } = state.packages;
 
   // Exclude packages already shown in the Installed list
   const installedIds = new Set(installed.map((p) => p.id.toLowerCase()));
@@ -26,13 +32,22 @@ export function ImplicitList() {
 
   // Deduplicate by id — representative = first entry
   const grouped = groupById(filtered);
-  const uniquePackages = [...grouped.values()].map((entries) => entries[0]);
+  const uniquePackages = [...grouped.values()].map(withUnionedDeps);
 
   const displayed = searchQuery.length >= 2
     ? sortByRelevance(uniquePackages, searchQuery)
-    : uniquePackages;
+    : [...uniquePackages].sort((a, b) => {
+      const va = vulnerabilityAffectRank(vulnerabilities, a.id, a.dependencies);
+      const vb = vulnerabilityAffectRank(vulnerabilities, b.id, b.dependencies);
+      if (va !== vb) return vb - va;
+      return a.id.localeCompare(b.id);
+    });
 
   const totalUnique = groupById(implicitOnly).size;
+  const vulnPkgCount = uniquePackages.filter((pkg) => {
+    const { direct, via } = findingsAffectingPackage(vulnerabilities, pkg.id, pkg.dependencies);
+    return direct.length + via.length > 0;
+  }).length;
 
   return (
     <section className="pkg-section" aria-label="Implicit packages">
@@ -42,6 +57,7 @@ export function ImplicitList() {
           <span>
             {displayed.length}
             {displayed.length !== totalUnique && `/${totalUnique}`}
+            {vulnPkgCount > 0 ? ` · ${vulnPkgCount} vuln` : ''}
           </span>
         )}
       </div>
@@ -57,6 +73,7 @@ export function ImplicitList() {
                 kind="implicit"
                 selected={state.detail.selectedPackageId === pkg.id}
                 allProjectEntries={allEntries as any}
+                findings={vulnerabilities}
                 onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
               />
             );

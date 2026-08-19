@@ -32,6 +32,7 @@ export function SourceFilterDropdown({ sources, selected, onChange }: Props) {
         className="source-filter__btn"
         aria-expanded={open}
         aria-haspopup="listbox"
+        title={label}
         onClick={() => setOpen((o) => !o)}
       >
         🔍 {label} ▾
@@ -43,14 +44,14 @@ export function SourceFilterDropdown({ sources, selected, onChange }: Props) {
             <div className="source-filter__warning">No sources configured</div>
           )}
           {sources.map((src) => (
-            <label key={src.name} className="source-filter__item">
+            <label key={src.name} className="source-filter__item" title={src.name}>
               <input
                 type="checkbox"
                 checked={selected.includes(src.name)}
                 onChange={() => toggle(src.name)}
                 aria-label={src.name}
               />
-              {src.name}
+              <span className="source-filter__name">{src.name}</span>
             </label>
           ))}
         </div>

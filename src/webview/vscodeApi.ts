@@ -3,14 +3,24 @@ import type { WebviewMessage, ExtensionMessage } from '../../messages';
 // Re-export from the root src for webview consumers
 export type { WebviewMessage, ExtensionMessage };
 
-declare function acquireVsCodeApi(): {
+type VsCodeApi = {
   postMessage(msg: unknown): void;
   getState(): unknown;
   setState(state: unknown): void;
 };
 
-// Acquire once — calling it multiple times throws in the VSCode webview runtime
-const vscode = acquireVsCodeApi();
+declare function acquireVsCodeApi(): VsCodeApi;
+
+declare global {
+  interface Window {
+    __nugetVsCodeApi?: VsCodeApi;
+  }
+}
+
+// Acquire once and stash on window — Vite HMR re-evaluates this module,
+// but the webview runtime throws if acquireVsCodeApi() is called again.
+const vscode: VsCodeApi = window.__nugetVsCodeApi ?? acquireVsCodeApi();
+window.__nugetVsCodeApi = vscode;
 
 export function sendMessage(msg: WebviewMessage): void {
   vscode.postMessage(msg);

@@ -14,5 +14,7 @@ jest.config.ts
 .prettierrc*
 .gitignore
 .gitattributes
+docs/**
 *.md
 !README.md
+!CHANGELOG.md

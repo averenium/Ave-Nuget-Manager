@@ -63,8 +63,10 @@ function makeRegistrar() {
     postMessage: jest.fn(),
     onDidReceiveMessage: jest.fn(),
     setOnViewReady: jest.fn(),
-    isVisible: false,
-    resolveWebviewView: jest.fn(),
+      isVisible: false,
+      resolveWebviewView: jest.fn(),
+      markClientReady: jest.fn(),
+      isClientReady: false,
   } as any;
 
   const broker = {

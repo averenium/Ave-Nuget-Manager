@@ -168,8 +168,8 @@ export class CommandRegistrar {
       scope = { kind: 'project', projectPath: targetPath };
     }
 
-    await this.broker.activateScope(scope);
     await vscode.commands.executeCommand('averenium.nugetManagerView.focus');
+    await this.broker.activateScope(scope);
   }
 }
 

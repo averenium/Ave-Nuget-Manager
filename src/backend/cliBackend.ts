@@ -7,15 +7,20 @@ import type {
   PackageMetadata,
   FrameworkDependencies,
   CliResult,
+  PackageListResult,
+  VulnerabilityFinding,
 } from '../types';
 import type { INuGetBackend } from './INuGetBackend';
+import { extractJsonObject, summarizeDotnetFailure, summarizeListProblems } from '../dotnetOutput';
+import { stampListedDependencies, attachAssetsDependencies } from '../projectAssets';
+import { parseDotnetVulnerableJson } from '../vulnerabilities';
 
 // ─── dotnet JSON output shapes ────────────────────────────────────────────────
 
 interface DotnetListOutput {
   version: number;
   parameters: string;
-  problems?: unknown[];
+  problems?: Array<{ text?: string; level?: string }>;
   projects?: Array<{
     path: string;
     frameworks?: Array<{
@@ -59,59 +64,79 @@ interface DotnetSearchOutput {
 
 const TIMEOUT_MS = 30_000;
 
+/** Skip implicit restore (.NET 10+ fails the whole list when restore errors, e.g. NU1605). */
+function listPackageArgs(targetPath: string, includeTransitive: boolean): string[] {
+  const args = ['list', targetPath, 'package'];
+  if (includeTransitive) args.push('--include-transitive');
+  args.push('--format', 'json', '--no-restore');
+  return args;
+}
+
 export class CliBackend implements INuGetBackend {
   constructor(private readonly runner: CliRunner) {}
 
   // ── listAllForSolution ─────────────────────────────────────────────────────
 
-  async listAllForSolution(solutionPath: string): Promise<{
-    installed: InstalledPackage[];
-    implicit: ImplicitPackage[];
-  }> {
+  async listAllForSolution(solutionPath: string): Promise<PackageListResult> {
     // One call: --include-transitive returns both topLevelPackages and transitivePackages
     const result = await this.runner.run({
-      args: ['list', solutionPath, 'package', '--include-transitive', '--format', 'json'],
+      args: listPackageArgs(solutionPath, true),
       cwd: path.dirname(solutionPath),
       timeoutMs: TIMEOUT_MS,
     });
 
-    if (result.timedOut || result.exitCode !== 0) {
-      return { installed: [], implicit: [] };
-    }
-
-    return {
-      installed: this._parseAllProjectsInstalled(result.stdout),
-      implicit:  this._parseAllProjectsTransitive(result.stdout),
-    };
+    const baseDir = path.dirname(solutionPath);
+    const listed = this._toListResult(
+      result,
+      this._parseAllProjectsInstalled(result.stdout, baseDir),
+      this._parseAllProjectsTransitive(result.stdout, baseDir),
+    );
+    const stamped = await stampListedDependencies(listed.installed, listed.implicit);
+    listed.installed = stamped.installed;
+    listed.implicit = stamped.implicit;
+    return listed;
   }
 
   // ── listAllForProject ──────────────────────────────────────────────────────
 
-  async listAllForProject(projectPath: string): Promise<{
-    installed: InstalledPackage[];
-    implicit: ImplicitPackage[];
-  }> {
+  async listAllForProject(projectPath: string): Promise<PackageListResult> {
     const result = await this.runner.run({
-      args: ['list', projectPath, 'package', '--include-transitive', '--format', 'json'],
+      args: listPackageArgs(projectPath, true),
       cwd: path.dirname(projectPath),
       timeoutMs: TIMEOUT_MS,
     });
 
-    if (result.timedOut || result.exitCode !== 0) {
-      return { installed: [], implicit: [] };
-    }
+    const listed = this._toListResult(
+      result,
+      this._parseInstalledPackages(result.stdout, projectPath),
+      this._parseTransitivePackages(result.stdout, projectPath),
+    );
+    const stamped = await stampListedDependencies(listed.installed, listed.implicit);
+    listed.installed = stamped.installed;
+    listed.implicit = stamped.implicit;
+    return listed;
+  }
 
-    return {
-      installed: this._parseInstalledPackages(result.stdout, projectPath),
-      implicit:  this._parseTransitivePackages(result.stdout, projectPath),
-    };
+  // ── listVulnerable ─────────────────────────────────────────────────────────
+
+  async listVulnerable(projectOrSolutionPath: string): Promise<VulnerabilityFinding[]> {
+    const result = await this.runner.run({
+      args: [
+        'list', projectOrSolutionPath, 'package',
+        '--vulnerable', '--include-transitive',
+        '--format', 'json', '--no-restore',
+      ],
+      cwd: path.dirname(projectOrSolutionPath),
+      timeoutMs: TIMEOUT_MS,
+    });
+    return parseDotnetVulnerableJson(result.stdout);
   }
 
   // ── listInstalled ──────────────────────────────────────────────────────────
 
   async listInstalled(projectPath: string): Promise<InstalledPackage[]> {
     const result = await this.runner.run({
-      args: ['list', projectPath, 'package', '--format', 'json'],
+      args: listPackageArgs(projectPath, false),
       cwd: path.dirname(projectPath),
       timeoutMs: TIMEOUT_MS,
     });
@@ -120,14 +145,14 @@ export class CliBackend implements INuGetBackend {
       return [];
     }
 
-    return this._parseInstalledPackages(result.stdout, projectPath);
+    return attachAssetsDependencies(this._parseInstalledPackages(result.stdout, projectPath));
   }
 
   // ── listTransitive ─────────────────────────────────────────────────────────
 
   async listTransitive(projectPath: string): Promise<ImplicitPackage[]> {
     const result = await this.runner.run({
-      args: ['list', projectPath, 'package', '--include-transitive', '--format', 'json'],
+      args: listPackageArgs(projectPath, true),
       cwd: path.dirname(projectPath),
       timeoutMs: TIMEOUT_MS,
     });
@@ -311,15 +336,68 @@ export class CliBackend implements INuGetBackend {
     });
   }
 
+  // ── restoreProject ─────────────────────────────────────────────────────────
+
+  async restoreProject(projectOrSolutionPath: string): Promise<CliResult> {
+    return this.runner.run({
+      args: ['restore', projectOrSolutionPath],
+      cwd: path.dirname(projectOrSolutionPath),
+      timeoutMs: TIMEOUT_MS,
+    });
+  }
+
   // ─── Private helpers ───────────────────────────────────────────────────────
 
-  private _parseAllProjectsInstalled(stdout: string): InstalledPackage[] {
-    let output: DotnetListOutput;
-    try { output = JSON.parse(stdout) as DotnetListOutput; }
-    catch { return []; }
+  /**
+   * `dotnet list` without `--no-restore` (SDK 10+) exits 1 after a failed restore
+   * with `{ problems: [...] }` and no projects. Callers must not treat that as
+   * “solution has zero packages”.
+   */
+  private _toListResult(
+    result: CliResult,
+    installed: InstalledPackage[],
+    implicit: ImplicitPackage[],
+  ): PackageListResult {
+    const hasPackages = installed.length > 0 || implicit.length > 0;
+    if (hasPackages) return { installed, implicit };
+
+    if (result.timedOut) {
+      return { installed, implicit, error: 'dotnet list timed out' };
+    }
+
+    const problemText = summarizeListProblems(result.stdout);
+    if (result.exitCode !== 0 || problemText) {
+      return {
+        installed,
+        implicit,
+        error: problemText
+          || summarizeDotnetFailure(result.stdout, result.stderr)
+          || 'dotnet list failed',
+      };
+    }
+
+    return { installed, implicit };
+  }
+
+  private _parseListJson(stdout: string): DotnetListOutput | null {
+    const raw = extractJsonObject(stdout) ?? stdout.trim();
+    if (!raw) return null;
+    try { return JSON.parse(raw) as DotnetListOutput; }
+    catch { return null; }
+  }
+
+  private _resolveReportedProjectPath(reported: string, baseDir: string): string {
+    if (!reported) return reported;
+    return path.normalize(path.resolve(baseDir, reported));
+  }
+
+  private _parseAllProjectsInstalled(stdout: string, baseDir: string): InstalledPackage[] {
+    const output = this._parseListJson(stdout);
+    if (!output) return [];
 
     const packages: InstalledPackage[] = [];
     for (const project of output.projects ?? []) {
+      const projectPath = this._resolveReportedProjectPath(project.path, baseDir);
       for (const fw of project.frameworks ?? []) {
         for (const pkg of fw.topLevelPackages ?? []) {
           if (pkg.autoReferenced === 'true') continue;
@@ -327,7 +405,8 @@ export class CliBackend implements INuGetBackend {
             id: pkg.id,
             requestedVersion: pkg.requestedVersion,
             resolvedVersion: pkg.resolvedVersion,
-            projectPath: project.path,
+            projectPath,
+            framework: fw.framework || undefined,
           });
         }
       }
@@ -335,19 +414,20 @@ export class CliBackend implements INuGetBackend {
     return packages;
   }
 
-  private _parseAllProjectsTransitive(stdout: string): ImplicitPackage[] {
-    let output: DotnetListOutput;
-    try { output = JSON.parse(stdout) as DotnetListOutput; }
-    catch { return []; }
+  private _parseAllProjectsTransitive(stdout: string, baseDir: string): ImplicitPackage[] {
+    const output = this._parseListJson(stdout);
+    if (!output) return [];
 
     const packages: ImplicitPackage[] = [];
     for (const project of output.projects ?? []) {
+      const projectPath = this._resolveReportedProjectPath(project.path, baseDir);
       for (const fw of project.frameworks ?? []) {
         for (const pkg of fw.transitivePackages ?? []) {
           packages.push({
             id: pkg.id,
             resolvedVersion: pkg.resolvedVersion,
-            projectPath: project.path,
+            projectPath,
+            framework: fw.framework || undefined,
           });
         }
       }
@@ -359,12 +439,8 @@ export class CliBackend implements INuGetBackend {
     stdout: string,
     projectPath: string,
   ): InstalledPackage[] {
-    let output: DotnetListOutput;
-    try {
-      output = JSON.parse(stdout) as DotnetListOutput;
-    } catch {
-      return [];
-    }
+    const output = this._parseListJson(stdout);
+    if (!output) return [];
 
     const packages: InstalledPackage[] = [];
     for (const project of output.projects ?? []) {
@@ -377,6 +453,7 @@ export class CliBackend implements INuGetBackend {
             requestedVersion: pkg.requestedVersion,
             resolvedVersion: pkg.resolvedVersion,
             projectPath,
+            framework: fw.framework || undefined,
           });
         }
       }
@@ -388,12 +465,8 @@ export class CliBackend implements INuGetBackend {
     stdout: string,
     projectPath: string,
   ): ImplicitPackage[] {
-    let output: DotnetListOutput;
-    try {
-      output = JSON.parse(stdout) as DotnetListOutput;
-    } catch {
-      return [];
-    }
+    const output = this._parseListJson(stdout);
+    if (!output) return [];
 
     const packages: ImplicitPackage[] = [];
     for (const project of output.projects ?? []) {
@@ -403,6 +476,7 @@ export class CliBackend implements INuGetBackend {
             id: pkg.id,
             resolvedVersion: pkg.resolvedVersion,
             projectPath,
+            framework: fw.framework || undefined,
           });
         }
       }

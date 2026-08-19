@@ -8,7 +8,45 @@ import type { SolutionParser } from './solutionParser';
 import type { NuGetConfigChainResolver } from './nugetConfigChainResolver';
 import type { Logger } from './logger';
 import type { WebviewMessage } from './messages';
-import type { WorkspaceScope } from './types';
+import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus } from './types';
+import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
+import { pathsEqual } from './pathCompare';
+import {
+  snapshotProjectFiles,
+  restoreFileSnapshots,
+  readPackageVersionFromSnapshots,
+  type FileSnapshot,
+} from './projectFileSnapshot';
+import {
+  collectVulnerabilityFindings,
+  DotnetVulnerableProvider,
+} from './vulnerabilityProvider';
+import { UserScriptVulnerabilityProvider } from './userScriptVulnerabilities';
+
+function cliFailure(
+  projectPath: string,
+  result: CliResult,
+  extras?: { previousVersion?: string | null; attemptedVersion?: string },
+): OperationFailure {
+  const summary = result.timedOut
+    ? ['Operation timed out', summarizeDotnetFailure(result.stdout, result.stderr)]
+        .filter((s) => s.trim().length > 0)
+        .join('\n')
+    : summarizeDotnetFailure(result.stdout, result.stderr);
+  return {
+    projectPath,
+    stderr: summary || 'dotnet command failed',
+    exitCode: result.exitCode,
+    ...extras,
+  };
+}
+
+interface InstallAttempt {
+  projectPath: string;
+  snapshots: FileSnapshot[];
+  previousVersion: string | null;
+  result: CliResult;
+}
 
 interface CacheEntry {
   latestVersion: string;
@@ -27,9 +65,12 @@ export class WebviewMessageBroker {
 
   /** Cancellation token for the current enrich job — replaced on each new job */
   private _enrichAbort: AbortController = new AbortController();
+  private _vulnAbort: AbortController = new AbortController();
 
-  /** Set to true after activateScope pushes INIT_STATE so WEBVIEW_READY doesn't re-init */
-  private _scopeInitialized = false;
+  /** Snapshots from the last failed add, used by the Rollback button (`onFailedUpdate: keep`). */
+  private _pendingRollback: { packageId: string; attempts: InstallAttempt[] } | null = null;
+
+  private _batchRunning = false;
 
   constructor(
     private readonly provider: NugetManagerViewProvider,
@@ -64,6 +105,8 @@ export class WebviewMessageBroker {
   }
 
   detach(): void {
+    this._cancelEnrich();
+    this._cancelVulnScan();
     this._messageDisposable?.dispose();
     this._messageDisposable = undefined;
     this._logDisposable?.dispose();
@@ -72,21 +115,27 @@ export class WebviewMessageBroker {
 
   /**
    * Called by CommandRegistrar after resolving the target file.
-   * Sets the scope on the provider AND immediately pushes INIT_STATE + packages
-   * so the webview updates without needing a WEBVIEW_READY round-trip.
+   * If the webview React client is already up, push INIT_STATE immediately.
+   * Otherwise WEBVIEW_READY will run _initForScope once the UI is listening.
    */
   async activateScope(scope: WorkspaceScope): Promise<void> {
     this._cancelEnrich();
-    this._scopeInitialized = false; // reset so WEBVIEW_READY won't duplicate
+    this._cancelVulnScan();
     this.provider.setScope(scope);
-    await this._initForScope(scope);
-    this._scopeInitialized = true;
+    if (this.provider.isClientReady) {
+      await this._initForScope(scope);
+    }
   }
 
   /** Abort any in-progress enrichment job and issue a fresh token. */
   private _cancelEnrich(): void {
     this._enrichAbort.abort();
     this._enrichAbort = new AbortController();
+  }
+
+  private _cancelVulnScan(): void {
+    this._vulnAbort.abort();
+    this._vulnAbort = new AbortController();
   }
 
   // ─── Message router ────────────────────────────────────────────────────────
@@ -125,18 +174,31 @@ export class WebviewMessageBroker {
         await this._handleRemoveMulti(msg.projects, msg.packageId);
         break;
 
+      case 'ROLLBACK_FAILED_UPDATE':
+        await this._handleRollbackFailedUpdate();
+        break;
+
+      case 'UPDATE_PACKAGES_BATCH':
+        await this._handleUpdateBatch(msg.kind, msg.items, msg.includePrerelease, msg.family);
+        break;
+
       case 'REFRESH_PACKAGES':
         this._cancelEnrich();
+        this._cancelVulnScan();
         await this._handleRefresh();
         break;
 
       case 'FORCE_REFRESH':
         this._cancelEnrich();
+        this._cancelVulnScan();
         this._cache.clear();
-        await this._handleRefresh();
+        this.provider.postMessage({ type: 'REFRESH_STARTED' });
+        await this._handleRefresh({ restore: true });
         break;
 
       case 'SET_PRERELEASE_SETTING':
+        this._cancelEnrich();
+        this._cancelVulnScan();
         await setIncludePrerelease(msg.prerelease);
         // Prerelease flag affects which versions are returned — invalidate cache
         this._cache.clear();
@@ -159,6 +221,8 @@ export class WebviewMessageBroker {
   // ─── Handlers ─────────────────────────────────────────────────────────────
 
   private async _handleWebviewReady(): Promise<void> {
+    this.provider.markClientReady();
+
     const scope = this.provider.getCurrentScope();
 
     if (!scope) {
@@ -176,14 +240,6 @@ export class WebviewMessageBroker {
           includePrerelease: getConfig().includePrerelease,
         });
       }
-      return;
-    }
-
-    // If activateScope already ran and pushed INIT_STATE, skip re-init.
-    // This prevents a double load when the user opens via context menu:
-    //   activateScope() → _initForScope() → webview mounts → WEBVIEW_READY → here
-    if (this._scopeInitialized) {
-      this._scopeInitialized = false; // reset for next time
       return;
     }
 
@@ -228,6 +284,7 @@ export class WebviewMessageBroker {
 
   private async _initForScope(scope: WorkspaceScope): Promise<void> {
     this._cancelEnrich();
+    this._cancelVulnScan();
     const startDir =
       scope.kind === 'solution'
         ? path.dirname(scope.solutionPath)
@@ -273,8 +330,9 @@ export class WebviewMessageBroker {
 
     this.provider.postMessage({ type: 'INIT_STATE', scope, sources, configChain, includePrerelease: getConfig().includePrerelease });
 
-    // Send initial package lists
-    await this._handleRefresh();
+    // List with --no-restore so the UI fills even if restore is broken;
+    // restore runs in parallel and reports NU1605 etc. in the banner.
+    await this._handleRefresh({ restore: true });
   }
 
   private async _handleSearch(
@@ -371,31 +429,291 @@ export class WebviewMessageBroker {
     packageId: string,
     version: string,
   ): Promise<void> {
-    const result = await this.backend.installPackage(projectPath, packageId, version);
-    if (result.timedOut) {
+    const attempts = await this._installOnProjects(packageId, version, [projectPath]);
+    await this._finishInstallAttempts(packageId, version, attempts);
+  }
+
+  private async _handleInstallMulti(
+    projects: string[],
+    packageId: string,
+    version: string,
+  ): Promise<void> {
+    const attempts = await this._installOnProjects(packageId, version, projects);
+    await this._finishInstallAttempts(packageId, version, attempts);
+  }
+
+  private async _installOnProjects(
+    packageId: string,
+    version: string,
+    projects: string[],
+    onProjectDone?: (projectPath: string, ok: boolean) => void,
+  ): Promise<InstallAttempt[]> {
+    const prepared = await Promise.all(
+      projects.map(async (projectPath) => {
+        const snapshots = await snapshotProjectFiles(projectPath);
+        return {
+          projectPath,
+          snapshots,
+          previousVersion: readPackageVersionFromSnapshots(snapshots, packageId),
+        };
+      }),
+    );
+    return Promise.all(
+      prepared.map(async (p) => {
+        const result = await this.backend.installPackage(p.projectPath, packageId, version);
+        onProjectDone?.(p.projectPath, isCliOperationSuccess(result));
+        return { ...p, result };
+      }),
+    );
+  }
+
+  private async _handleUpdateBatch(
+    kind: 'all' | 'family' | 'other',
+    items: BatchUpdateItem[],
+    includePrerelease: boolean,
+    family?: string,
+  ): Promise<void> {
+    if (this._batchRunning) {
       this.provider.postMessage({
-        type: 'OPERATION_TIMEOUT',
-        command: `dotnet add ${projectPath} package ${packageId} --version ${version}`,
+        type: 'ERROR',
+        message: 'A batch update is already running',
       });
       return;
     }
-    if (result.exitCode !== 0) {
+
+    const queued = items.filter((i) => i.packageId && i.toVersion && i.projects.length > 0);
+    if (queued.length === 0) {
+      this.provider.postMessage({ type: 'ERROR', message: 'No packages to update' });
+      return;
+    }
+
+    this._batchRunning = true;
+    const jobId = `batch-${Date.now()}`;
+    const job: BatchUpdateJob = {
+      id: jobId,
+      kind,
+      family,
+      includePrerelease,
+      startedAt: Date.now(),
+      items: queued.map((item) => ({
+        ...item,
+        status: 'pending' as const,
+        succeededProjects: [],
+        completedProjects: [],
+      })),
+    };
+    this.provider.postMessage({ type: 'BATCH_UPDATE_STARTED', job });
+
+    const keepFailures: InstallAttempt[] = [];
+
+    try {
+      for (const item of queued) {
+        this._postBatchItem(jobId, item.packageId, 'running', [], undefined, []);
+        const succeededSoFar: string[] = [];
+        const completedSoFar: string[] = [];
+        const attempts = await this._installOnProjects(
+          item.packageId,
+          item.toVersion,
+          item.projects,
+          (projectPath, ok) => {
+            completedSoFar.push(projectPath);
+            if (ok) succeededSoFar.push(projectPath);
+            this._postBatchItem(
+              jobId,
+              item.packageId,
+              'running',
+              [...succeededSoFar],
+              undefined,
+              [...completedSoFar],
+            );
+          },
+        );
+        const outcome = await this._finishInstallAttempts(item.packageId, item.toVersion, attempts, {
+          notify: false,
+          refresh: false,
+        });
+        if (outcome.keepAttempts.length > 0) {
+          keepFailures.push(...outcome.keepAttempts);
+        }
+        this._postBatchItem(
+          jobId,
+          item.packageId,
+          outcome.status,
+          outcome.succeeded,
+          outcome.error,
+          item.projects,
+        );
+      }
+
+      if (keepFailures.length > 0) {
+        this._pendingRollback = { packageId: queued[queued.length - 1].packageId, attempts: keepFailures };
+      }
+
+      this.provider.postMessage({
+        type: 'BATCH_UPDATE_FINISHED',
+        jobId,
+        canRollback: keepFailures.length > 0,
+      });
+      await this._refreshAfterMutation({ notifyListError: false });
+    } finally {
+      this._batchRunning = false;
+    }
+  }
+
+  private _postBatchItem(
+    jobId: string,
+    packageId: string,
+    status: BatchItemStatus,
+    succeededProjects: string[],
+    error?: string,
+    completedProjects?: string[],
+  ): void {
+    this.provider.postMessage({
+      type: 'BATCH_UPDATE_ITEM',
+      jobId,
+      packageId,
+      status,
+      succeededProjects,
+      completedProjects: completedProjects ?? succeededProjects,
+      error,
+    });
+  }
+
+  private async _finishInstallAttempts(
+    packageId: string,
+    version: string,
+    attempts: InstallAttempt[],
+    opts: { notify?: boolean; refresh?: boolean } = {},
+  ): Promise<{
+    status: BatchItemStatus;
+    succeeded: string[];
+    error?: string;
+    keepAttempts: InstallAttempt[];
+  }> {
+    const notify = opts.notify !== false;
+    const refresh = opts.refresh !== false;
+
+    const timedOut = attempts.find((a) => a.result.timedOut);
+    if (timedOut && attempts.length === 1) {
+      if (notify) {
+        this.provider.postMessage({
+          type: 'OPERATION_TIMEOUT',
+          command: `dotnet add ${timedOut.projectPath} package ${packageId} --version ${version}`,
+        });
+      }
+      return { status: 'timeout', succeeded: [], error: 'Operation timed out', keepAttempts: [] };
+    }
+
+    const succeededAttempts = attempts.filter((a) => isCliOperationSuccess(a.result));
+    const failed = attempts.filter((a) => !isCliOperationSuccess(a.result));
+    const succeeded = succeededAttempts.map((a) => a.projectPath);
+
+    if (failed.length === 0) {
+      if (notify) {
+        this._pendingRollback = null;
+        this.provider.postMessage({
+          type: 'OPERATION_SUCCESS',
+          operation: 'install',
+          packageId,
+          affectedProjects: succeeded,
+        });
+      } else if (succeededAttempts.length > 0) {
+        this._patchInstalledVersions(packageId, version, succeededAttempts);
+      }
+      if (refresh) await this._refreshAfterMutation();
+      return { status: 'ok', succeeded, keepAttempts: [] };
+    }
+
+    const mode = getConfig().onFailedUpdate;
+    let rollbackApplied = false;
+    let keepAttempts: InstallAttempt[] = [];
+    if (mode === 'rollback') {
+      await this._restoreAttempts(failed);
+      if (notify) this._pendingRollback = null;
+      rollbackApplied = true;
+      if (succeededAttempts.length > 0) {
+        this._patchInstalledVersions(packageId, version, succeededAttempts);
+      }
+    } else {
+      keepAttempts = failed;
+      if (notify) this._pendingRollback = { packageId, attempts: failed };
+      this._patchInstalledVersions(packageId, version, [...succeededAttempts, ...failed]);
+    }
+
+    const failures = failed.map((a) => cliFailure(a.projectPath, a.result, {
+      previousVersion: a.previousVersion,
+      attemptedVersion: version,
+    }));
+
+    if (notify) {
       this.provider.postMessage({
         type: 'OPERATION_ERROR',
         operation: 'install',
         packageId,
-        failures: [{ projectPath, stderr: result.stderr, exitCode: result.exitCode }],
-        succeededProjects: [],
+        failures,
+        succeededProjects: succeeded,
+        rollbackMode: mode,
+        rollbackApplied,
+        canRollback: mode === 'keep',
       });
-      return;
     }
+
+    if (refresh) {
+      await this._refreshAfterMutation({ notifyListError: false });
+    }
+
+    return {
+      status: 'error',
+      succeeded,
+      error: failures.map((f) =>
+        `${path.basename(f.projectPath, path.extname(f.projectPath))}:\n${f.stderr}`
+      ).join('\n\n'),
+      keepAttempts,
+    };
+  }
+
+  private async _restoreAttempts(attempts: InstallAttempt[]): Promise<void> {
+    for (const attempt of attempts) {
+      await restoreFileSnapshots(attempt.snapshots);
+      await this.backend.restoreProject(attempt.projectPath);
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: 'rollback project files',
+        args: attempt.snapshots.map((s) => s.path),
+        stdout: attempt.previousVersion
+          ? `Restored PackageReference to ${attempt.previousVersion}`
+          : 'Removed newly added PackageReference',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+    }
+  }
+
+  private _patchInstalledVersions(
+    packageId: string,
+    version: string,
+    attempts: InstallAttempt[],
+  ): void {
     this.provider.postMessage({
-      type: 'OPERATION_SUCCESS',
-      operation: 'install',
-      packageId,
-      affectedProjects: [projectPath],
+      type: 'INSTALLED_PACKAGES_PATCH',
+      packages: attempts.map((a) => ({
+        id: packageId,
+        requestedVersion: version,
+        resolvedVersion: version,
+        projectPath: a.projectPath,
+      })),
     });
-    await this._refreshPackagesForProjects([projectPath]);
+  }
+
+  private async _handleRollbackFailedUpdate(): Promise<void> {
+    const pending = this._pendingRollback;
+    if (!pending) return;
+    this._pendingRollback = null;
+    await this._restoreAttempts(pending.attempts);
+    this.provider.postMessage({ type: 'ROLLBACK_COMPLETE', packageId: pending.packageId });
+    await this._refreshAfterMutation();
   }
 
   private async _handleRemoveSingle(
@@ -410,14 +728,15 @@ export class WebviewMessageBroker {
       });
       return;
     }
-    if (result.exitCode !== 0) {
+    if (!isCliOperationSuccess(result)) {
       this.provider.postMessage({
         type: 'OPERATION_ERROR',
         operation: 'remove',
         packageId,
-        failures: [{ projectPath, stderr: result.stderr, exitCode: result.exitCode }],
+        failures: [cliFailure(projectPath, result)],
         succeededProjects: [],
       });
+      await this._refreshAfterMutation({ notifyListError: false });
       return;
     }
     this.provider.postMessage({
@@ -426,34 +745,7 @@ export class WebviewMessageBroker {
       packageId,
       affectedProjects: [projectPath],
     });
-    await this._refreshPackagesForProjects([projectPath]);
-  }
-
-  private async _handleInstallMulti(
-    projects: string[],
-    packageId: string,
-    version: string,
-  ): Promise<void> {
-    const results = await Promise.all(
-      projects.map(async (p) => ({
-        projectPath: p,
-        result: await this.backend.installPackage(p, packageId, version),
-      })),
-    );
-
-    const failures = results
-      .filter((r) => r.result.exitCode !== 0 && !r.result.timedOut)
-      .map((r) => ({ projectPath: r.projectPath, stderr: r.result.stderr, exitCode: r.result.exitCode }));
-    const succeeded = results
-      .filter((r) => r.result.exitCode === 0)
-      .map((r) => r.projectPath);
-
-    if (failures.length > 0) {
-      this.provider.postMessage({ type: 'OPERATION_ERROR', operation: 'install', packageId, failures, succeededProjects: succeeded });
-    } else {
-      this.provider.postMessage({ type: 'OPERATION_SUCCESS', operation: 'install', packageId, affectedProjects: succeeded });
-    }
-    await this._refreshPackagesForProjects(succeeded);
+    await this._refreshAfterMutation();
   }
 
   private async _handleRemoveMulti(
@@ -468,10 +760,10 @@ export class WebviewMessageBroker {
     );
 
     const failures = results
-      .filter((r) => r.result.exitCode !== 0 && !r.result.timedOut)
-      .map((r) => ({ projectPath: r.projectPath, stderr: r.result.stderr, exitCode: r.result.exitCode }));
+      .filter((r) => !isCliOperationSuccess(r.result))
+      .map((r) => cliFailure(r.projectPath, r.result));
     const succeeded = results
-      .filter((r) => r.result.exitCode === 0)
+      .filter((r) => isCliOperationSuccess(r.result))
       .map((r) => r.projectPath);
 
     if (failures.length > 0) {
@@ -479,61 +771,145 @@ export class WebviewMessageBroker {
     } else {
       this.provider.postMessage({ type: 'OPERATION_SUCCESS', operation: 'remove', packageId, affectedProjects: succeeded });
     }
-    await this._refreshPackagesForProjects(succeeded);
+    await this._refreshAfterMutation({ notifyListError: failures.length === 0 });
   }
 
-  private async _handleRefresh(): Promise<void> {
+  private async _refreshAfterMutation(opts?: { notifyListError?: boolean }): Promise<void> {
+    await this._handleRefresh(opts);
+  }
+
+  private async _handleRefresh(opts?: { notifyListError?: boolean; restore?: boolean }): Promise<void> {
     const scope = this.provider.getCurrentScope();
     if (!scope) return;
 
     if (scope.kind === 'solution') {
-      // One CLI call per list operation covers all projects — much faster
-      await this._refreshForSolution(scope.solutionPath);
+      await this._refreshForSolution(scope.solutionPath, opts);
     } else if (scope.projectPath) {
-      await this._refreshPackagesForProjects([scope.projectPath]);
+      await this._refreshPackagesForProjects([scope.projectPath], opts);
     }
   }
 
-  private async _refreshForSolution(solutionPath: string): Promise<void> {
-    const { installed, implicit } = await this.backend.listAllForSolution(solutionPath);
+  /**
+   * Push new lists only when we actually parsed packages. A failed restore makes
+   * `dotnet list` return `{ problems: [...] }` with no projects — posting that
+   * as INSTALLED_PACKAGES: [] wipes the UI.
+   */
+  private _applyListedPackages(
+    listed: PackageListResult,
+    opts?: { notifyListError?: boolean },
+  ): void {
+    const notifyListError = opts?.notifyListError !== false;
+    const empty = listed.installed.length === 0 && listed.implicit.length === 0;
 
-    this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: installed });
-    this.provider.postMessage({ type: 'IMPLICIT_PACKAGES',  packages: implicit  });
+    // Failed restore → list JSON is only `problems`, no projects. Never replace
+    // the UI with []. After a failed add we also skip posting an empty list
+    // even if the backend omitted `error` (csproj may already have changed).
+    if (empty && (listed.error || !notifyListError)) {
+      if (listed.error && notifyListError) {
+        this.provider.postMessage({
+          type: 'ERROR',
+          message: 'Failed to refresh package list',
+          details: listed.error,
+        });
+      }
+      return;
+    }
 
-    if (installed.length > 0) {
+    this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: listed.installed });
+    this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
+
+    this._cancelVulnScan();
+    const vulnSignal = this._vulnAbort.signal;
+    void this._scanVulnerabilities(listed, vulnSignal);
+
+    if (listed.installed.length > 0) {
+      this._cancelEnrich();
       const signal = this._enrichAbort.signal;
-      void this._enrichInstalledPackages(installed, signal);
+      void this._enrichInstalledPackages(listed.installed, signal);
     }
   }
 
-  private async _refreshPackagesForProjects(projectPaths: string[]): Promise<void> {
+  private async _refreshForSolution(
+    solutionPath: string,
+    opts?: { notifyListError?: boolean; restore?: boolean },
+  ): Promise<void> {
+    const restoreP = opts?.restore ? this.backend.restoreProject(solutionPath) : undefined;
+    const listed = await this.backend.listAllForSolution(solutionPath);
+    this._applyListedPackages(listed, opts);
+    if (restoreP) await this._reportRestoreIfCurrent(solutionPath, await restoreP);
+  }
+
+  private async _refreshPackagesForProjects(
+    projectPaths: string[],
+    opts?: { notifyListError?: boolean; restore?: boolean },
+  ): Promise<void> {
+    if (projectPaths.length === 0) return;
+
+    const restoreP = opts?.restore ? this.backend.restoreProject(projectPaths[0]) : undefined;
     const concurrency = getConfig().enrichConcurrency;
+    const results: PackageListResult[] = new Array(projectPaths.length);
 
-    const installedResults: import('./types').InstalledPackage[][] = new Array(projectPaths.length);
-    const implicitResults:  import('./types').ImplicitPackage[][]  = new Array(projectPaths.length);
-
-    // One CLI call per project (--include-transitive covers both lists)
     await runWithConcurrency(
       projectPaths.map((p, i) => async () => {
-        const { installed, implicit } = await this.backend.listAllForProject(p);
-        installedResults[i] = installed;
-        implicitResults[i]  = implicit;
+        results[i] = await this.backend.listAllForProject(p);
       }),
       concurrency,
     );
 
-    const installed = installedResults.flat();
-    const implicit  = implicitResults.flat();
+    const listed: PackageListResult = {
+      installed: results.flatMap((r) => r.installed),
+      implicit: results.flatMap((r) => r.implicit),
+      error: results.find((r) => r.error)?.error,
+    };
+    this._applyListedPackages(listed, opts);
+    if (restoreP) await this._reportRestoreIfCurrent(projectPaths[0], await restoreP);
+  }
 
-    // Send immediately — UI renders the list right away
-    this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: installed });
-    this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: implicit });
+  private _reportRestoreIfCurrent(targetPath: string, result: CliResult): void {
+    const scope = this.provider.getCurrentScope();
+    if (!scope) return;
+    const current = scope.kind === 'solution' ? scope.solutionPath : scope.projectPath;
+    if (!current || !pathsEqual(current, targetPath)) return;
+    if (isCliOperationSuccess(result)) return;
 
-    // Enrich in background — fire-and-forget, each update pushed individually
-    if (installed.length > 0) {
-      const signal = this._enrichAbort.signal;
-      void this._enrichInstalledPackages(installed, signal);
-    }
+    const dump = cliOutputText(result);
+    const details = result.timedOut
+      ? ['dotnet restore timed out', dump].filter((s) => s.trim().length > 0).join('\n')
+      : dump;
+
+    this.provider.postMessage({
+      type: 'ERROR',
+      message: 'Restore failed',
+      details: details || 'dotnet restore failed',
+    });
+  }
+
+  private async _scanVulnerabilities(
+    listed: PackageListResult,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const scope = this.provider.getCurrentScope();
+    if (!scope || signal.aborted) return;
+
+    const targetPath = scope.kind === 'solution' ? scope.solutionPath : scope.projectPath;
+    if (!targetPath) return;
+
+    const findings = await collectVulnerabilityFindings(
+      [
+        new DotnetVulnerableProvider(this.backend),
+        new UserScriptVulnerabilityProvider(this.logger),
+      ],
+      {
+        targetPath,
+        cwd: path.dirname(targetPath),
+        scope,
+        installed: listed.installed,
+        implicit: listed.implicit,
+        signal,
+      },
+    );
+    if (signal.aborted) return;
+    this.provider.postMessage({ type: 'VULNERABILITIES', findings });
   }
 
   /** Fetches latestVersion + sourceName for each unique package id and pushes
@@ -574,7 +950,10 @@ export class WebviewMessageBroker {
       }
     }
 
-    if (needsFetch.length === 0) return;
+    if (needsFetch.length === 0) {
+      this.provider.postMessage({ type: 'ENRICH_PROGRESS', done: uniqueIds.length, total: uniqueIds.length });
+      return;
+    }
 
     const total = uniqueIds.length;
     let done = uniqueIds.length - needsFetch.length;

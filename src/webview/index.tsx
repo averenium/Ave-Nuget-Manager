@@ -1,14 +1,17 @@
 import React from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 import { App } from './App';
-import { sendMessage } from './vscodeApi';
 import './styles/global.css';
+
+declare global {
+  interface Window {
+    __nugetReactRoot?: Root;
+  }
+}
 
 const rootEl = document.getElementById('root');
 if (rootEl) {
-  const root = createRoot(rootEl);
+  const root = window.__nugetReactRoot ?? createRoot(rootEl);
+  window.__nugetReactRoot = root;
   root.render(<App />);
-
-  // Notify extension host that the webview is ready to receive messages
-  sendMessage({ type: 'WEBVIEW_READY' });
 }

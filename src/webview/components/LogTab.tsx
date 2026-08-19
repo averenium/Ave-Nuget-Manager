@@ -48,7 +48,7 @@ function LogEntryRow({ entry }: { entry: LogEntry }) {
     : entry.exitCode !== null ? `exit ${entry.exitCode}` : '—';
 
   // Full command = command + args joined
-  const fullCommand = [entry.command, ...entry.args].join(' ');
+  const fullCommand = entry.command;
 
   // All non-empty output lines
   const stdoutLines = splitLines(entry.stdout);

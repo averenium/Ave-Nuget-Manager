@@ -174,19 +174,19 @@ describe('Property 19 — cwd equals dirname of project file', () => {
 // ─── Property 20: list command args ──────────────────────────────────────────
 
 describe('Property 20 — list command strings are correctly formed', () => {
-  it('listInstalled args = [list, p, package, --format, json]', async () => {
+  it('listInstalled args = [list, p, package, --format, json, --no-restore]', async () => {
     await fc.assert(
       fc.asyncProperty(absoluteProjectPath, async (p) => {
         const { runner, calls } = makeRunnerWithCapture();
         const backend = new CliBackend(runner);
         await backend.listInstalled(p);
-        expect(calls[0].args).toEqual(['list', p, 'package', '--format', 'json']);
+        expect(calls[0].args).toEqual(['list', p, 'package', '--format', 'json', '--no-restore']);
       }),
       { numRuns: 100 },
     );
   });
 
-  it('listTransitive args = [list, p, package, --include-transitive, --format, json]', async () => {
+  it('listTransitive args = [list, p, package, --include-transitive, --format, json, --no-restore]', async () => {
     await fc.assert(
       fc.asyncProperty(absoluteProjectPath, async (p) => {
         const { runner, calls } = makeRunnerWithCapture();
@@ -197,7 +197,7 @@ describe('Property 20 — list command strings are correctly formed', () => {
         const backend = new CliBackend(runner);
         await backend.listTransitive(p);
         expect(calls[0].args).toEqual([
-          'list', p, 'package', '--include-transitive', '--format', 'json',
+          'list', p, 'package', '--include-transitive', '--format', 'json', '--no-restore',
         ]);
       }),
       { numRuns: 100 },

@@ -8,6 +8,10 @@ import type {
   NuGetConfigFile,
   LogEntry,
   OperationFailure,
+  BatchUpdateItem,
+  BatchUpdateJob,
+  BatchItemStatus,
+  VulnerabilityFinding,
 } from './types';
 
 // ─────────────────────────────────────────────
@@ -31,6 +35,18 @@ export type WebviewMessage =
   // Install / Remove — Solution scope (after popup confirmation)
   | { type: 'INSTALL_PACKAGE_MULTI'; projects: string[]; packageId: string; version: string }
   | { type: 'REMOVE_PACKAGE_MULTI'; projects: string[]; packageId: string }
+
+  /** Restore project files snapshotted before a failed add (`onFailedUpdate: keep`). */
+  | { type: 'ROLLBACK_FAILED_UPDATE' }
+
+  /** Bump many packages; each item uses its own target version (prerelease already applied in latest). */
+  | {
+      type: 'UPDATE_PACKAGES_BATCH';
+      kind: 'all' | 'family' | 'other';
+      family?: string;
+      includePrerelease: boolean;
+      items: BatchUpdateItem[];
+    }
 
   // Refresh
   | { type: 'REFRESH_PACKAGES' }
@@ -59,8 +75,10 @@ export type ExtensionMessage =
   // Packages
   | { type: 'INSTALLED_PACKAGES'; packages: InstalledPackage[] }
   | { type: 'IMPLICIT_PACKAGES'; packages: ImplicitPackage[] }
+  | { type: 'INSTALLED_PACKAGES_PATCH'; packages: InstalledPackage[] }
   | { type: 'PACKAGE_INFO_UPDATE'; packageId: string; latestVersion: string; sourceName: string }
   | { type: 'ENRICH_PROGRESS'; done: number; total: number }
+  | { type: 'VULNERABILITIES'; findings: VulnerabilityFinding[] }
   | { type: 'SEARCH_RESULTS'; query: string; packages: AvailablePackage[] }
   | { type: 'PACKAGE_METADATA'; metadata: PackageMetadata }
   | { type: 'ALL_VERSIONS'; packageId: string; versions: string[] }
@@ -79,8 +97,28 @@ export type ExtensionMessage =
       failures: OperationFailure[];
       /** Projects that succeeded despite others failing */
       succeededProjects: string[];
+      rollbackMode?: 'rollback' | 'keep';
+      rollbackApplied?: boolean;
+      canRollback?: boolean;
     }
+  | { type: 'ROLLBACK_COMPLETE'; packageId: string }
   | { type: 'OPERATION_TIMEOUT'; command: string }
+
+  | { type: 'BATCH_UPDATE_STARTED'; job: BatchUpdateJob }
+  | {
+      type: 'BATCH_UPDATE_ITEM';
+      jobId: string;
+      packageId: string;
+      status: BatchItemStatus;
+      succeededProjects: string[];
+      /** Finished project attempts (success or fail). Falls back to succeededProjects. */
+      completedProjects?: string[];
+      error?: string;
+    }
+  | { type: 'BATCH_UPDATE_FINISHED'; jobId: string; canRollback?: boolean }
+
+  /** Force refresh began — drop the previous operation banner so restore can replace it. */
+  | { type: 'REFRESH_STARTED' }
 
   // Sources
   | { type: 'CONFIG_CHAIN_UPDATE'; configChain: NuGetConfigFile[] }

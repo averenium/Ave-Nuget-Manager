@@ -5,6 +5,7 @@
  * We unit-test via a thin CliRunner mock that captures `run()` calls.
  */
 
+import * as path from 'path';
 import { CliBackend } from '../../backend/cliBackend';
 import { Logger } from '../../logger';
 import { CliRunner } from '../../cliRunner';
@@ -34,7 +35,7 @@ describe('CliBackend — command construction', () => {
   // ── Property 20: list commands ──────────────────────────────────────────────
 
   describe('listInstalled', () => {
-    it('uses exactly [list, <path>, package, --format, json]', async () => {
+    it('uses exactly [list, <path>, package, --format, json, --no-restore]', async () => {
       const { runner, calls } = makeRunnerCapture();
       const backend = new CliBackend(runner);
       const p = '/abs/path/Foo.csproj';
@@ -42,7 +43,7 @@ describe('CliBackend — command construction', () => {
       await backend.listInstalled(p);
 
       expect(calls).toHaveLength(1);
-      expect(calls[0].args).toEqual(['list', p, 'package', '--format', 'json']);
+      expect(calls[0].args).toEqual(['list', p, 'package', '--format', 'json', '--no-restore']);
     });
 
     it('cwd is dirname of project file (Property 19)', async () => {
@@ -57,7 +58,7 @@ describe('CliBackend — command construction', () => {
   });
 
   describe('listTransitive', () => {
-    it('uses exactly [list, <path>, package, --include-transitive, --format, json]', async () => {
+    it('uses exactly [list, <path>, package, --include-transitive, --format, json, --no-restore]', async () => {
       const { runner, calls } = makeRunnerCapture();
       const backend = new CliBackend(runner);
       const p = '/abs/Bar.csproj';
@@ -65,8 +66,52 @@ describe('CliBackend — command construction', () => {
       await backend.listTransitive(p);
 
       expect(calls[0].args).toEqual([
-        'list', p, 'package', '--include-transitive', '--format', 'json',
+        'list', p, 'package', '--include-transitive', '--format', 'json', '--no-restore',
       ]);
+    });
+  });
+
+  describe('listAllForSolution', () => {
+    it('uses --include-transitive --format json --no-restore', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      const sln = '/abs/My.sln';
+
+      await backend.listAllForSolution(sln);
+
+      expect(calls[0].args).toEqual([
+        'list', sln, 'package', '--include-transitive', '--format', 'json', '--no-restore',
+      ]);
+    });
+  });
+
+  describe('listAllForProject', () => {
+    it('uses --include-transitive --format json --no-restore', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      const p = '/abs/Foo.csproj';
+
+      await backend.listAllForProject(p);
+
+      expect(calls[0].args).toEqual([
+        'list', p, 'package', '--include-transitive', '--format', 'json', '--no-restore',
+      ]);
+    });
+  });
+
+  describe('listVulnerable', () => {
+    it('uses --vulnerable --include-transitive --format json --no-restore', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      const sln = '/abs/My.sln';
+
+      await backend.listVulnerable(sln);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].args).toEqual([
+        'list', sln, 'package', '--vulnerable', '--include-transitive', '--format', 'json', '--no-restore',
+      ]);
+      expect(calls[0].cwd).toBe(path.dirname(sln));
     });
   });
 
@@ -147,6 +192,15 @@ describe('CliBackend — command construction', () => {
     });
   });
 
+  describe('restoreProject', () => {
+    it('uses exactly [restore, <projectPath>]', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      await backend.restoreProject('/abs/Foo.csproj');
+      expect(calls[0].args).toEqual(['restore', '/abs/Foo.csproj']);
+    });
+  });
+
   // ── Property 14: remove command ─────────────────────────────────────────────
 
   describe('removePackage', () => {
@@ -217,6 +271,7 @@ describe('CliBackend — output parsing', () => {
     expect(result[0].requestedVersion).toBe('13.0.3');
     expect(result[0].resolvedVersion).toBe('13.0.3');
     expect(result[0].projectPath).toBe('/p/Foo.csproj');
+    expect(result[0].framework).toBe('net8.0');
   });
 
   it('parses transitive packages from dotnet list --include-transitive', async () => {
@@ -248,6 +303,7 @@ describe('CliBackend — output parsing', () => {
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('Microsoft.Extensions.Logging');
     expect(result[0].resolvedVersion).toBe('8.0.0');
+    expect(result[0].framework).toBe('net8.0');
   });
 
   it('deduplicates search results across config files by id (first-found wins)', async () => {
@@ -287,6 +343,92 @@ describe('CliBackend — output parsing', () => {
 
     expect(await backend.listInstalled('/p/Foo.csproj')).toEqual([]);
     expect(await backend.listTransitive('/p/Foo.csproj')).toEqual([]);
+  });
+
+  it('resolves relative project paths from dotnet list against the solution directory', async () => {
+    const listJson = JSON.stringify({
+      version: 1,
+      projects: [
+        {
+          path: 'src\\App\\App.csproj',
+          frameworks: [
+            {
+              framework: 'net8.0',
+              topLevelPackages: [
+                { id: 'Newtonsoft.Json', requestedVersion: '13.0.1', resolvedVersion: '13.0.1' },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const logger = new Logger();
+    const runner = new CliRunner(logger);
+    jest.spyOn(runner, 'run').mockResolvedValue(makeSuccessResult(listJson));
+    const backend = new CliBackend(runner);
+
+    const result = await backend.listAllForSolution('/sol/My.sln');
+    const expected = path.normalize(path.resolve('/sol', 'src\\App\\App.csproj'));
+
+    expect(result.installed).toHaveLength(1);
+    expect(result.installed[0].projectPath).toBe(expected);
+  });
+
+  it('returns error (not a silent empty list) when restore failed and list has only problems', async () => {
+    const restoreFailedJson = JSON.stringify({
+      version: 1,
+      problems: [
+        { text: 'Restore failed. Run `dotnet restore` for more details on the issue.', level: 'error' },
+      ],
+    });
+    const logger = new Logger();
+    const runner = new CliRunner(logger);
+    jest.spyOn(runner, 'run').mockResolvedValue({
+      exitCode: 1,
+      stdout: restoreFailedJson,
+      stderr: '',
+      timedOut: false,
+    });
+    const backend = new CliBackend(runner);
+
+    const result = await backend.listAllForSolution('/sol/My.sln');
+    expect(result.installed).toEqual([]);
+    expect(result.implicit).toEqual([]);
+    expect(result.error).toContain('Restore failed');
+  });
+
+  it('still returns packages when list exits non-zero but JSON includes projects', async () => {
+    const listJson = JSON.stringify({
+      version: 1,
+      problems: [{ text: 'warning', level: 'warning' }],
+      projects: [
+        {
+          path: '/p/App.csproj',
+          frameworks: [
+            {
+              framework: 'net8.0',
+              topLevelPackages: [
+                { id: 'Newtonsoft.Json', requestedVersion: '13.0.1', resolvedVersion: '13.0.1' },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const logger = new Logger();
+    const runner = new CliRunner(logger);
+    jest.spyOn(runner, 'run').mockResolvedValue({
+      exitCode: 1,
+      stdout: listJson,
+      stderr: '',
+      timedOut: false,
+    });
+    const backend = new CliBackend(runner);
+
+    const result = await backend.listAllForSolution('/sol/My.sln');
+    expect(result.error).toBeUndefined();
+    expect(result.installed).toHaveLength(1);
   });
 
   it('returns empty array on timeout', async () => {

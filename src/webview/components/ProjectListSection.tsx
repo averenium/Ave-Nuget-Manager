@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import type { InstalledPackage, ProjectInfo } from '../../types';
+import { packageIdsEqual, pathsEqual } from '../../pathCompare';
+import { VersionSelect } from './VersionSelector';
 
 interface Props {
   packageId: string;
@@ -14,7 +16,7 @@ export function ProjectListSection({ packageId, projects, installed, allVersions
 
   // Only list projects that have this package installed
   const projectsWithPkg = projects.filter((p) =>
-    installed.some((i) => i.id === packageId && i.projectPath === p.absolutePath),
+    installed.some((i) => packageIdsEqual(i.id, packageId) && pathsEqual(i.projectPath, p.absolutePath)),
   );
 
   if (projectsWithPkg.length === 0) {
@@ -51,12 +53,23 @@ interface RowProps {
 
 function ProjectRow({ packageId, project, installed, allVersions, state, dispatch, send }: RowProps) {
   const p = project.absolutePath;
-  const currentPkg = installed.find((i) => i.id === packageId && i.projectPath === p);
-  const currentVersion = state.detail.projectVersions[p] ?? currentPkg?.resolvedVersion ?? allVersions[0] ?? '';
-  const isLoading = state.detail.projectLoadingSet.has(p);
-  const error = state.detail.projectErrors[p];
+  const currentPkg = installed.find(
+    (i) => packageIdsEqual(i.id, packageId) && pathsEqual(i.projectPath, p),
+  );
+  const installedVersion = Object.entries(state.detail.projectVersions)
+    .find(([k]) => pathsEqual(k, p))?.[1]
+    ?? currentPkg?.resolvedVersion
+    ?? '';
+  const currentVersion = installedVersion || allVersions[0] || '';
+  const isLoading = [...state.detail.projectLoadingSet].some((k) => pathsEqual(k, p));
+  const errorKey = Object.keys(state.detail.projectErrors).find((k) => pathsEqual(k, p));
+  const error = errorKey ? state.detail.projectErrors[errorKey] : undefined;
 
   const [localVersion, setLocalVersion] = useState(currentVersion);
+
+  useEffect(() => {
+    if (installedVersion) setLocalVersion(installedVersion);
+  }, [installedVersion]);
 
   const handleApply = async () => {
     dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
@@ -74,16 +87,13 @@ function ProjectRow({ packageId, project, installed, allVersions, state, dispatc
     <div className="project-row">
       <span className="project-row__name" title={p}>{project.name}</span>
 
-      <select
-        value={localVersion}
-        onChange={(e) => setLocalVersion(e.target.value)}
+      <VersionSelect
+        versions={allVersions}
+        selected={localVersion}
         disabled={isLoading}
-        aria-label={`Version for ${project.name}`}
-      >
-        {allVersions.map((v) => (
-          <option key={v} value={v}>{v}</option>
-        ))}
-      </select>
+        label={`Version for ${project.name}`}
+        onChange={setLocalVersion}
+      />
 
       <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
         <button

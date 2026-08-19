@@ -3,10 +3,26 @@ import { useNugetManager } from '../context/NugetManagerContext';
 import { VersionSelector } from './VersionSelector';
 import { ProjectSelectionPopup } from './ProjectSelectionPopup';
 import { ProjectListSection } from './ProjectListSection';
+import { CurrentDependenciesSection } from './CurrentDependenciesSection';
+import { DetailHeader } from './DetailHeader';
+import { packageIdsEqual, pathsEqual } from '../../pathCompare';
+import { findingsAffectingPackage } from '../../vulnerabilities';
+import type { VulnerabilityFinding } from '../../types';
 
 export function PackageDetailPanel() {
   const { state, dispatch, send } = useNugetManager();
   const { selectedPackageId, metadata, allVersions, isLoading, error } = state.detail;
+  const selectedDeps = selectedPackageId
+    ? [...new Set(
+      [...state.packages.installed, ...state.packages.implicit]
+        .filter((p) => packageIdsEqual(p.id, selectedPackageId))
+        .flatMap((p) => p.dependencies ?? []),
+    )]
+    : [];
+  const { direct: directFindings, via: viaFindings } = selectedPackageId
+    ? findingsAffectingPackage(state.packages.vulnerabilities, selectedPackageId, selectedDeps)
+    : { direct: [] as VulnerabilityFinding[], via: [] as VulnerabilityFinding[] };
+  const findings = [...directFindings, ...viaFindings];
   const [selectedVersion, setSelectedVersion] = useState<string>('');
   const [showPopup, setShowPopup] = useState<'install' | 'remove' | null>(null);
 
@@ -16,7 +32,7 @@ export function PackageDetailPanel() {
 
   const scope = state.scope;
   const isSolution = scope?.kind === 'solution';
-  const isInstalled = state.packages.installed.some((p) => p.id === selectedPackageId);
+  const isInstalled = state.packages.installed.some((p) => packageIdsEqual(p.id, selectedPackageId));
 
   const effectiveVersion = selectedVersion || allVersions[0] || metadata?.version || '';
 
@@ -37,7 +53,23 @@ export function PackageDetailPanel() {
     }
   };
 
+  const currentVersions = (() => {
+    const map: Record<string, string> = {};
+    if (!isSolution || scope?.kind !== 'solution') return map;
+    for (const p of scope.projects) {
+      const inst = state.packages.installed.find((i) =>
+        packageIdsEqual(i.id, selectedPackageId) && pathsEqual(i.projectPath, p.absolutePath),
+      );
+      if (inst) map[p.absolutePath] = inst.resolvedVersion;
+    }
+    return map;
+  })();
+
   const handlePopupConfirm = (projects: string[]) => {
+    for (const p of projects) {
+      dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
+      dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
+    }
     if (showPopup === 'install') {
       send({ type: 'INSTALL_PACKAGE_MULTI', projects, packageId: selectedPackageId, version: effectiveVersion });
     } else if (showPopup === 'remove') {
@@ -48,53 +80,90 @@ export function PackageDetailPanel() {
 
   return (
     <div className="detail-panel">
-      {/* ── Section 1: package name + version + actions — one row ── */}
-      <div className="detail-header">
-        <span className="detail-header__name" title={selectedPackageId}>
-          {selectedPackageId}
-        </span>
-
+      <DetailHeader
+        name={selectedPackageId}
+        actions={isInstalled ? (
+          <>
+            <button
+              className="btn btn--icon btn--primary"
+              onClick={handleInstallUpdate}
+              disabled={isLoading}
+              title="Update to selected version"
+              aria-label="Update"
+            >↑</button>
+            <button
+              className="btn btn--icon btn--danger"
+              onClick={handleRemove}
+              disabled={isLoading}
+              title="Remove package"
+              aria-label="Remove"
+            >✕</button>
+          </>
+        ) : (
+          <button
+            className="btn btn--icon btn--primary"
+            onClick={handleInstallUpdate}
+            disabled={isLoading}
+            title="Install selected version"
+            aria-label="Install"
+          >↓</button>
+        )}
+      >
         <VersionSelector
           packageId={selectedPackageId}
           versions={allVersions}
           selected={effectiveVersion}
           onChange={setSelectedVersion}
         />
-
-        <div className="detail-header__actions">
-          {isInstalled ? (
-            <>
-              <button
-                className="btn btn--icon btn--primary"
-                onClick={handleInstallUpdate}
-                disabled={isLoading}
-                title="Update to selected version"
-                aria-label="Update"
-              >↑</button>
-              <button
-                className="btn btn--icon btn--danger"
-                onClick={handleRemove}
-                disabled={isLoading}
-                title="Remove package"
-                aria-label="Remove"
-              >✕</button>
-            </>
-          ) : (
-            <button
-              className="btn btn--icon btn--primary"
-              onClick={handleInstallUpdate}
-              disabled={isLoading}
-              title="Install selected version"
-              aria-label="Install"
-            >↓</button>
-          )}
-        </div>
-      </div>
+      </DetailHeader>
 
       {(error || isLoading) && (
         <div className="detail-panel__status">
           {error && <span className="detail-panel__error" role="alert">{error}</span>}
           {isLoading && <span style={{ color: 'var(--color-tab-inactive)', fontSize: 11 }}>Loading…</span>}
+        </div>
+      )}
+
+      {findings.length > 0 && (
+        <div className="detail-section">
+          <div className="detail-section__title">Vulnerabilities</div>
+          <ul className="vuln-list">
+            {findings.map((finding, index) => {
+              const via = viaFindings.includes(finding) ? finding.packageId : undefined;
+              return (
+                <li
+                  key={`${via ?? 'direct'}:${finding.source}:${finding.id ?? finding.url ?? index}`}
+                  className={`vuln-item vuln-item--${finding.severity}${via ? ' vuln-item--via' : ''}`}
+                >
+                  <span className="vuln-item__sev">{finding.severity}</span>
+                  <span className="vuln-item__body">
+                    {via ? (
+                      <>
+                        <button
+                          type="button"
+                          className="vuln-item__via"
+                          onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: via })}
+                          title={`Open ${via}`}
+                        >
+                          via {via}
+                        </button>
+                        {' · '}
+                      </>
+                    ) : null}
+                    {finding.url ? (
+                      <a href={finding.url} target="_blank" rel="noopener noreferrer">
+                        {finding.id ?? finding.title ?? finding.url}
+                      </a>
+                    ) : (
+                      finding.id ?? finding.title ?? 'Advisory'
+                    )}
+                    {finding.version ? ` · ${finding.version}` : ''}
+                    {finding.source ? ` · ${finding.source}` : ''}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
 
@@ -182,19 +251,26 @@ export function PackageDetailPanel() {
         </div>
       )}
 
+      <CurrentDependenciesSection packageId={selectedPackageId} />
+
       {/* ── Popup ── */}
       {showPopup && scope?.kind === 'solution' && (
         <ProjectSelectionPopup
           title={showPopup === 'install'
-            ? `Install ${selectedPackageId} ${effectiveVersion}`
+            ? `${isInstalled ? 'Update' : 'Install'} ${selectedPackageId} ${effectiveVersion}`
             : `Remove ${selectedPackageId}`}
           projects={
             showPopup === 'remove'
-              ? scope.projects.filter((p) =>
-                  state.packages.installed.some((i) => i.id === selectedPackageId && i.projectPath === p.absolutePath)
-                )
+              ? scope.projects.filter((p) => p.absolutePath in currentVersions)
               : scope.projects
           }
+          initiallySelected={
+            showPopup === 'remove' || isInstalled
+              ? Object.keys(currentVersions)
+              : undefined
+          }
+          currentVersions={currentVersions}
+          targetVersion={showPopup === 'install' ? effectiveVersion : undefined}
           onConfirm={handlePopupConfirm}
           onCancel={() => setShowPopup(null)}
         />

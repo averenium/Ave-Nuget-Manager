@@ -1047,7 +1047,8 @@ export class WebviewMessageBroker {
   /** Fetches latestVersion + sourceName for each unique package id and pushes
    *  individual PACKAGE_INFO_UPDATE messages as results arrive.
    *  Uses an in-memory cache (TTL: config.cacheTtlMs) and limits concurrency
-   *  to config.enrichConcurrency parallel dotnet processes. */
+   *  to config.enrichConcurrency parallel dotnet processes.
+   *  Search errors / empty results retry once after the rest of the wave finishes. */
   private async _enrichInstalledPackages(
     installed: import('./types').InstalledPackage[],
     signal: AbortSignal,
@@ -1097,38 +1098,72 @@ export class WebviewMessageBroker {
     // Announce start
     this.provider.postMessage({ type: 'ENRICH_PROGRESS', done, total });
 
-    // Fetch missing/stale entries with concurrency limit
+    // Fetch missing/stale entries with concurrency limit. Failures (throw or
+    // empty search) wait until the rest of this wave finishes, then retry once.
+    const failedIds: string[] = [];
     const tasks = needsFetch.map((id) => async () => {
       if (signal.aborted) return;
-
-      try {
-        const { latestVersion, sourceName, versions } = await this.backend.enrichPackage(
-          id, configFiles, getConfig().includePrerelease,
-        );
-
-        if (signal.aborted) return;
-
-        this._cache.set(id.toLowerCase(), { latestVersion, sourceName, versions, fetchedAt: Date.now() });
-
-        if (latestVersion || sourceName) {
-          this.provider.postMessage({
-            type: 'PACKAGE_INFO_UPDATE',
-            packageId: id,
-            latestVersion,
-            sourceName,
-          });
-        }
-      } catch {
-        // best-effort
-      }
-
+      const ok = await this._tryEnrichPackage(id, configFiles, signal);
       if (signal.aborted) return;
-
-      done++;
-      this.provider.postMessage({ type: 'ENRICH_PROGRESS', done, total });
+      if (ok) {
+        done++;
+        this.provider.postMessage({ type: 'ENRICH_PROGRESS', done, total });
+      } else {
+        failedIds.push(id);
+      }
     });
 
     await runWithConcurrency(tasks, getConfig().enrichConcurrency);
+    if (signal.aborted) {
+      this._finishEnrichProgress(done, total);
+      return;
+    }
+
+    if (failedIds.length > 0) {
+      const retries = failedIds.map((id) => async () => {
+        if (signal.aborted) return;
+        await this._tryEnrichPackage(id, configFiles, signal);
+        if (signal.aborted) return;
+        done++;
+        this.provider.postMessage({ type: 'ENRICH_PROGRESS', done, total });
+      });
+      await runWithConcurrency(retries, getConfig().enrichConcurrency);
+      if (signal.aborted) {
+        this._finishEnrichProgress(done, total);
+      }
+    }
+  }
+
+  private _finishEnrichProgress(done: number, total: number): void {
+    if (done < total) {
+      this.provider.postMessage({ type: 'ENRICH_PROGRESS', done: total, total });
+    }
+  }
+
+  /** Returns true when latest/source was stored and posted. Empty search or throw → false. */
+  private async _tryEnrichPackage(
+    id: string,
+    configFiles: string[],
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    try {
+      const { latestVersion, sourceName, versions } = await this.backend.enrichPackage(
+        id, configFiles, getConfig().includePrerelease,
+      );
+      if (signal.aborted) return false;
+      if (!latestVersion && !sourceName) return false;
+
+      this._cache.set(id.toLowerCase(), { latestVersion, sourceName, versions, fetchedAt: Date.now() });
+      this.provider.postMessage({
+        type: 'PACKAGE_INFO_UPDATE',
+        packageId: id,
+        latestVersion,
+        sourceName,
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async _handleOpenConfigFile(filePath: string): Promise<void> {

@@ -83,7 +83,7 @@
 Використовується:
 
 - list кількох проєктів у project-scope refresh;
-- фоновий enrich унікальних package id.
+- фоновий enrich унікальних package id (помилка / порожня відповідь — один retry після хвилі).
 
 Ліміт: `averenium.nugetManager.enrichConcurrency` (1–16, default 4).
 

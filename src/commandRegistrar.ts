@@ -2,10 +2,10 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { shouldShowContextMenu } from './solutionParser';
+import { scopeFromDotnetFile } from './dotnetWorkspace';
 import type { NugetManagerViewProvider } from './nugetManagerViewProvider';
 import type { WebviewMessageBroker } from './webviewMessageBroker';
 import type { SolutionParser } from './solutionParser';
-import type { WorkspaceScope } from './types';
 
 const SOLUTION_EXTENSIONS = new Set(['.sln', '.slnx']);
 const ALL_EXTENSIONS = new Set(['.sln', '.slnx', '.csproj', '.fsproj']);
@@ -165,16 +165,7 @@ export class CommandRegistrar {
   // ─── Open for resolved path ───────────────────────────────────────────────
 
   private async _openForPath(targetPath: string): Promise<void> {
-    const ext = path.extname(targetPath).toLowerCase();
-    let scope: WorkspaceScope;
-
-    if (SOLUTION_EXTENSIONS.has(ext)) {
-      const projects = await this.solutionParser.getProjects(targetPath);
-      scope = { kind: 'solution', solutionPath: targetPath, projects };
-    } else {
-      scope = { kind: 'project', projectPath: targetPath };
-    }
-
+    const scope = await scopeFromDotnetFile(targetPath, this.solutionParser);
     await this.viewProvider.reveal();
     await this.broker.activateScope(scope);
   }

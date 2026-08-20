@@ -12,6 +12,12 @@ import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, In
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
 import { pathsEqual } from './pathCompare';
 import {
+  listWorkspaceDotnetFiles,
+  scopeFromDotnetFile,
+  sortDotnetTargetPaths,
+  isSolutionFile,
+} from './dotnetWorkspace';
+import {
   snapshotProjectFiles,
   restoreFileSnapshots,
   readPackageVersionFromSnapshots,
@@ -230,6 +236,10 @@ export class WebviewMessageBroker {
         this.provider.postMessage({ type: 'LOG_ENTRIES', entries: this.logger.getEntries() });
         break;
 
+      case 'SELECT_SCOPE':
+        await this._handleSelectScope();
+        break;
+
       default:
         break;
     }
@@ -268,6 +278,46 @@ export class WebviewMessageBroker {
     }
 
     await this._initForScope(scope);
+  }
+
+  private async _handleSelectScope(): Promise<void> {
+    const uris = await listWorkspaceDotnetFiles();
+    if (uris.length === 0) {
+      await vscode.window.showWarningMessage(
+        'AVE NuGet Manager: No .sln, .slnx, .csproj, or .fsproj found in the workspace.',
+      );
+      return;
+    }
+
+    const currentPath = this._currentScopePath();
+    const sorted = sortDotnetTargetPaths(uris.map((u) => u.fsPath));
+    const items = sorted.map((fsPath) => {
+      const rel = vscode.workspace.asRelativePath(fsPath, false);
+      const current = currentPath.length > 0 && pathsEqual(fsPath, currentPath);
+      return {
+        label: path.basename(fsPath),
+        description: current ? `${rel}  (current)` : rel,
+        detail: isSolutionFile(fsPath) ? 'Solution' : 'Project',
+        fsPath,
+      };
+    });
+
+    const selected = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Select a solution or project',
+      matchOnDescription: true,
+    });
+    if (!selected) return;
+    if (currentPath && pathsEqual(selected.fsPath, currentPath)) return;
+
+    const scope = await scopeFromDotnetFile(selected.fsPath, this.solutionParser);
+    await this.activateScope(scope);
+  }
+
+  private _currentScopePath(): string {
+    const scope = this.provider.getCurrentScope();
+    if (!scope) return '';
+    if (scope.kind === 'solution') return scope.solutionPath;
+    return scope.projectPath;
   }
 
   /** Scan workspace root for a .sln/.slnx/.csproj/.fsproj file. */

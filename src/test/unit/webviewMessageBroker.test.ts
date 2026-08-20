@@ -1,5 +1,6 @@
 import { WebviewMessageBroker } from '../../webviewMessageBroker';
 import { Logger } from '../../logger';
+import * as vscode from 'vscode';
 import * as projectFiles from '../../projectFileSnapshot';
 import * as config from '../../config';
 import type { INuGetBackend } from '../../backend/INuGetBackend';
@@ -1060,5 +1061,71 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       restoreSpy.mockRestore();
       snapSpy.mockRestore();
     }
+  });
+
+  // ── SELECT_SCOPE ───────────────────────────────────────────────────────────
+
+  it('SELECT_SCOPE activates the picked project', async () => {
+    (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [
+      { uri: vscode.Uri.file('/sol'), name: 'sol', index: 0 },
+    ];
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+      vscode.Uri.file('/sol/App.sln'),
+      vscode.Uri.file('/sol/src/Lib.csproj'),
+    ]);
+    (vscode.window.showQuickPick as jest.Mock).mockResolvedValue({ fsPath: '/sol/src/Lib.csproj' });
+
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    stub.isClientReady = true;
+    const backend = makeBackend();
+    const parser = makeSolutionParser();
+    const resolver = makeConfigResolver();
+
+    const broker = new WebviewMessageBroker(stub, backend, parser, resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'SELECT_SCOPE' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(stub.setScope).toHaveBeenCalledWith({ kind: 'project', projectPath: '/sol/src/Lib.csproj' });
+    const init = posted.find((m) => m.type === 'INIT_STATE') as { scope?: WorkspaceScope } | undefined;
+    expect(init?.scope).toEqual({ kind: 'project', projectPath: '/sol/src/Lib.csproj' });
+    expect(parser.getProjects).not.toHaveBeenCalled();
+  });
+
+  it('SELECT_SCOPE skips activate when the current file is picked again', async () => {
+    (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [
+      { uri: vscode.Uri.file('/p'), name: 'p', index: 0 },
+    ];
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+      vscode.Uri.file('/p/App.csproj'),
+    ]);
+    (vscode.window.showQuickPick as jest.Mock).mockResolvedValue({ fsPath: '/p/App.csproj' });
+
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    stub.isClientReady = true;
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({ type: 'SELECT_SCOPE' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(stub.setScope).not.toHaveBeenCalled();
+  });
+
+  it('SELECT_SCOPE does nothing when QuickPick is cancelled', async () => {
+    (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [
+      { uri: vscode.Uri.file('/sol'), name: 'sol', index: 0 },
+    ];
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+      vscode.Uri.file('/sol/App.sln'),
+    ]);
+    (vscode.window.showQuickPick as jest.Mock).mockResolvedValue(undefined);
+
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({ type: 'SELECT_SCOPE' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(stub.setScope).not.toHaveBeenCalled();
   });
 });

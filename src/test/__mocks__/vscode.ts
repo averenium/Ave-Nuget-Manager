@@ -168,6 +168,9 @@ export const workspace = {
   findFiles: jest.fn((_include?: unknown, _exclude?: unknown, _maxResults?: number): Promise<Uri[]> =>
     Promise.resolve([])
   ),
+  asRelativePath: jest.fn((pathOrUri: string | Uri, _includeWorkspaceFolder?: boolean): string =>
+    typeof pathOrUri === 'string' ? pathOrUri : pathOrUri.fsPath
+  ),
   createFileSystemWatcher: jest.fn((_glob: unknown) => ({
     onDidCreate: jest.fn(() => new Disposable(() => { /* no-op */ })),
     onDidDelete: jest.fn(() => new Disposable(() => { /* no-op */ })),

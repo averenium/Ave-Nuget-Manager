@@ -86,4 +86,4 @@ Multi-root workspace не підтримується: завжди перша п
 
 ## Автодетект без команди
 
-Якщо webview шле `WEBVIEW_READY`, а scope ще немає, broker сканує корінь workspace: спочатку `.sln`/`.slnx`, інакше `.csproj`/`.fsproj`. Якщо нічого немає — `INIT_STATE` з порожнім `projectPath`.
+Якщо webview шле `WEBVIEW_READY`, а scope ще немає, broker сканує корінь workspace: спочатку `.sln`/`.slnx`, інакше `.csproj`/`.fsproj`. Якщо нічого немає — `INIT_STATE` з порожнім `projectPath`. Клік по назві в панелі (`SELECT_SCOPE`) шукає файли рекурсивно (`findFiles`) і дає QuickPick.

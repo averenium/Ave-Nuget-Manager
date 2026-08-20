@@ -58,7 +58,9 @@ export type WebviewMessage =
   | { type: 'OPEN_CONFIG_FILE'; filePath: string }
 
   // Log tab
-  | { type: 'GET_LOG_ENTRIES' };
+  | { type: 'GET_LOG_ENTRIES' }
+  /** Click the solution/project name in the panel tab bar. */
+  | { type: 'SELECT_SCOPE' };
 
 // ─────────────────────────────────────────────
 // Extension Host → Webview

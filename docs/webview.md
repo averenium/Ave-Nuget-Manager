@@ -24,7 +24,7 @@
 
 ## Оболонка (`App.tsx`)
 
-Чотири вкладки (Packages, Groups, Sources, Log) + підпис поточного `.sln`/`.csproj`. Якщо `dotnetMissing` — банер замість UI.
+Чотири вкладки (Packages, Groups, Sources, Log) + кнопка поточного `.sln`/`.csproj` справа. Клік відкриває QuickPick інших solution/project у workspace (`SELECT_SCOPE`). Якщо scope порожній — «Select project…». Якщо `dotnetMissing` — банер замість UI.
 
 Банер операції (`.error-banner--operation`): заголовок + `▼ N` — один спойлер (`pointerdown`, щоб не треба було клікати двічі в webview). Повний CLI після відкриття, з переносом, без горизонтального скролу. Те саме для restore, add/remove і timeout. Кнопки Rollback / Groups / Log / ✕ окремо справа.
 

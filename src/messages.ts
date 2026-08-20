@@ -51,6 +51,7 @@ export type WebviewMessage =
 
   // Refresh
   | { type: 'REFRESH_PACKAGES' }
+  | { type: 'RESTORE_PACKAGES' }  // list + restore, keeps latest-version cache
   | { type: 'FORCE_REFRESH' }   // clears cache then refreshes
 
   // Sources tab
@@ -118,8 +119,10 @@ export type ExtensionMessage =
     }
   | { type: 'BATCH_UPDATE_FINISHED'; jobId: string; canRollback?: boolean; cancelled?: boolean }
 
-  /** Force refresh began — drop the previous operation banner so restore can replace it. */
-  | { type: 'REFRESH_STARTED' }
+  /** Restore/force refresh began — drop the previous operation banner so restore can replace it. */
+  | { type: 'REFRESH_STARTED'; kind: 'restore' | 'refresh' }
+  /** Restore + package list + vuln list finished. Enrich may still run after `kind: 'refresh'`. */
+  | { type: 'REFRESH_FINISHED' }
 
   // Sources
   | { type: 'CONFIG_CHAIN_UPDATE'; configChain: NuGetConfigFile[] }

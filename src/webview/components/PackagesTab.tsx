@@ -8,6 +8,8 @@ import { PackageDetailPanel } from './PackageDetailPanel';
 import { SplitPane } from './SplitPane';
 import { measureTextWidth } from '../utils/measureText';
 import { PrereleaseToggle } from './PrereleaseToggle';
+import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
+import { ActivityStrip } from './ActivityStrip';
 
 const DEBOUNCE_MS = 300;
 const MIN_QUERY_LEN = 2;
@@ -108,14 +110,7 @@ export function PackagesTab() {
   return (
     <div className="split-tab" ref={tabRef}>
       <div className="pkg-toolbar">
-        <button
-          className="pkg-toolbar__refresh"
-          title="Force refresh (clears cache)"
-          aria-label="Force refresh packages"
-          onClick={() => send({ type: 'FORCE_REFRESH' })}
-        >
-          ↺
-        </button>
+        <ToolbarRestoreRefresh />
 
         <input
           type="search"
@@ -140,6 +135,7 @@ export function PackagesTab() {
 
         <PrereleaseToggle />
       </div>
+      <ActivityStrip />
 
       <SplitPane
         autoListWidthPx={autoListWidthPx}

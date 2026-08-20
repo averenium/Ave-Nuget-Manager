@@ -29,7 +29,9 @@
 - Кожен виклик іде в `Logger.logCliOperation`.
 - `checkDotnetAvailable()` — `dotnet --version`, timeout 10 с.
 
-Типовий timeout операцій у backend — **30 000 ms**.
+Timeout: list / search / `--version` / `--vulnerable` — **30 000 ms**. `add` / `remove` / `restore` — **120 000 ms** (restore-heavy). Timeout рахується від spawn, не від черги на слот.
+
+`CliRunner` опційно бере `createConcurrencyGate` (ліміт `dotnetConcurrency`): усі `dotnet` процеси в процесі — add, remove, restore, list, search, enrich, `--vulnerable` — ділять **один** пул слотів. Інакше install 4 + enrich 4 + сім’я Groups (`GET_ALL_VERSIONS` × N id × M config files) знову штормлять CLI. `checkDotnetAvailable` теж іде через gate.
 
 ## Команди, які будує CliBackend
 
@@ -78,14 +80,18 @@
 
 ## Concurrency
 
-`src/concurrency.ts` — `runWithConcurrency(tasks, n)`: не більше `n` одночасних промісів, результати в порядку входу.
+`src/concurrency.ts`:
 
-Використовується:
+- `runWithConcurrency(tasks, n)` — не більше `n` одночасних промісів, результати в порядку входу.
+- `createConcurrencyGate(getLimit)` — спільна черга слотів. `CliRunner` тримає один gate на всі spawn.
+
+`runWithConcurrency` ще обмежує окремі хвилі (щоб не стартувати сотні промісів, які всі чекають на gate):
 
 - list кількох проєктів у project-scope refresh;
-- фоновий enrich унікальних package id (помилка / порожня відповідь — один retry після хвилі).
+- фоновий enrich унікальних package id (помилка / порожня відповідь — один retry після хвилі);
+- `dotnet add` / `dotnet remove` по багатьох проєктах (`INSTALL_PACKAGE_MULTI`, Groups fan-out одного пакета, `REMOVE_PACKAGE_MULTI`). Snapshot csproj / `Directory.Packages.props` лишається повністю паралельним.
 
-Ліміт: `averenium.nugetManager.enrichConcurrency` (1–16, default 4).
+Ліміт: `averenium.nugetManager.dotnetConcurrency` (1–16, default 4) — max parallel `dotnet` processes.
 
 ## Metadata: межа CLI
 

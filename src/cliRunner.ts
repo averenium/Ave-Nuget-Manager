@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import type { CliCommand, CliResult } from './types';
 import type { Logger } from './logger';
+import type { ConcurrencyGate } from './concurrency';
 
 /**
  * Executes `dotnet` CLI commands via child_process.spawn.
@@ -9,9 +10,13 @@ import type { Logger } from './logger';
  * - Collects stdout / stderr in full before resolving
  * - Hard timeout (SIGTERM then SIGKILL) defaulting to 30 000 ms
  * - Every invocation is logged through the provided Logger instance
+ * - Optional gate caps overlapping `dotnet` processes (`dotnetConcurrency`)
  */
 export class CliRunner {
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly gate?: ConcurrencyGate,
+  ) {}
 
   /**
    * Run a dotnet command and return the result.
@@ -19,28 +24,41 @@ export class CliRunner {
    *   ['list', '/abs/path/Foo.csproj', 'package', '--format', 'json']
    */
   run(command: CliCommand): Promise<CliResult> {
-    return new Promise<CliResult>((resolve) => {
+    if (command.signal?.aborted) {
+      return Promise.resolve(this._cancelled(command));
+    }
+    const exec = () => {
       if (command.signal?.aborted) {
-        const result: CliResult = {
-          exitCode: null,
-          stdout: '',
-          stderr: 'Cancelled',
-          timedOut: false,
-          cancelled: true,
-        };
-        this.logger.logCliOperation({
-          timestamp: new Date(),
-          command: `dotnet ${command.args.join(' ')}`,
-          args: command.args,
-          stdout: '',
-          stderr: 'Cancelled',
-          exitCode: null,
-          timedOut: false,
-          durationMs: 0,
-        });
-        resolve(result);
-        return;
+        return Promise.resolve(this._cancelled(command));
       }
+      return this._spawn(command);
+    };
+    return this.gate ? this.gate.run(exec) : exec();
+  }
+
+  private _cancelled(command: CliCommand): CliResult {
+    const result: CliResult = {
+      exitCode: null,
+      stdout: '',
+      stderr: 'Cancelled',
+      timedOut: false,
+      cancelled: true,
+    };
+    this.logger.logCliOperation({
+      timestamp: new Date(),
+      command: `dotnet ${command.args.join(' ')}`,
+      args: command.args,
+      stdout: '',
+      stderr: 'Cancelled',
+      exitCode: null,
+      timedOut: false,
+      durationMs: 0,
+    });
+    return result;
+  }
+
+  private _spawn(command: CliCommand): Promise<CliResult> {
+    return new Promise<CliResult>((resolve) => {
 
       const startedAt = Date.now();
       const stdoutChunks: string[] = [];

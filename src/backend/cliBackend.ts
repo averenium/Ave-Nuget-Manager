@@ -63,6 +63,8 @@ interface DotnetSearchOutput {
 }
 
 const TIMEOUT_MS = 30_000;
+/** add / remove / restore include NuGet restore — 30s is too tight under load. */
+const MUTATION_TIMEOUT_MS = 120_000;
 
 /** Skip implicit restore (.NET 10+ fails the whole list when restore errors, e.g. NU1605). */
 function listPackageArgs(targetPath: string, includeTransitive: boolean): string[] {
@@ -324,7 +326,7 @@ export class CliBackend implements INuGetBackend {
     return this.runner.run({
       args: ['add', projectPath, 'package', packageId, '--version', version],
       cwd: path.dirname(projectPath),
-      timeoutMs: TIMEOUT_MS,
+      timeoutMs: MUTATION_TIMEOUT_MS,
       signal,
     });
   }
@@ -335,7 +337,7 @@ export class CliBackend implements INuGetBackend {
     return this.runner.run({
       args: ['remove', projectPath, 'package', packageId],
       cwd: path.dirname(projectPath),
-      timeoutMs: TIMEOUT_MS,
+      timeoutMs: MUTATION_TIMEOUT_MS,
     });
   }
 
@@ -345,7 +347,7 @@ export class CliBackend implements INuGetBackend {
     return this.runner.run({
       args: ['restore', projectOrSolutionPath],
       cwd: path.dirname(projectOrSolutionPath),
-      timeoutMs: TIMEOUT_MS,
+      timeoutMs: MUTATION_TIMEOUT_MS,
     });
   }
 

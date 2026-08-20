@@ -39,7 +39,7 @@
 для кожного проєкту:
   1. snapshot csproj + найближчий Directory.Packages.props
   2. запам’ятати previousVersion з XML
-  3. dotnet add … --version <target>   (multi — add паралельно після всіх snapshot)
+  3. dotnet add … --version <target>   (multi — snapshot усіх, потім add з лімітом dotnetConcurrency)
 
 якщо всі успішні:
   OPERATION_SUCCESS → dotnet list усього scope → INSTALLED_PACKAGES

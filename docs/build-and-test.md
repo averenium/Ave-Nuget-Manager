@@ -32,7 +32,8 @@
 
 | Файл | Що перевіряє |
 |---|---|
-| `cliRunner.test.ts` | spawn, timeout, логування |
+| `blockedPackages.setting.test.ts` / `dotnetConcurrency.setting.test.ts` | Читання Workspace settings |
+| `concurrency.test.ts` | `runWithConcurrency` / `createConcurrencyGate` |
 | `commandBuilder.test.ts` | Аргументи CLI, які будує `CliBackend` |
 | `commandRegistrar.test.ts` | Резолв URI / папки / QuickPick |
 | `configChainResolver.test.ts` | Ланцюжок і парсинг XML |

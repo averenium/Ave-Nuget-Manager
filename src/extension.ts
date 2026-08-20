@@ -10,6 +10,8 @@ import { NugetManagerViewProvider } from './nugetManagerViewProvider';
 import { CommandRegistrar } from './commandRegistrar';
 import { WebviewMessageBroker } from './webviewMessageBroker';
 import { watchDotnetWorkspaceContext } from './dotnetWorkspace';
+import { createConcurrencyGate } from './concurrency';
+import { getConfig } from './config';
 
 let logger: Logger | undefined;
 
@@ -20,7 +22,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Runs because workspaceContains activated us, or the user invoked a command.
   await watchDotnetWorkspaceContext(context);
 
-  const runner = new CliRunner(logger);
+  const runner = new CliRunner(
+    logger,
+    createConcurrencyGate(() => getConfig().dotnetConcurrency),
+  );
   const backend = new CliBackend(runner);
   const solutionParser = new SolutionParser();
   const configResolver = new NuGetConfigChainResolver();

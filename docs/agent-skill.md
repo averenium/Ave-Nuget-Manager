@@ -7,7 +7,7 @@ The extension does **not** review bumps itself. It ships a **project Agent Skill
 | File | Role |
 |---|---|
 | `SKILL.md` | Triggers, four rules, workflow, report path, validate |
-| `references/nuget.md` | `.deps.json` resolved graph, cache `CHANGELOG.md`, gated diamond check |
+| `references/nuget.md` | restore graph + diamonds from `project.assets.json` (always, no gate), cache `CHANGELOG.md` |
 
 Report files the agent writes: existing docs/planning layout in **that** workspace, else `docs/dependency-reviews/YYYY-MM-DD-package-updates.md`.
 

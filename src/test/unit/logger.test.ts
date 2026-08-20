@@ -174,4 +174,11 @@ describe('Logger', () => {
     expect(ch.lines.some((l) => l.includes('dotnet list /path/A.csproj package'))).toBe(true);
     expect(ch.lines.some((l) => l.includes('hello output'))).toBe(true);
   });
+
+  it('clear() drops entries and the Output Channel', () => {
+    logger.logCliOperation(makeOp());
+    expect(logger.getEntries()).toHaveLength(1);
+    logger.clear();
+    expect(logger.getEntries()).toHaveLength(0);
+  });
 });

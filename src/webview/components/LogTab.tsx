@@ -4,7 +4,6 @@ import type { LogEntry } from '../../types';
 
 const PREVIEW_LINES = 3;
 
-/** Split text into non-empty lines, return first N and the rest separately */
 function splitLines(text: string): string[] {
   return (text ?? '').split('\n').map((l) => l.trimEnd()).filter((l) => l.length > 0);
 }
@@ -12,6 +11,7 @@ function splitLines(text: string): string[] {
 export function LogTab() {
   const { state, send } = useNugetManager();
   const { entries } = state.log;
+  const recording = state.traceRecording;
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { send({ type: 'GET_LOG_ENTRIES' }); }, [send]);
@@ -20,18 +20,48 @@ export function LogTab() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [entries.length]);
 
-  if (entries.length === 0) {
-    return (
-      <div className="log-tab" role="log" aria-label="Operation log" aria-live="polite">
-        <div className="empty-state">No operations logged yet</div>
-      </div>
-    );
-  }
-
   return (
     <div className="log-tab" role="log" aria-label="Operation log" aria-live="polite">
-      {entries.map((entry) => <LogEntryRow key={entry.id} entry={entry} />)}
-      <div ref={bottomRef} />
+      <div className="log-toolbar">
+        {recording ? (
+          <button
+            type="button"
+            className="log-toolbar__btn log-toolbar__btn--stop"
+            onClick={() => send({ type: 'STOP_TRACE' })}
+          >
+            ■ Stop & save zip
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="log-toolbar__btn"
+            onClick={() => send({ type: 'START_TRACE' })}
+          >
+            ● Trace
+          </button>
+        )}
+        {recording && (
+          <span className="log-toolbar__badge" title="Diagnostic trace is recording">
+            recording
+          </span>
+        )}
+        <span className="log-toolbar__spacer" />
+        <button
+          type="button"
+          className="log-toolbar__btn"
+          onClick={() => send({ type: 'CLEAR_LOG' })}
+        >
+          Clear log
+        </button>
+      </div>
+      {entries.length === 0 ? (
+        <div className="empty-state">No operations logged yet</div>
+      ) : (
+        <div className="log-tab__list">
+          {entries.map((entry) => <LogEntryRow key={entry.id} entry={entry} />)}
+          <div ref={bottomRef} />
+        </div>
+      )}
     </div>
   );
 }
@@ -47,10 +77,6 @@ function LogEntryRow({ entry }: { entry: LogEntry }) {
     ? 'TIMEOUT'
     : entry.exitCode !== null ? `exit ${entry.exitCode}` : '—';
 
-  // Full command = command + args joined
-  const fullCommand = entry.command;
-
-  // All non-empty output lines
   const stdoutLines = splitLines(entry.stdout);
   const stderrLines = splitLines(entry.stderr);
   const allLines = [
@@ -69,11 +95,10 @@ function LogEntryRow({ entry }: { entry: LogEntry }) {
 
   return (
     <div className="log-entry">
-      {/* Line 1: timestamp + duration + full command + exit */}
       <div className="log-entry__summary">
         <span className="log-entry__ts">{ts}</span>
         <span className="log-entry__duration">{durationLabel}</span>
-        <span className="log-entry__cmd">{fullCommand}</span>
+        <span className="log-entry__cmd">{entry.command}</span>
         <span className={`log-entry__exit ${exitClass}`}>[{exitLabel}]</span>
         {hasMore && (
           <button
@@ -86,7 +111,6 @@ function LogEntryRow({ entry }: { entry: LogEntry }) {
         )}
       </div>
 
-      {/* Lines 2–4: first 3 output lines (always visible) */}
       {previewLines.length > 0 && (
         <div className="log-entry__preview">
           {previewLines.map((l, i) => (
@@ -97,7 +121,6 @@ function LogEntryRow({ entry }: { entry: LogEntry }) {
         </div>
       )}
 
-      {/* Remaining lines (only shown when expanded, no duplication) */}
       {open && hasMore && (
         <div className="log-entry__details">
           {remainingLines.map((l, i) => (

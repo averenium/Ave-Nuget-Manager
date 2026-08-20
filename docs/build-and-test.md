@@ -38,7 +38,8 @@
 | `commandRegistrar.test.ts` | Резолв URI / папки / QuickPick |
 | `agentSkillInstall.test.ts` | Detect/sort skill targets, atomic copy, frontmatter version |
 | `configChainResolver.test.ts` | Ланцюжок і парсинг XML |
-| `logger.test.ts` | Записи, subscribe, стійкість до помилок |
+| `logger.test.ts` | Записи, subscribe, стійкість до помилок, `clear()` |
+| `traceSanitize.test.ts` / `traceSession.test.ts` / `tracePack.test.ts` / `zipStore.test.ts` | Знеособлення шляхів, сесія jsonl, snapshot проєктів, zip |
 | `solutionParser.test.ts` | `.sln` / `.slnx` |
 | `webviewMessageBroker.test.ts` | INIT, search, install/remove, NU1605, rollback/keep, patch |
 | `dotnetOutput.test.ts` | Summary NU1605 vs list JSON `problems` |

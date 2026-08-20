@@ -7,6 +7,7 @@ import type { INuGetBackend } from './backend/INuGetBackend';
 import type { SolutionParser } from './solutionParser';
 import type { NuGetConfigChainResolver } from './nugetConfigChainResolver';
 import type { Logger } from './logger';
+import type { TraceController } from './traceController';
 import type { WebviewMessage } from './messages';
 import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus } from './types';
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
@@ -107,6 +108,7 @@ export class WebviewMessageBroker {
     private readonly logger: Logger,
     /** SDK check — runs on first WEBVIEW_READY, not during activate(). */
     private readonly onFirstWebviewReady?: () => Promise<void>,
+    private readonly trace?: TraceController,
   ) {}
 
   attach(): void {
@@ -197,6 +199,7 @@ export class WebviewMessageBroker {
   // ─── Message router ────────────────────────────────────────────────────────
 
   private async _handle(msg: WebviewMessage): Promise<void> {
+    this.trace?.recordWebview(msg);
     switch (msg.type) {
       case 'WEBVIEW_READY':
         await this._handleWebviewReady();
@@ -273,6 +276,19 @@ export class WebviewMessageBroker {
         this.provider.postMessage({ type: 'LOG_ENTRIES', entries: this.logger.getEntries() });
         break;
 
+      case 'START_TRACE':
+        await this.trace?.startFromUi();
+        break;
+
+      case 'STOP_TRACE':
+        await this.trace?.stopAndPack();
+        break;
+
+      case 'CLEAR_LOG':
+        this.logger.clear();
+        this.provider.postMessage({ type: 'LOG_CLEARED' });
+        break;
+
       case 'SELECT_SCOPE':
         await this._handleSelectScope();
         break;
@@ -318,6 +334,7 @@ export class WebviewMessageBroker {
           configChain: [],
           includePrerelease: getConfig().includePrerelease,
           blockedPackages: getBlockedPackages(),
+          traceRecording: this.trace?.isRecording() ?? false,
         });
       }
       return;
@@ -405,6 +422,11 @@ export class WebviewMessageBroker {
   private async _initForScope(scope: WorkspaceScope): Promise<void> {
     this._cancelEnrich();
     this._cancelVulnScan();
+    this.trace?.recordBroker('init-scope', {
+      kind: scope.kind,
+      path: scope.kind === 'solution' ? path.basename(scope.solutionPath) : path.basename(scope.projectPath),
+      projects: scope.kind === 'solution' ? scope.projects.length : 1,
+    });
     const startDir =
       scope.kind === 'solution'
         ? path.dirname(scope.solutionPath)
@@ -455,6 +477,7 @@ export class WebviewMessageBroker {
       configChain,
       includePrerelease: getConfig().includePrerelease,
       blockedPackages: getBlockedPackages(),
+      traceRecording: this.trace?.isRecording() ?? false,
     });
 
     // List with --no-restore so the UI fills even if restore is broken;
@@ -584,6 +607,8 @@ export class WebviewMessageBroker {
     const prepared = await Promise.all(
       projects.map(async (projectPath) => {
         const snapshots = await snapshotProjectFiles(projectPath);
+        this.trace?.noteTouchedProject(projectPath);
+        this.trace?.recordBroker('snapshot', { project: path.basename(projectPath) });
         return {
           projectPath,
           snapshots,
@@ -605,6 +630,12 @@ export class WebviewMessageBroker {
           return { ...p, result: skippedInstallResult(), skipped: true };
         }
         const result = await this.backend.installPackage(p.projectPath, packageId, version, signal);
+        this.trace?.recordBroker('add', {
+          project: path.basename(p.projectPath),
+          packageId,
+          version,
+          ok: isCliOperationSuccess(result),
+        });
         onProjectDone?.(p.projectPath, isCliOperationSuccess(result));
         return { ...p, result };
       }),
@@ -739,6 +770,7 @@ export class WebviewMessageBroker {
     error?: string,
     completedProjects?: string[],
   ): void {
+    this.trace?.recordBroker('batch-item', { packageId, status });
     this.provider.postMessage({
       type: 'BATCH_UPDATE_ITEM',
       jobId,
@@ -909,6 +941,12 @@ export class WebviewMessageBroker {
     packageId: string,
   ): Promise<void> {
     const result = await this.backend.removePackage(projectPath, packageId);
+    this.trace?.noteTouchedProject(projectPath);
+    this.trace?.recordBroker('remove', {
+      project: path.basename(projectPath),
+      packageId,
+      ok: isCliOperationSuccess(result),
+    });
     if (result.timedOut) {
       this.provider.postMessage({
         type: 'OPERATION_TIMEOUT',
@@ -941,10 +979,14 @@ export class WebviewMessageBroker {
     packageId: string,
   ): Promise<void> {
     const results = await runWithConcurrency(
-      projects.map((p) => async () => ({
-        projectPath: p,
-        result: await this.backend.removePackage(p, packageId),
-      })),
+      projects.map((p) => async () => {
+        this.trace?.noteTouchedProject(p);
+        this.trace?.recordBroker('remove', { project: path.basename(p), packageId });
+        return {
+          projectPath: p,
+          result: await this.backend.removePackage(p, packageId),
+        };
+      }),
       getConfig().dotnetConcurrency,
     );
 
@@ -1158,6 +1200,7 @@ export class WebviewMessageBroker {
 
     // Always invoke list --vulnerable so the Log tab records the attempt.
     // A pre-check on `signal.aborted` skipped the CLI entirely (no log line).
+    this.trace?.recordBroker('vuln-scan', { target: path.basename(targetPath) });
     const findings = await collectVulnerabilityFindings(
       [
         new DotnetVulnerableProvider(this.backend),
@@ -1252,6 +1295,7 @@ export class WebviewMessageBroker {
     }
 
     if (failedIds.length > 0) {
+      this.trace?.recordBroker('enrich-retry', { count: failedIds.length });
       const retries = failedIds.map((id) => async () => {
         if (signal.aborted) return;
         await this._tryEnrichPackage(id, configFiles, signal);

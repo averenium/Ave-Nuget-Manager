@@ -123,6 +123,9 @@ export const window = {
   showOpenDialog: jest.fn((_options?: any): Promise<any[] | undefined> =>
     Promise.resolve(undefined)
   ),
+  showSaveDialog: jest.fn((_options?: any): Promise<any> =>
+    Promise.resolve(undefined)
+  ),
   registerWebviewViewProvider: jest.fn((_viewId: string, _provider: any, _options?: any): Disposable =>
     new Disposable(() => { /* no-op */ })
   ),
@@ -205,6 +208,12 @@ export const commands = {
   ),
 };
 
+export const version = '1.85.0';
+
+export const env = {
+  appName: 'Cursor',
+};
+
 // ─── ExtensionContext ─────────────────────────────────────────────────────────
 
 export class ExtensionContext {
@@ -215,6 +224,7 @@ export class ExtensionContext {
   workspaceState: any = { get: jest.fn(), update: jest.fn(), keys: jest.fn(() => []) };
   storagePath: string | undefined = undefined;
   globalStoragePath: string = '/mock/globalStorage';
+  globalStorageUri: Uri = Uri.file('/mock/globalStorage');
   logPath: string = '/mock/logs';
   asAbsolutePath = jest.fn((p: string): string => `/mock/extension/${p}`);
 }

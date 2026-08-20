@@ -15,7 +15,7 @@ webview mount  →  WEBVIEW_READY
                    └─ є scope
                         ├─ activateScope уже зробив init → пропуск (антидубль)
                         └─ інакше _initForScope
-                             → INIT_STATE (scope, sources, configChain, includePrerelease, blockedPackages)
+                             → INIT_STATE (scope, sources, configChain, includePrerelease, blockedPackages, traceRecording)
                              → INSTALLED_PACKAGES + IMPLICIT_PACKAGES (`dotnet list --no-restore`)
                              → паралельно `dotnet restore` → ERROR «Restore failed» якщо впав
                              → фоновий enrich → PACKAGE_INFO_UPDATE / ENRICH_PROGRESS
@@ -44,6 +44,9 @@ webview mount  →  WEBVIEW_READY
 | `FORCE_REFRESH` | Кругова стрілка (Force refresh) | Те саме з очищенням кешу; смужка далі показує enrich latest |
 | `OPEN_CONFIG_FILE` | Вкладка Sources | `openTextDocument` |
 | `GET_LOG_ENTRIES` | Відкриття Log | Повний масив Logger |
+| `START_TRACE` | ● Trace | Confirm, потім сесія в `globalStorage` |
+| `STOP_TRACE` | ■ Stop & save zip | Sanitize → zip → Save dialog |
+| `CLEAR_LOG` | Clear log | `Logger.clear()` + `LOG_CLEARED`. Не зупиняє trace |
 | `SET_PACKAGE_BLOCKED` | Контекстне меню Block / Unblock | Пише `averenium.nugetManager.blockedPackages` у Workspace settings |
 | `SHOW_TOAST` | Клік по недоступному **↑** (blocked) | `window.showInformationMessage` |
 | `REFRESH_PACKAGES` | **UI не шле** | Handler є: refresh без restore і без очистки кешу |
@@ -52,7 +55,7 @@ webview mount  →  WEBVIEW_READY
 
 | `type` | Коли шлеться | Обробка в reducer |
 |---|---|---|
-| `INIT_STATE` | Початок scope | Scope, sources, loading, `blockedPackages` |
+| `INIT_STATE` | Початок scope | Scope, sources, loading, `blockedPackages`, `traceRecording` |
 | `INSTALLED_PACKAGES` | Після успішного `dotnet list` | Список + `isLoadingPackages: false`; оновлює `detail.projectVersions` для вибраного пакета |
 | `IMPLICIT_PACKAGES` | Після `dotnet list` | Транзитивні |
 | `INSTALLED_PACKAGES_PATCH` | Після fail add (успішні проєкти завжди; невдалі — лише `keep`) | Точкове оновлення version у списку й деталях |
@@ -73,6 +76,8 @@ webview mount  →  WEBVIEW_READY
 | `REFRESH_STARTED` | Restore / Force refresh | `kind: restore \| refresh`; смужка Restoring… / Refreshing… |
 | `REFRESH_FINISHED` | Після restore + list + vuln | Restore: ховає смужку; refresh: лишає, якщо ще йде enrich |
 | `LOG_ENTRIES` / `LOG_ENTRY_ADDED` | Log | Масив записів |
+| `LOG_CLEARED` | Clear log | Порожній список |
+| `TRACE_STATE` | Start/Stop trace | `recording` для беджа |
 | `ERROR` | Пошук / metadata / list refresh / restore | Metadata → `detail.error`; list refresh / restore → `globalError` (restore не затирає `pendingRollback`) |
 | `CONFIG_CHAIN_UPDATE` | **Ніколи не шлеться** | Handler у reducer є |
 | `DOTNET_NOT_FOUND` | **Ніколи не шлеться** | Банер `dotnetMissing` у `App.tsx` |

@@ -112,6 +112,7 @@ export interface AppState {
   globalError: string | null;
   pendingRollback: boolean;
   workspaceActivity: { kind: 'restore' | 'refresh'; phase: 'work' | 'enrich' } | null;
+  traceRecording: boolean;
 }
 
 const initialState: AppState = {
@@ -147,6 +148,7 @@ const initialState: AppState = {
   globalError: null,
   pendingRollback: false,
   workspaceActivity: null,
+  traceRecording: false,
 };
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -292,6 +294,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         },
         updates: { ...state.updates, versionsByPackageId: {} },
         workspaceActivity: null,
+        traceRecording: !!msg.traceRecording,
       };
 
     case 'INSTALLED_PACKAGES': {
@@ -437,6 +440,12 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
 
     case 'LOG_ENTRY_ADDED':
       return { ...state, log: { entries: [...state.log.entries, msg.entry] } };
+
+    case 'LOG_CLEARED':
+      return { ...state, log: { entries: [] } };
+
+    case 'TRACE_STATE':
+      return { ...state, traceRecording: msg.recording };
 
     case 'CONFIG_CHAIN_UPDATE':
       return {

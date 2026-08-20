@@ -1065,6 +1065,28 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     expect(posted.some((m) => m.type === 'LOG_ENTRIES')).toBe(true);
   });
 
+  it('CLEAR_LOG wipes Logger and posts LOG_CLEARED', async () => {
+    logger.logCliOperation({
+      timestamp: new Date(),
+      command: 'dotnet --version',
+      args: ['--version'],
+      stdout: '9',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+      durationMs: 1,
+    });
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'CLEAR_LOG' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(logger.getEntries()).toHaveLength(0);
+    expect(posted.some((m) => m.type === 'LOG_CLEARED')).toBe(true);
+  });
+
   // ── OPEN_CONFIG_FILE ───────────────────────────────────────────────────────
 
   it('calls openTextDocument for OPEN_CONFIG_FILE', async () => {

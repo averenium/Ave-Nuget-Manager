@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import type { CliCommand, CliResult } from './types';
 import type { Logger } from './logger';
 import type { ConcurrencyGate } from './concurrency';
+import type { ITrace } from './traceSession';
 
 /**
  * Executes `dotnet` CLI commands via child_process.spawn.
@@ -16,6 +17,7 @@ export class CliRunner {
   constructor(
     private readonly logger: Logger,
     private readonly gate?: ConcurrencyGate,
+    private readonly trace?: ITrace,
   ) {}
 
   /**
@@ -44,15 +46,13 @@ export class CliRunner {
       timedOut: false,
       cancelled: true,
     };
-    this.logger.logCliOperation({
-      timestamp: new Date(),
-      command: `dotnet ${command.args.join(' ')}`,
-      args: command.args,
+    this._logCli(command, {
       stdout: '',
       stderr: 'Cancelled',
       exitCode: null,
       timedOut: false,
       durationMs: 0,
+      startedAt: Date.now(),
     });
     return result;
   }
@@ -113,15 +113,13 @@ export class CliRunner {
           cancelled,
         };
 
-        this.logger.logCliOperation({
-          timestamp: new Date(startedAt),
-          command: `dotnet ${command.args.join(' ')}`,
-          args: command.args,
+        this._logCli(command, {
           stdout,
           stderr,
           exitCode,
           timedOut: result.timedOut,
           durationMs: Date.now() - startedAt,
+          startedAt,
         });
 
         resolve(result);
@@ -133,6 +131,41 @@ export class CliRunner {
         finish(null);
       });
     });
+  }
+
+  private _logCli(command: CliCommand, result: {
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    timedOut: boolean;
+    durationMs: number;
+    startedAt: number;
+  }): void {
+    this.logger.logCliOperation({
+      timestamp: new Date(result.startedAt),
+      command: `dotnet ${command.args.join(' ')}`,
+      args: command.args,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      durationMs: result.durationMs,
+    });
+    this.trace?.record({
+      kind: 'cli',
+      at: new Date(result.startedAt).toISOString(),
+      command: `dotnet ${command.args.join(' ')}`,
+      args: command.args,
+      cwd: command.cwd,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      durationMs: result.durationMs,
+    });
+    for (const arg of command.args) {
+      if (/\.(csproj|fsproj|sln|slnx)$/i.test(arg)) this.trace?.noteTouchedProject(arg);
+    }
   }
 
   /**

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { Logger } from './logger';
 import { CliRunner } from './cliRunner';
 import { CliBackend } from './backend/cliBackend';
@@ -13,6 +14,7 @@ import { watchDotnetWorkspaceContext } from './dotnetWorkspace';
 import { createConcurrencyGate } from './concurrency';
 import { getConfig } from './config';
 import { registerAgentSkillCommand } from './agentSkillInstall';
+import { TraceController } from './traceController';
 
 let logger: Logger | undefined;
 
@@ -23,15 +25,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Runs because workspaceContains activated us, or the user invoked a command.
   await watchDotnetWorkspaceContext(context);
 
-  const runner = new CliRunner(
-    logger,
-    createConcurrencyGate(() => getConfig().dotnetConcurrency),
-  );
-  const backend = new CliBackend(runner);
-  const solutionParser = new SolutionParser();
   const configResolver = new NuGetConfigChainResolver();
 
   const viewProvider = new NugetManagerViewProvider(context.extensionUri);
+
+  const storageRoot = context.globalStorageUri.fsPath;
+  fs.mkdirSync(storageRoot, { recursive: true });
+
+  let runner!: CliRunner;
+  const trace = new TraceController(
+    storageRoot,
+    logger,
+    viewProvider,
+    configResolver,
+    () => viewProvider.getCurrentScope() ?? undefined,
+    () => runner.checkDotnetAvailable(),
+    {
+      extensionVersion: readExtensionVersion(context.extensionPath),
+      appName: vscode.env.appName,
+      vscodeVersion: vscode.version,
+      os: `${os.platform()} ${os.release()}`,
+      arch: os.arch(),
+    },
+  );
+  runner = new CliRunner(
+    logger,
+    createConcurrencyGate(() => getConfig().dotnetConcurrency),
+    trace,
+  );
+  const backend = new CliBackend(runner);
+  const solutionParser = new SolutionParser();
 
   const viewProviderDisposable = vscode.window.registerWebviewViewProvider(
     NugetManagerViewProvider.viewId,
@@ -61,6 +84,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         });
       }
     },
+    trace,
   );
   broker.attach();
 
@@ -87,6 +111,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const registrar = new CommandRegistrar(viewProvider, broker, solutionParser);
   registrar.register(context);
   registerAgentSkillCommand(context);
+  trace.register(context);
+  void trace.recoverOrphan();
 
   context.subscriptions.push(
     viewProviderDisposable,
@@ -100,4 +126,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 export function deactivate(): void {
   logger?.dispose();
   logger = undefined;
+}
+
+function readExtensionVersion(extensionPath: string): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(extensionPath, 'package.json'), 'utf8')) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
 }

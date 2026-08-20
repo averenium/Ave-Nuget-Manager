@@ -88,7 +88,16 @@ html { height: 100vh; }
   text-overflow: ellipsis;
   max-width: 260px;
   align-self: center;
-  cursor: default;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  font-family: inherit;
+  line-height: inherit;
+}
+.tab-bar__scope:hover {
+  color: var(--color-fg);
+  background: var(--color-list-hover);
 }
 
 .activity-strip {

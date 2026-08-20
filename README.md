@@ -19,6 +19,7 @@ Drag the view **title bar** (or **View: Move View**) to the sidebar / secondary 
 
 - Command Palette: **NuGet: Management**
 - Explorer context menu on a `.sln` / `.slnx` / `.csproj` / `.fsproj`
+- Click the solution/project name in the panel tab bar to switch among `.sln` / `.slnx` / `.csproj` / `.fsproj` in the workspace
 
 ## Tabs
 

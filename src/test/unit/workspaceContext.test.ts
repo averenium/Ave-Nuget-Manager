@@ -5,6 +5,8 @@ import {
   HAS_DOTNET_WORKSPACE_CONTEXT,
   hasDotnetWorkspaceFiles,
   refreshDotnetWorkspaceContext,
+  scopeFromDotnetFile,
+  sortDotnetTargetPaths,
   watchDotnetWorkspaceContext,
   workspaceHasDotnetProject,
 } from '../../dotnetWorkspace';
@@ -37,6 +39,42 @@ describe('hasDotnetWorkspaceFiles', () => {
   it('is false when none match', () => {
     expect(hasDotnetWorkspaceFiles(['package.json', 'src'])).toBe(false);
     expect(hasDotnetWorkspaceFiles([])).toBe(false);
+  });
+});
+
+describe('sortDotnetTargetPaths', () => {
+  it('lists solutions before projects, then basename', () => {
+    expect(sortDotnetTargetPaths([
+      '/repo/src/B.csproj',
+      '/repo/Z.sln',
+      '/repo/src/A.csproj',
+      '/repo/App.slnx',
+    ])).toEqual([
+      '/repo/App.slnx',
+      '/repo/Z.sln',
+      '/repo/src/A.csproj',
+      '/repo/src/B.csproj',
+    ]);
+  });
+});
+
+describe('scopeFromDotnetFile', () => {
+  it('builds solution scope from .sln', async () => {
+    const parser = { getProjects: jest.fn().mockResolvedValue([{ name: 'A', relativePath: 'A.csproj', absolutePath: '/s/A.csproj' }]) };
+    await expect(scopeFromDotnetFile('/s/App.sln', parser as never)).resolves.toEqual({
+      kind: 'solution',
+      solutionPath: '/s/App.sln',
+      projects: [{ name: 'A', relativePath: 'A.csproj', absolutePath: '/s/A.csproj' }],
+    });
+  });
+
+  it('builds project scope from .csproj', async () => {
+    const parser = { getProjects: jest.fn() };
+    await expect(scopeFromDotnetFile('/s/A.csproj', parser as never)).resolves.toEqual({
+      kind: 'project',
+      projectPath: '/s/A.csproj',
+    });
+    expect(parser.getProjects).not.toHaveBeenCalled();
   });
 });
 

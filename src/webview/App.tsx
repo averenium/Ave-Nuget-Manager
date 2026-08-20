@@ -96,8 +96,14 @@ function ErrorBanner() {
 }
 
 function Shell() {
-  const { state, dispatch } = useNugetManager();
+  const { state, dispatch, send } = useNugetManager();
   const label = scopeLabel(state.scope);
+  const scopeTitle =
+    state.scope?.kind === 'solution'
+      ? state.scope.solutionPath
+      : state.scope?.kind === 'project'
+        ? state.scope.projectPath
+        : 'Select a solution or project';
 
   if (state.dotnetMissing) {
     return (
@@ -123,15 +129,14 @@ function Shell() {
           </button>
         ))}
 
-        {label && (
-          <span className="tab-bar__scope" title={
-            state.scope?.kind === 'solution'
-              ? (state.scope as any).solutionPath
-              : (state.scope as any).projectPath
-          }>
-            {state.scope?.kind === 'solution' ? '📦' : '📄'} {label}
-          </span>
-        )}
+        <button
+          type="button"
+          className="tab-bar__scope"
+          title={scopeTitle || 'Select a solution or project'}
+          onClick={() => send({ type: 'SELECT_SCOPE' })}
+        >
+          {state.scope?.kind === 'solution' ? '📦' : '📄'} {label || 'Select project…'}
+        </button>
       </nav>
 
       {(state.globalError || state.pendingRollback) && (

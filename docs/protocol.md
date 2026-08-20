@@ -44,6 +44,7 @@ webview mount  →  WEBVIEW_READY
 | `FORCE_REFRESH` | Кругова стрілка (Force refresh) | Те саме з очищенням кешу; смужка далі показує enrich latest |
 | `OPEN_CONFIG_FILE` | Вкладка Sources | `openTextDocument` |
 | `GET_LOG_ENTRIES` | Відкриття Log | Повний масив Logger |
+| `SELECT_SCOPE` | Клік по назві `.sln`/`.csproj` у tab bar | QuickPick усіх `.sln`/`.slnx`/`.csproj`/`.fsproj` у workspace → `activateScope` |
 | `REFRESH_PACKAGES` | **UI не шле** | Handler є: refresh без restore і без очистки кешу |
 
 ## Host → Webview

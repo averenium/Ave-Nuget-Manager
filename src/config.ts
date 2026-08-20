@@ -8,7 +8,7 @@ export function getConfig() {
   return {
     enrichConcurrency: cfg.get<number>('enrichConcurrency', 4),
     cacheTtlMs: 5 * 60 * 1000, // 5 min — not user-configurable yet
-    includePrerelease: cfg.get<boolean>('includePrerelease', true),
+    includePrerelease: cfg.get<boolean>('includePrerelease', false),
     /**
      * `rollback` — restore previous PackageReference after a failed add.
      * `keep` — leave the new version in the project file and offer a Rollback button.

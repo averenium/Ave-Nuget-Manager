@@ -6,7 +6,7 @@
 
 ## Pre-release
 
-`SET_PRERELEASE_SETTING` чистить кеш і перезапитує latest. На вкладці **Groups** (і Packages) галочка Pre-release задає, що вважати latest:
+`SET_PRERELEASE_SETTING` чистить кеш і перезапитує latest. За замовчуванням галочка **вимкнена**. На вкладці **Groups** (і Packages) вона задає, що вважати latest:
 
 - увімкнена → ціль може бути `9.0.0-preview.*`;
 - вимкнена → лише стабільні.

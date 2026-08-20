@@ -123,7 +123,7 @@ const initialState: AppState = {
     searchQuery: '',
     selectedSources: [],
     isSearching: false,
-    prerelease: true,
+    prerelease: false,
     enrichProgress: null,
     isLoadingPackages: false,
     vulnerabilities: [],

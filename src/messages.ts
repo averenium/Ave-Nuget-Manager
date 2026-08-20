@@ -13,6 +13,7 @@ import type {
   BatchItemStatus,
   VulnerabilityFinding,
 } from './types';
+import type { SkillFamily, SkillInstallRow } from './agentSkillInstall';
 
 // ─────────────────────────────────────────────
 // Webview → Extension Host
@@ -67,7 +68,9 @@ export type WebviewMessage =
   /** Add/remove an id in workspace `blockedPackages`. */
   | { type: 'SET_PACKAGE_BLOCKED'; packageId: string; blocked: boolean }
   /** Host `showInformationMessage` (toast). */
-  | { type: 'SHOW_TOAST'; message: string };
+  | { type: 'SHOW_TOAST'; message: string }
+  /** Agents tab — Install… (QuickPick) or Update in place when `updateExisting`. */
+  | { type: 'INSTALL_AGENT_SKILL'; updateExisting?: boolean };
 
 // ─────────────────────────────────────────────
 // Extension Host → Webview
@@ -83,6 +86,9 @@ export type ExtensionMessage =
       includePrerelease: boolean;
       blockedPackages: string[];
       traceRecording: boolean;
+      bundledVersion: string;
+      detected: SkillFamily[];
+      installs: SkillInstallRow[];
     }
 
   // Packages
@@ -144,6 +150,7 @@ export type ExtensionMessage =
   | { type: 'LOG_ENTRY_ADDED'; entry: LogEntry }
   | { type: 'LOG_CLEARED' }
   | { type: 'TRACE_STATE'; recording: boolean }
+  | { type: 'SKILL_STATUS'; bundledVersion: string; detected: SkillFamily[]; installs: SkillInstallRow[] }
 
   // Errors
   | { type: 'DOTNET_NOT_FOUND' }

@@ -9,6 +9,8 @@ import {
   overwritePromptMessage,
   parseFrontmatterVersion,
   planSkillInstall,
+  inPlaceUpdateDecision,
+  readSkillStatus,
   readSkillTree,
   skillTreesEqual,
   sortTargets,
@@ -187,6 +189,25 @@ describe('planSkillInstall / local edits', () => {
       extraFiles: ['notes.md'],
     });
   });
+
+  it('in-place Update copies a version bump and only asks when there are local edits', () => {
+    expect(inPlaceUpdateDecision({ action: 'skip', version: '1.0.3' })).toBe('skip');
+    expect(inPlaceUpdateDecision({ action: 'install' })).toBe('copy');
+    const bump = planSkillInstall(
+      new Map([['SKILL.md', '---\nversion: "1.0.2"\n---\nbody\n'], ['references/nuget.md', 'nuget']]),
+      '1.0.2',
+      bundled,
+      '1.0.3',
+    );
+    expect(inPlaceUpdateDecision(bump)).toBe('copy');
+    const edited = planSkillInstall(
+      new Map([...bundled, ['SKILL.md', '---\nversion: "1.0.3"\n---\ntweak\n']]),
+      '1.0.3',
+      bundled,
+      '1.0.3',
+    );
+    expect(inPlaceUpdateDecision(edited)).toBe('ask');
+  });
 });
 
 describe('readSkillTree', () => {
@@ -201,6 +222,49 @@ describe('readSkillTree', () => {
     const ta = await readSkillTree(a);
     const tb = await readSkillTree(b);
     expect(ta && tb && skillTreesEqual(ta, tb)).toBe(true);
+    await fs.rm(root, { recursive: true, force: true });
+  });
+});
+
+describe('readSkillStatus', () => {
+  async function writeSkill(dir: string, version: string, extra = ''): Promise<void> {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'SKILL.md'), `---\nversion: "${version}"\n---\n${extra}`);
+  }
+
+  it('returns empty installs when nothing is copied, even if detected is empty', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nuget-skill-status-'));
+    const ext = path.join(root, 'ext');
+    await writeSkill(path.join(ext, 'skills', SKILL_ID), '1.0.6');
+    const status = await readSkillStatus({
+      extensionPath: ext,
+      homedir: path.join(root, 'home'),
+      detectFamiliesFn: async () => new Set(),
+    });
+    expect(status.detected).toEqual([]);
+    expect(status.bundledVersion).toBe('1.0.6');
+    expect(status.installs).toEqual([]);
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it('lists disk installs when detectFamilies is empty', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nuget-skill-status-'));
+    const ext = path.join(root, 'ext');
+    const home = path.join(root, 'home');
+    const dest = path.join(home, '.cursor', 'skills', SKILL_ID);
+    await writeSkill(path.join(ext, 'skills', SKILL_ID), '1.0.6', '# bundled\n');
+    await writeSkill(dest, '1.0.0', '# old\n');
+    const status = await readSkillStatus({
+      extensionPath: ext,
+      homedir: home,
+      detectFamiliesFn: async () => new Set(),
+    });
+    expect(status.detected).toEqual([]);
+    expect(status.installs).toHaveLength(1);
+    expect(status.installs[0].label).toBe('Cursor (user)');
+    expect(status.installs[0].version).toBe('1.0.0');
+    expect(status.installs[0].outdated).toBe(true);
+    expect(status.installs[0].destDir).toBe(dest);
     await fs.rm(root, { recursive: true, force: true });
   });
 });

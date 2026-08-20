@@ -139,6 +139,69 @@ describe('WebviewMessageBroker', () => {
     expect(initMsg.blockedPackages).toEqual([]);
   });
 
+  it('includes skill fields on INIT_STATE when detection is empty', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const skill = {
+      readStatus: jest.fn().mockResolvedValue({
+        bundledVersion: '1.0.6',
+        detected: [],
+        installs: [],
+      }),
+      install: jest.fn(),
+    };
+    const broker = new WebviewMessageBroker(
+      stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, skill,
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+    const initMsg = posted.find((m) => m.type === 'INIT_STATE') as any;
+    expect(initMsg.bundledVersion).toBe('1.0.6');
+    expect(initMsg.detected).toEqual([]);
+    expect(initMsg.installs).toEqual([]);
+  });
+
+  it('INSTALL_AGENT_SKILL invokes install and posts SKILL_STATUS', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const status = {
+      bundledVersion: '1.0.6',
+      detected: [],
+      installs: [{ label: 'Cursor (user)', destDir: '/c', version: '1.0.6', outdated: false }],
+    };
+    const skill = {
+      readStatus: jest.fn().mockResolvedValue(status),
+      install: jest.fn().mockResolvedValue(undefined),
+    };
+    const broker = new WebviewMessageBroker(
+      stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, skill,
+    );
+    broker.attach();
+    simulateMessage({ type: 'INSTALL_AGENT_SKILL' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(skill.install).toHaveBeenCalledWith({ updateExisting: false });
+    const postedStatus = posted.find((m) => m.type === 'SKILL_STATUS') as any;
+    expect(postedStatus).toMatchObject(status);
+  });
+
+  it('INSTALL_AGENT_SKILL updateExisting updates in place', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const skill = {
+      readStatus: jest.fn().mockResolvedValue({ bundledVersion: '1.0.6', detected: [], installs: [] }),
+      install: jest.fn().mockResolvedValue(undefined),
+    };
+    const broker = new WebviewMessageBroker(
+      stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, skill,
+    );
+    broker.attach();
+    simulateMessage({ type: 'INSTALL_AGENT_SKILL', updateExisting: true });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(skill.install).toHaveBeenCalledWith({ updateExisting: true });
+    expect(posted.some((m) => m.type === 'SKILL_STATUS')).toBe(true);
+  });
+
   it('runs onFirstWebviewReady once, then still inits on a later WEBVIEW_READY', async () => {
     const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();

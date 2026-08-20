@@ -1,6 +1,6 @@
 # Документація реалізації
 
-Розширення **AVE NuGet Manager** (`averenium-nuget-manager`, v0.1.0) — менеджер NuGet-пакетів для VS Code / Cursor. UI натхненний JetBrains Rider: webview у нижній панелі з вкладками Packages, Groups, Sources і Log.
+Розширення **AVE NuGet Manager** (`averenium-nuget-manager`, v0.1.0) — менеджер NuGet-пакетів для VS Code / Cursor. UI натхненний JetBrains Rider: webview у нижній панелі з вкладками Packages, Groups, Sources, Log і Agents.
 
 Кореневий [README.md](../README.md) — сторінка Marketplace. Документи нижче описують **те, що вже є в коді**.
 

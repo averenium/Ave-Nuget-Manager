@@ -789,6 +789,56 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 /* ── Empty state ────────────────────────────────────────────────────────────── */
 .empty-state { padding: var(--spacing-lg); color: var(--color-tab-inactive); text-align: center; font-size: 12px; }
 
+.agents-tab { padding: var(--spacing-md); }
+.skill-card {
+  max-width: 640px;
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-list-hover);
+}
+.skill-card__head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--spacing-sm); margin-bottom: var(--spacing-sm);
+}
+.skill-card__title {
+  display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap;
+  font-size: 14px; font-weight: 600; margin: 0; min-width: 0;
+}
+.skill-card__head .btn { margin-left: auto; flex-shrink: 0; }
+.skill-card__head .btn-split { margin-left: auto; flex-shrink: 0; }
+.btn-split { display: inline-flex; }
+.btn-split__main { border-radius: var(--radius) 0 0 var(--radius); }
+.btn-split__more {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+  padding-left: 6px; padding-right: 6px; min-width: 22px;
+}
+.btn-split__more svg { display: block; }
+.btn-split--more-only .btn-split__more { border-left: none; border-radius: var(--radius); }
+.skill-card__badge {
+  padding: 1px 6px; border-radius: var(--radius);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+  background: var(--color-btn-bg); color: var(--color-btn-fg);
+}
+.skill-card__copy, .skill-card__hint, .skill-card__status, .skill-card__meta {
+  font-size: 12px; line-height: 1.45; margin-bottom: var(--spacing-sm); color: var(--color-fg);
+}
+.skill-card__hint, .skill-card__meta, .skill-card__status { color: var(--color-tab-inactive); }
+.skill-card__installs { list-style: none; margin: 0 0 var(--spacing-md); padding: 0; }
+.skill-card__install { margin-bottom: var(--spacing-sm); }
+.skill-card__install-head { display: flex; align-items: center; gap: var(--spacing-sm); font-size: 12px; }
+.skill-card__ver { color: var(--color-tab-inactive); font-family: var(--font-mono); font-size: 11px; }
+.skill-card__outdated {
+  padding: 1px var(--spacing-xs); border-radius: var(--radius); font-size: 10px; font-weight: 600;
+  background: var(--color-warning); color: #000;
+}
+.skill-card__path {
+  font-family: var(--font-mono); font-size: 11px; color: var(--color-tab-inactive);
+  word-break: break-all; margin-top: 2px;
+}
+
 /* ── Skeleton loader ────────────────────────────────────────────────────────── */
 @keyframes shimmer { from { opacity: 0.4; } to { opacity: 0.8; } }
 .skeleton { background: var(--color-list-hover); border-radius: var(--radius); animation: shimmer 1s ease-in-out infinite alternate; }

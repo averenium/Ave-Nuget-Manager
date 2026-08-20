@@ -13,7 +13,7 @@ Report files the agent writes: existing docs/planning layout in **that** workspa
 
 ## Command
 
-`averenium.nugetManager.installAgentSkill` — Palette **NuGet: SKILL -> Install Dependency Breaking Changes Review**, and the mortar-board icon on the NuGet view / editor title.
+`averenium.nugetManager.installAgentSkill` — Palette **NuGet: SKILL -> Install Dependency Breaking Changes Review** (QuickPick). On the **Agents** tab: **Install…** if missing, **Update** if a copy is outdated — Update writes the bundled files to the existing path(s), no folder picker. Ask before overwrite only when that copy has local edits.
 
 QuickPick (detected agents first, **Custom folder…** last):
 
@@ -36,6 +36,6 @@ Detection (any one hit): `kiro` / `kiro-cli` / `~/.kiro`; `claude` / `~/.claude`
 
 If the destination folder already has files: compare them to the bundled skill. Identical → already up to date, no copy. Different → modal **Overwrite** / **Cancel** (never silent). Same `version` with different files, or extra files the bundle does not ship, is treated as local edits — the prompt says those changes will be discarded. A version bump also warns that the whole folder is replaced. Copy is temp-dir then rename (no half-written dest on failure).
 
-After copy: information message with the path. Does **not** start the agent or register a plugin.
+After copy: information message with the path. Does **not** start the agent or register a plugin. The Agents tab stays visible when no agent CLI is on PATH (`detected` may be empty); Install… still offers Custom / empty skill dirs.
 
-Code: `src/agentSkillInstall.ts`.
+Code: `src/agentSkillInstall.ts`, `src/webview/components/AgentsTab.tsx`.

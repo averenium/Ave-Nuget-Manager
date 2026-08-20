@@ -17,7 +17,7 @@ export interface SkillInstallTarget {
   workspace?: boolean;
 }
 
-const FAMILY_ORDER: Array<SkillFamily | 'custom'> = [
+export const FAMILY_ORDER: Array<SkillFamily | 'custom'> = [
   'kiro', 'claude', 'cursor', 'agents', 'antigravity', 'custom',
 ];
 
@@ -121,6 +121,13 @@ export function overwritePromptMessage(plan: Extract<SkillInstallPlan, { action:
     return `Skill at ${destDir} has local changes (${versions}). Overwrite replaces the whole folder and discards those edits.${extra}`;
   }
   return `Skill already at ${destDir} (${versions}). Overwrite replaces the whole folder; any local edits will be lost.${extra}`;
+}
+
+/** In-place Update: copy a version bump without another folder picker. Ask only when local edits exist. */
+export function inPlaceUpdateDecision(plan: SkillInstallPlan): 'skip' | 'copy' | 'ask' {
+  if (plan.action === 'skip') return 'skip';
+  if (plan.action === 'install') return 'copy';
+  return plan.localEdits ? 'ask' : 'copy';
 }
 
 export async function commandExists(bin: string): Promise<boolean> {
@@ -269,6 +276,79 @@ export function listInstallTargets(opts: {
   return sortTargets(rows);
 }
 
+export interface SkillInstallRow {
+  label: string;
+  destDir: string;
+  version: string;
+  outdated: boolean;
+}
+
+export interface SkillStatus {
+  bundledVersion: string;
+  detected: SkillFamily[];
+  installs: SkillInstallRow[];
+}
+
+export const EMPTY_SKILL_STATUS: SkillStatus = {
+  bundledVersion: '?',
+  detected: [],
+  installs: [],
+};
+
+export function orderedDetectedFamilies(detected: ReadonlySet<SkillFamily>): SkillFamily[] {
+  return FAMILY_ORDER.filter((f): f is SkillFamily => f !== 'custom' && detected.has(f));
+}
+
+/**
+ * Bundled version + detected families + dest dirs that already have SKILL.md.
+ * Empty `detected` still lists installs found on disk (tab stays visible).
+ */
+export async function readSkillStatus(opts: {
+  extensionPath: string;
+  homedir?: string;
+  workspaceRoot?: string;
+  detectFamiliesFn?: typeof detectFamilies;
+  commandExistsFn?: typeof commandExists;
+  dirExistsFn?: typeof pathExists;
+}): Promise<SkillStatus> {
+  const src = bundledSkillDir(opts.extensionPath);
+  const bundledTree = await readSkillTree(src);
+  const bundledVersion = bundledTree?.has('SKILL.md')
+    ? parseFrontmatterVersion(bundledTree.get('SKILL.md')!) ?? '?'
+    : '?';
+  const homedir = opts.homedir ?? os.homedir();
+  const detected = await (opts.detectFamiliesFn ?? detectFamilies)({
+    homedir,
+    commandExists: opts.commandExistsFn ?? commandExists,
+    dirExists: opts.dirExistsFn ?? pathExists,
+  });
+  const targets = listInstallTargets({
+    homedir,
+    workspaceRoot: opts.workspaceRoot,
+    detected,
+  });
+  const installs: SkillInstallRow[] = [];
+  for (const target of targets) {
+    const destTree = await readSkillTree(target.destDir);
+    if (!destTree?.has('SKILL.md')) continue;
+    const version = parseFrontmatterVersion(destTree.get('SKILL.md')!) ?? '?';
+    const outdated = !bundledTree
+      || version !== bundledVersion
+      || !skillTreesEqual(destTree, bundledTree);
+    installs.push({
+      label: target.label,
+      destDir: target.destDir,
+      version,
+      outdated,
+    });
+  }
+  return {
+    bundledVersion,
+    detected: orderedDetectedFamilies(detected),
+    installs,
+  };
+}
+
 export function sortTargets(targets: SkillInstallTarget[]): SkillInstallTarget[] {
   return [...targets].sort((a, b) => {
     if (a.detected !== b.detected) return a.detected ? -1 : 1;
@@ -366,7 +446,7 @@ export async function installAgentSkill(context: vscode.ExtensionContext): Promi
   const plan = planSkillInstall(destTree, destVersion, bundledTree, bundledVersion);
 
   if (plan.action === 'skip') {
-    await vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
       `Skill already up to date at ${destDir} (${plan.version}).`,
     );
     return;
@@ -390,16 +470,84 @@ export async function installAgentSkill(context: vscode.ExtensionContext): Promi
     return;
   }
 
-  await vscode.window.showInformationMessage(
+  void vscode.window.showInformationMessage(
     `Skill installed at ${destDir}. Start a new agent session if it does not appear yet.`,
   );
 }
 
-export function registerAgentSkillCommand(context: vscode.ExtensionContext): void {
+/** Copy bundled skill onto dest dirs that already have it (Agents tab Update). No QuickPick. */
+export async function updateOutdatedAgentSkills(context: vscode.ExtensionContext): Promise<void> {
+  const src = bundledSkillDir(context.extensionPath);
+  const bundledTree = await readSkillTree(src);
+  if (!bundledTree?.has('SKILL.md')) {
+    await vscode.window.showErrorMessage(
+      `AVE NuGet Manager: bundled skill not found at ${src}`,
+    );
+    return;
+  }
+  const bundledVersion = parseFrontmatterVersion(bundledTree.get('SKILL.md')!) ?? '?';
+  const status = await readSkillStatus({
+    extensionPath: context.extensionPath,
+    workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+  });
+  const destDirs = status.installs.filter((row) => row.outdated).map((row) => row.destDir);
+  if (destDirs.length === 0) {
+    void vscode.window.showInformationMessage('Skill is already up to date.');
+    return;
+  }
+
+  const copied: string[] = [];
+  for (const destDir of destDirs) {
+    const destTree = await readSkillTree(destDir);
+    const destVersion = destTree?.has('SKILL.md')
+      ? parseFrontmatterVersion(destTree.get('SKILL.md')!)
+      : undefined;
+    const plan = planSkillInstall(destTree, destVersion, bundledTree, bundledVersion);
+    const decision = inPlaceUpdateDecision(plan);
+    if (decision === 'skip') continue;
+    if (decision === 'ask' && plan.action === 'confirm') {
+      const go = await vscode.window.showWarningMessage(
+        overwritePromptMessage(plan, destDir),
+        { modal: true },
+        'Overwrite',
+        'Cancel',
+      );
+      if (go !== 'Overwrite') continue;
+    }
+    try {
+      await copySkillDir(src, destDir);
+      copied.push(destDir);
+    } catch (err) {
+      await vscode.window.showErrorMessage(
+        `AVE NuGet Manager: could not update the skill at ${destDir} (${err instanceof Error ? err.message : String(err)}).`,
+      );
+    }
+  }
+
+  if (copied.length === 1) {
+    void vscode.window.showInformationMessage(
+      `Skill updated at ${copied[0]}. Start a new agent session if it does not appear yet.`,
+    );
+    return;
+  }
+  if (copied.length > 1) {
+    void vscode.window.showInformationMessage(
+      `Skill updated in ${copied.length} locations. Start a new agent session if it does not appear yet.`,
+    );
+  }
+}
+
+export function registerAgentSkillCommand(
+  context: vscode.ExtensionContext,
+  afterInstall?: () => void | Promise<void>,
+): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'averenium.nugetManager.installAgentSkill',
-      () => installAgentSkill(context),
+      async () => {
+        await installAgentSkill(context);
+        await afterInstall?.();
+      },
     ),
   );
 }

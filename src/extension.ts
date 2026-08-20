@@ -13,7 +13,7 @@ import { WebviewMessageBroker } from './webviewMessageBroker';
 import { watchDotnetWorkspaceContext } from './dotnetWorkspace';
 import { createConcurrencyGate } from './concurrency';
 import { getConfig } from './config';
-import { registerAgentSkillCommand } from './agentSkillInstall';
+import { registerAgentSkillCommand, installAgentSkill, updateOutdatedAgentSkills, readSkillStatus } from './agentSkillInstall';
 import { TraceController } from './traceController';
 
 let logger: Logger | undefined;
@@ -85,6 +85,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     },
     trace,
+    {
+      readStatus: () => readSkillStatus({
+        extensionPath: context.extensionPath,
+        workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+      }),
+      install: (opts) => opts?.updateExisting
+        ? updateOutdatedAgentSkills(context)
+        : installAgentSkill(context),
+    },
   );
   broker.attach();
 
@@ -110,7 +119,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const registrar = new CommandRegistrar(viewProvider, broker, solutionParser);
   registrar.register(context);
-  registerAgentSkillCommand(context);
+  registerAgentSkillCommand(context, () => broker.postSkillStatus());
   trace.register(context);
   void trace.recoverOrphan();
 

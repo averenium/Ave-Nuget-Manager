@@ -10,11 +10,12 @@
 
 Основні гілки стану:
 
-- `scope`, `activeTab` (`packages` | `updates` | `sources` | `log`);
+- `scope`, `activeTab` (`packages` | `updates` | `sources` | `log` | `agents`);
 - `packages` — installed / implicit / available, пошук, джерела, prerelease, enrich progress, loading, `blockedPackages`;
 - `updates` — історія batch-джобів (Update all / family);
 - `sources.configChain` / `allSources`;
 - `log.entries`;
+- `agents` — bundled version, `detected` families, `installs` (path + version + outdated);
 - `detail` — вибраний пакет, metadata, versions, per-project loading/errors;
 - `dotnetMissing`, `globalError`, `pendingRollback`.
 
@@ -24,7 +25,7 @@
 
 ## Оболонка (`App.tsx`)
 
-Чотири вкладки (Packages, Groups, Sources, Log) + кнопка поточного `.sln`/`.csproj` справа. Клік відкриває QuickPick інших solution/project у workspace (`SELECT_SCOPE`). Якщо scope порожній — «Select project…». Якщо `dotnetMissing` — банер замість UI.
+Чотири вкладки (Packages, Groups, Sources, Log) + **Agents** після Log + кнопка поточного `.sln`/`.csproj` справа. Клік відкриває QuickPick інших solution/project у workspace (`SELECT_SCOPE`). Якщо scope порожній — «Select project…». Якщо `dotnetMissing` — банер замість UI. Вкладка Agents завжди видима (навіть коли `detected` порожній).
 
 Банер операції (`.error-banner--operation`): заголовок + `▼ N` — один спойлер (`pointerdown`, щоб не треба було клікати двічі в webview). Повний CLI після відкриття, з переносом, без горизонтального скролу. Те саме для restore, add/remove і timeout. Кнопки Rollback / Groups / Log / ✕ окремо справа.
 
@@ -84,9 +85,9 @@ Host відхиляє `INSTALL_PACKAGE` / `INSTALL_PACKAGE_MULTI` / `UPDATE_PACK
 
 `UpdatesTab` — той самий `SplitPane`, що Packages: зліва All, families, Other як `pkg-row`; справа `detail-panel`. All / Other — лише назва + count, без версії (у кожного пакета своя latest). Сім’я завжди показує `from → suggested`. Деталі: [batch-updates](batch-updates.md).
 
-## Sources і Log
+## Sources, Log і Agents
 
-Окремі документи: [config-chain](config-chain.md), [logging](logging.md).
+Окремі документи: [config-chain](config-chain.md), [logging](logging.md), [agent-skill](agent-skill.md). `AgentsTab` — картка skill + **Install…** або split **Update | …** (`INSTALL_AGENT_SKILL`). **…** — QuickPick в інше місце. Update не відкриває QuickPick. Після copy host одразу шле `SKILL_STATUS` (тост не блокує). Вкладка не ховається, якщо `detected` порожній.
 
 ## Стилі
 

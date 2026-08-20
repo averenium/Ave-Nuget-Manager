@@ -23,7 +23,7 @@ Drag the view **title bar** (or **View: Move View**) to the sidebar / secondary 
 
 ## Agent skill
 
-The panel does not review whether a bump is safe. Command **NuGet: SKILL -> Install Dependency Breaking Changes Review** (mortar-board on the view title) copies a Cursor / Claude / Kiro skill onto disk. The agent then reads official NuGet release notes for `Directory.Packages.props` / `.csproj` diffs — including transitives that never appear in the manifest. Pick a target in the QuickPick (detected CLIs first). Details: [docs/agent-skill.md](docs/agent-skill.md).
+The panel does not review whether a bump is safe. The **Agents** tab (after Log) explains and installs the **Dependency breaking-changes review** skill. If a copy is already on disk and older than the VSIX, **Update** writes the bundled files to that path (no folder picker). Palette **NuGet: SKILL -> Install Dependency Breaking Changes Review** still uses QuickPick for a first install. Details: [docs/agent-skill.md](docs/agent-skill.md).
 
 ## Tabs
 
@@ -33,6 +33,7 @@ The panel does not review whether a bump is safe. Command **NuGet: SKILL -> Inst
 | **Groups** | Update **All**, package **families** (`Microsoft.Extensions.*`, …), or **Other**. |
 | **Sources** | Read-only `nuget.config` chain. |
 | **Log** | `dotnet` commands this extension ran. **● Trace** records a sanitised zip for a GitHub issue; **Clear log** wipes the list. |
+| **Agents** | Install or **Update** the dependency-review skill (files only; the panel does not run the agent). |
 
 ## Block updates
 

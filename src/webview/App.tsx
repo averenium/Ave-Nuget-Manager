@@ -4,13 +4,15 @@ import { PackagesTab } from './components/PackagesTab';
 import { SourcesTab } from './components/SourcesTab';
 import { UpdatesTab } from './components/UpdatesTab';
 import { LogTab } from './components/LogTab';
+import { AgentsTab } from './components/AgentsTab';
 import * as pathUtils from './utils/pathUtils';
 
 const TABS = [
   { id: 'packages', label: 'Packages' },
   { id: 'updates',  label: 'Groups'   },
   { id: 'sources',  label: 'Sources'  },
-  { id: 'log',      label: 'Log'       },
+  { id: 'log',      label: 'Log'     },
+  { id: 'agents',   label: 'Agents'  },
 ] as const;
 
 function scopeLabel(scope: import('../../types').WorkspaceScope | null): string {
@@ -155,6 +157,9 @@ function Shell() {
         </div>
         <div id="tabpanel-log" role="tabpanel" hidden={state.activeTab !== 'log'}>
           {state.activeTab === 'log' && <LogTab />}
+        </div>
+        <div id="tabpanel-agents" role="tabpanel" hidden={state.activeTab !== 'agents'}>
+          {state.activeTab === 'agents' && <AgentsTab />}
         </div>
       </main>
     </div>

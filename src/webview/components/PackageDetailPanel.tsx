@@ -7,6 +7,7 @@ import { CurrentDependenciesSection } from './CurrentDependenciesSection';
 import { DetailHeader } from './DetailHeader';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
 import { findingsAffectingPackage } from '../../vulnerabilities';
+import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
 import type { VulnerabilityFinding } from '../../types';
 
 export function PackageDetailPanel() {
@@ -33,11 +34,12 @@ export function PackageDetailPanel() {
   const scope = state.scope;
   const isSolution = scope?.kind === 'solution';
   const isInstalled = state.packages.installed.some((p) => packageIdsEqual(p.id, selectedPackageId));
+  const updatesBlocked = isInstalled && isPackageBlocked(selectedPackageId, state.packages.blockedPackages);
 
   const effectiveVersion = selectedVersion || allVersions[0] || metadata?.version || '';
 
   const handleInstallUpdate = () => {
-    if (!effectiveVersion) return;
+    if (!effectiveVersion || updatesBlocked) return;
     if (isSolution) {
       setShowPopup('install');
     } else if (scope?.kind === 'project') {
@@ -66,6 +68,10 @@ export function PackageDetailPanel() {
   })();
 
   const handlePopupConfirm = (projects: string[]) => {
+    if (showPopup === 'install' && updatesBlocked) {
+      setShowPopup(null);
+      return;
+    }
     for (const p of projects) {
       dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
       dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
@@ -86,9 +92,19 @@ export function PackageDetailPanel() {
           <>
             <button
               className="btn btn--icon btn--primary"
-              onClick={handleInstallUpdate}
+              onClick={() => {
+                if (updatesBlocked) {
+                  send({
+                    type: 'SHOW_TOAST',
+                    message: `${selectedPackageId}: ${BLOCKED_UPDATES_TOOLTIP}`,
+                  });
+                  return;
+                }
+                handleInstallUpdate();
+              }}
               disabled={isLoading}
-              title="Update to selected version"
+              aria-disabled={updatesBlocked || undefined}
+              title={updatesBlocked ? BLOCKED_UPDATES_TOOLTIP : 'Update to selected version'}
               aria-label="Update"
             >↑</button>
             <button

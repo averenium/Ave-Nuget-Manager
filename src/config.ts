@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
+import { normalizeBlockedIds } from './blockedPackages';
 
 const SECTION = 'averenium.nugetManager';
+const BLOCKED_PACKAGES_KEY = 'blockedPackages';
 
 /** Read current config values from VSCode settings (with defaults). */
 export function getConfig() {
@@ -19,7 +21,36 @@ export function getConfig() {
      * Relative paths are resolved from the first workspace folder.
      */
     vulnerabilityScript: cfg.get<string>('vulnerabilityScript', ''),
+    /** Workspace-only block list (not User settings). */
+    blockedPackages: getBlockedPackages(),
   };
+}
+
+/**
+ * Package ids that must not change version in this workspace.
+ * Reads Workspace / WorkspaceFolder only — User-level values are ignored.
+ */
+export function getBlockedPackages(): string[] {
+  const cfg = vscode.workspace.getConfiguration(SECTION);
+  const inspected = cfg.inspect<unknown>(BLOCKED_PACKAGES_KEY);
+  const raw = inspected?.workspaceValue ?? inspected?.workspaceFolderValue ?? [];
+  return normalizeBlockedIds(raw);
+}
+
+/** Add or remove an id in `.vscode/settings.json` (`ConfigurationTarget.Workspace`). */
+export async function setPackageBlocked(packageId: string, blocked: boolean): Promise<string[]> {
+  const id = packageId.trim();
+  const current = getBlockedPackages();
+  const next = blocked
+    ? [...current.filter((existing) => existing.toLowerCase() !== id.toLowerCase()), id]
+    : current.filter((existing) => existing.toLowerCase() !== id.toLowerCase());
+  const cfg = vscode.workspace.getConfiguration(SECTION);
+  await cfg.update(
+    BLOCKED_PACKAGES_KEY,
+    next,
+    vscode.ConfigurationTarget.Workspace,
+  );
+  return normalizeBlockedIds(next);
 }
 
 /** Persist the prerelease flag to user settings. */

@@ -84,6 +84,7 @@ export interface AppState {
     /** True while dotnet list commands are in flight (before INSTALLED_PACKAGES arrives) */
     isLoadingPackages: boolean;
     vulnerabilities: VulnerabilityFinding[];
+    blockedPackages: string[];
   };
   sources: {
     configChain: NuGetConfigFile[];
@@ -127,6 +128,7 @@ const initialState: AppState = {
     enrichProgress: null,
     isLoadingPackages: false,
     vulnerabilities: [],
+    blockedPackages: [],
   },
   sources: { configChain: [], allSources: [] },
   log: { entries: [] },
@@ -284,6 +286,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           isLoadingPackages: true,
           enrichProgress: null,
           vulnerabilities: [],
+          blockedPackages: msg.blockedPackages,
           selectedSources: msg.sources.filter((s) => s.enabled).map((s) => s.name),
           prerelease: msg.includePrerelease,
         },
@@ -337,6 +340,12 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       return {
         ...state,
         packages: { ...state.packages, vulnerabilities: msg.findings },
+      };
+
+    case 'BLOCKED_PACKAGES':
+      return {
+        ...state,
+        packages: { ...state.packages, blockedPackages: msg.packageIds },
       };
 
     case 'PACKAGE_INFO_UPDATE': {

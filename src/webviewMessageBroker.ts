@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { runWithConcurrency } from './concurrency';
-import { getConfig, setIncludePrerelease } from './config';
+import { getConfig, setIncludePrerelease, getBlockedPackages, setPackageBlocked } from './config';
 import type { NugetManagerViewProvider } from './nugetManagerViewProvider';
 import type { INuGetBackend } from './backend/INuGetBackend';
 import type { SolutionParser } from './solutionParser';
@@ -10,6 +10,7 @@ import type { Logger } from './logger';
 import type { WebviewMessage } from './messages';
 import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus } from './types';
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
+import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from './blockedPackages';
 import { pathsEqual } from './pathCompare';
 import {
   listWorkspaceDotnetFiles,
@@ -74,9 +75,13 @@ type RefreshOpts = {
 export class WebviewMessageBroker {
   private _messageDisposable?: vscode.Disposable;
   private _logDisposable?: vscode.Disposable;
+  private _configDisposable?: vscode.Disposable;
 
   /** packageId (lowercase) → cached enrichment data */
   private readonly _cache = new Map<string, CacheEntry>();
+
+  /** Installed ids from the last successful list — used to allow first-time install of a blocked id. */
+  private _installedIds = new Set<string>();
 
   /** Cancellation token for the current enrich job — replaced on each new job */
   private _enrichAbort: AbortController = new AbortController();
@@ -109,6 +114,11 @@ export class WebviewMessageBroker {
       this.provider.postMessage({ type: 'LOG_ENTRY_ADDED', entry });
     });
 
+    this._configDisposable = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('averenium.nugetManager.blockedPackages')) return;
+      this._postBlockedPackages();
+    });
+
     // When the view is first resolved (or already is), nothing extra needed —
     // the webview will fire WEBVIEW_READY itself after React mounts.
     // But if setScope was called before the view resolved, we need to push
@@ -130,6 +140,8 @@ export class WebviewMessageBroker {
     this._messageDisposable = undefined;
     this._logDisposable?.dispose();
     this._logDisposable = undefined;
+    this._configDisposable?.dispose();
+    this._configDisposable = undefined;
   }
 
   /**
@@ -155,6 +167,25 @@ export class WebviewMessageBroker {
   private _cancelVulnScan(): void {
     this._vulnAbort.abort();
     this._vulnAbort = new AbortController();
+  }
+
+  private _postBlockedPackages(): void {
+    this.provider.postMessage({ type: 'BLOCKED_PACKAGES', packageIds: getBlockedPackages() });
+  }
+
+  private async _handleSetPackageBlocked(packageId: string, blocked: boolean): Promise<void> {
+    const packageIds = await setPackageBlocked(packageId, blocked);
+    this.provider.postMessage({ type: 'BLOCKED_PACKAGES', packageIds });
+  }
+
+  /** True when this id is blocked and already installed — first-time install stays allowed. */
+  private _rejectBlockedVersionChange(packageId: string): boolean {
+    if (!isPackageBlocked(packageId, getBlockedPackages())) return false;
+    if (!this._installedIds.has(packageId.toLowerCase())) return false;
+    void vscode.window.showInformationMessage(
+      `${packageId}: ${BLOCKED_UPDATES_TOOLTIP}`,
+    );
+    return true;
   }
 
   // ─── Message router ────────────────────────────────────────────────────────
@@ -240,6 +271,14 @@ export class WebviewMessageBroker {
         await this._handleSelectScope();
         break;
 
+      case 'SET_PACKAGE_BLOCKED':
+        await this._handleSetPackageBlocked(msg.packageId, msg.blocked);
+        break;
+
+      case 'SHOW_TOAST':
+        void vscode.window.showInformationMessage(msg.message);
+        break;
+
       default:
         break;
     }
@@ -272,6 +311,7 @@ export class WebviewMessageBroker {
           sources: [],
           configChain: [],
           includePrerelease: getConfig().includePrerelease,
+          blockedPackages: getBlockedPackages(),
         });
       }
       return;
@@ -402,7 +442,14 @@ export class WebviewMessageBroker {
       durationMs: Date.now() - chainStart,
     });
 
-    this.provider.postMessage({ type: 'INIT_STATE', scope, sources, configChain, includePrerelease: getConfig().includePrerelease });
+    this.provider.postMessage({
+      type: 'INIT_STATE',
+      scope,
+      sources,
+      configChain,
+      includePrerelease: getConfig().includePrerelease,
+      blockedPackages: getBlockedPackages(),
+    });
 
     // List with --no-restore so the UI fills even if restore is broken;
     // restore runs in parallel and reports NU1605 etc. in the banner.
@@ -503,6 +550,7 @@ export class WebviewMessageBroker {
     packageId: string,
     version: string,
   ): Promise<void> {
+    if (this._rejectBlockedVersionChange(packageId)) return;
     const attempts = await this._installOnProjects(packageId, version, [projectPath]);
     await this._finishInstallAttempts(packageId, version, attempts);
   }
@@ -512,6 +560,7 @@ export class WebviewMessageBroker {
     packageId: string,
     version: string,
   ): Promise<void> {
+    if (this._rejectBlockedVersionChange(packageId)) return;
     const attempts = await this._installOnProjects(packageId, version, projects);
     await this._finishInstallAttempts(packageId, version, attempts);
   }
@@ -563,9 +612,14 @@ export class WebviewMessageBroker {
       return;
     }
 
-    const queued = items.filter((i) => i.packageId && i.toVersion && i.projects.length > 0);
+    const queued = withoutBlocked(
+      items.filter((i) => i.packageId && i.toVersion && i.projects.length > 0),
+      getBlockedPackages(),
+    );
     if (queued.length === 0) {
-      this.provider.postMessage({ type: 'ERROR', message: 'No packages to update' });
+      void vscode.window.showInformationMessage(
+        items.length > 0 ? BLOCKED_UPDATES_TOOLTIP : 'No packages to update',
+      );
       return;
     }
 
@@ -956,6 +1010,7 @@ export class WebviewMessageBroker {
     }
 
     const installed = this._stampCachedLatest(listed.installed);
+    this._installedIds = new Set(installed.map((pkg) => pkg.id.toLowerCase()));
     this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: installed });
     this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
 

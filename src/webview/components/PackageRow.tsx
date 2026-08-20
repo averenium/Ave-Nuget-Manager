@@ -18,7 +18,9 @@ interface Props {
   /** All project entries for this package id — used to show version conflicts */
   allProjectEntries?: Array<{ projectPath: string; resolvedVersion: string }>;
   findings?: VulnerabilityFinding[];
+  blocked?: boolean;
   onClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 const MAX_VERSIONS_INLINE = 3;
@@ -30,7 +32,7 @@ function formatFindingLine(finding: VulnerabilityFinding, viaPackage?: string): 
 }
 
 export function PackageRow({
-  pkg, kind, selected, implicitVersions, allProjectEntries, findings, onClick,
+  pkg, kind, selected, implicitVersions, allProjectEntries, findings, blocked, onClick, onContextMenu,
 }: Props) {
   const installed = kind === 'installed' ? (pkg as InstalledPackage) : undefined;
   const implicit  = kind === 'implicit'  ? (pkg as ImplicitPackage)  : undefined;
@@ -88,10 +90,12 @@ export function PackageRow({
       name={pkg.id}
       selected={selected}
       hasUpdate={hasUpdate}
+      blocked={!!blocked}
       hasVulnerability={direct.length + via.length > 0}
       vulnerabilityVia={direct.length === 0 && via.length > 0}
       vulnerabilityTitle={vulnTitle}
       onActivate={onClick}
+      onContextMenu={onContextMenu}
       aside={sourceName ? (
         <span className="pkg-row__source" title={sourceName}>{sourceName}</span>
       ) : null}

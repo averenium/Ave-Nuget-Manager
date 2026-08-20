@@ -15,7 +15,7 @@ webview mount  →  WEBVIEW_READY
                    └─ є scope
                         ├─ activateScope уже зробив init → пропуск (антидубль)
                         └─ інакше _initForScope
-                             → INIT_STATE (scope, sources, configChain, includePrerelease)
+                             → INIT_STATE (scope, sources, configChain, includePrerelease, blockedPackages)
                              → INSTALLED_PACKAGES + IMPLICIT_PACKAGES (`dotnet list --no-restore`)
                              → паралельно `dotnet restore` → ERROR «Restore failed» якщо впав
                              → фоновий enrich → PACKAGE_INFO_UPDATE / ENRICH_PROGRESS
@@ -44,20 +44,22 @@ webview mount  →  WEBVIEW_READY
 | `FORCE_REFRESH` | Кругова стрілка (Force refresh) | Те саме з очищенням кешу; смужка далі показує enrich latest |
 | `OPEN_CONFIG_FILE` | Вкладка Sources | `openTextDocument` |
 | `GET_LOG_ENTRIES` | Відкриття Log | Повний масив Logger |
-| `SELECT_SCOPE` | Клік по назві `.sln`/`.csproj` у tab bar | QuickPick усіх `.sln`/`.slnx`/`.csproj`/`.fsproj` у workspace → `activateScope` |
+| `SET_PACKAGE_BLOCKED` | Контекстне меню Block / Unblock | Пише `averenium.nugetManager.blockedPackages` у Workspace settings |
+| `SHOW_TOAST` | Клік по недоступному **↑** (blocked) | `window.showInformationMessage` |
 | `REFRESH_PACKAGES` | **UI не шле** | Handler є: refresh без restore і без очистки кешу |
 
 ## Host → Webview
 
 | `type` | Коли шлеться | Обробка в reducer |
 |---|---|---|
-| `INIT_STATE` | Початок scope | Scope, sources, loading |
+| `INIT_STATE` | Початок scope | Scope, sources, loading, `blockedPackages` |
 | `INSTALLED_PACKAGES` | Після успішного `dotnet list` | Список + `isLoadingPackages: false`; оновлює `detail.projectVersions` для вибраного пакета |
 | `IMPLICIT_PACKAGES` | Після `dotnet list` | Транзитивні |
 | `INSTALLED_PACKAGES_PATCH` | Після fail add (успішні проєкти завжди; невдалі — лише `keep`) | Точкове оновлення version у списку й деталях |
 | `PACKAGE_INFO_UPDATE` | Enrich по id | `latestVersion` + `sourceName`; сортування: спочатку з оновленням |
 | `ENRICH_PROGRESS` | `done/total` | Смужка Force refresh (`Refreshing latest n/m`); зникає коли `done >= total` |
 | `VULNERABILITIES` | Після list (паралельно з enrich) | Findings для ⚠ і деталей; див. [vulnerabilities](vulnerabilities.md) |
+| `BLOCKED_PACKAGES` | Після `SET_PACKAGE_BLOCKED` або зміни Workspace settings | Ids з `blockedPackages` |
 | `SEARCH_RESULTS` | Пошук | Available-список |
 | `PACKAGE_METADATA` | Деталі | Права панель |
 | `ALL_VERSIONS` | Деталі | Dropdown версій |

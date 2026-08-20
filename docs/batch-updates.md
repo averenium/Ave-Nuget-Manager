@@ -15,7 +15,7 @@ Host не перераховує latest: виконує `items[].toVersion`, я�
 
 ## Вкладка Groups
 
-Увесь batch-UI на вкладці **Groups**, той самий `SplitPane` / `pkg-row` / `DetailHeader`, що Packages. Оновлення — іконка **↑**. Версію обирає кастомний `VersionSelect` (нативний `<select>` у webview розпирає панель довгими prerelease).
+Увесь batch-UI на вкладці **Groups**, той самий `SplitPane` / `pkg-row` / `DetailHeader`, що Packages. Оновлення — іконка **↑**; під час batch вона замінюється на **■** (Stop) у тому ж місці. Версію обирає кастомний `VersionSelect` (нативний `<select>` у webview розпирає панель довгими prerelease).
 
 За замовчуванням список пакетів **не** показується. Зліва групи:
 
@@ -44,6 +44,8 @@ History після запуску — під прев’ю. Одиночний u
 ## Виконання
 
 `UPDATE_PACKAGES_BATCH`: пакети **послідовно** (щоб не писати один csproj паралельно). Проєкти одного пакета — як і раніше, паралельний `dotnet add`. Rollback / keep — ті самі правила, що для одиночного add ([install-and-rollback](install-and-rollback.md)); batch не зупиняється на першій помилці.
+
+**Stop (■)** замінює **↑** у заголовку групи і шле `CANCEL_BATCH_UPDATE`: host убиває поточний `dotnet add` (`AbortSignal` у `CliRunner`), відновлює знімки цього add (навіть при `onFailedUpdate: keep`), поточний пакет → `cancelled`, решта queued → `cancelled` без CLI. Stop не банер помилки і не Rollback.
 
 Прогрес: `BATCH_UPDATE_STARTED` → `BATCH_UPDATE_ITEM` → `BATCH_UPDATE_FINISHED` (History на тій самій вкладці).
 

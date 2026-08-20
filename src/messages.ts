@@ -47,6 +47,7 @@ export type WebviewMessage =
       includePrerelease: boolean;
       items: BatchUpdateItem[];
     }
+  | { type: 'CANCEL_BATCH_UPDATE' }
 
   // Refresh
   | { type: 'REFRESH_PACKAGES' }
@@ -115,7 +116,7 @@ export type ExtensionMessage =
       completedProjects?: string[];
       error?: string;
     }
-  | { type: 'BATCH_UPDATE_FINISHED'; jobId: string; canRollback?: boolean }
+  | { type: 'BATCH_UPDATE_FINISHED'; jobId: string; canRollback?: boolean; cancelled?: boolean }
 
   /** Force refresh began — drop the previous operation banner so restore can replace it. */
   | { type: 'REFRESH_STARTED' }

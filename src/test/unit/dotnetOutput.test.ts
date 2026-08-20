@@ -37,6 +37,16 @@ describe('dotnetOutput', () => {
     expect(summary).not.toContain('X.509');
   });
 
+  it('treats a cancelled CLI result as failure', () => {
+    expect(isCliOperationSuccess({
+      exitCode: null,
+      stdout: '',
+      stderr: 'Cancelled',
+      timedOut: false,
+      cancelled: true,
+    })).toBe(false);
+  });
+
   it('treats exit 0 as failure when add stdout contains NU1605 / Failed to restore', () => {
     expect(isCliOperationSuccess({
       exitCode: 0,

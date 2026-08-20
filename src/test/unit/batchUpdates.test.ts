@@ -242,6 +242,14 @@ describe('formatBatchUpdateError', () => {
     ])).toBeNull();
   });
 
+  it('ignores cancelled items so Stop is not treated as a failure banner', () => {
+    expect(formatBatchUpdateError([
+      { packageId: 'A', status: 'ok' },
+      { packageId: 'B', status: 'cancelled', error: 'Stopped' },
+      { packageId: 'C', status: 'cancelled' },
+    ])).toBeNull();
+  });
+
   it('puts the CLI dump after the title so the banner spoiler has a body', () => {
     const text = formatBatchUpdateError([
       { packageId: 'A', status: 'ok' },

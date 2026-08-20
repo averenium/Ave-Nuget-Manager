@@ -318,11 +318,13 @@ export class CliBackend implements INuGetBackend {
     projectPath: string,
     packageId: string,
     version: string,
+    signal?: AbortSignal,
   ): Promise<CliResult> {
     return this.runner.run({
       args: ['add', projectPath, 'package', packageId, '--version', version],
       cwd: path.dirname(projectPath),
       timeoutMs: TIMEOUT_MS,
+      signal,
     });
   }
 

@@ -176,6 +176,16 @@ describe('CliBackend — command construction', () => {
       ]);
     });
 
+    it('forwards AbortSignal to the runner', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      const ac = new AbortController();
+
+      await backend.installPackage('/abs/Foo.csproj', 'Pkg', '1.0.0', ac.signal);
+
+      expect(calls[0].signal).toBe(ac.signal);
+    });
+
     it('cwd is dirname of project file (Property 19)', async () => {
       const calls: CliCommand[] = [];
       const logger = new Logger();

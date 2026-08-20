@@ -148,6 +148,8 @@ export interface CliCommand {
   /** Working directory for the child process */
   cwd: string;
   timeoutMs: number;
+  /** Kill the process when aborted (batch Stop). */
+  signal?: AbortSignal;
 }
 
 export interface CliResult {
@@ -155,6 +157,8 @@ export interface CliResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  /** True when `signal` aborted the process (not a timeout). */
+  cancelled?: boolean;
 }
 
 // ─────────────────────────────────────────────
@@ -172,7 +176,7 @@ export interface OperationFailure {
 
 export type BatchUpdateKind = 'all' | 'family' | 'other';
 
-export type BatchItemStatus = 'pending' | 'running' | 'ok' | 'error' | 'timeout';
+export type BatchItemStatus = 'pending' | 'running' | 'ok' | 'error' | 'timeout' | 'cancelled';
 
 /** One package to bump in a batch (possibly several projects). */
 export interface BatchUpdateItem {

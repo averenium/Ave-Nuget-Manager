@@ -862,6 +862,61 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     expect(patch?.packages.some((p: { projectPath: string }) => p.projectPath === '/sol/B/B.csproj')).toBe(false);
   });
 
+  it('INSTALL_PACKAGE_MULTI skips projects already on the target version', async () => {
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockImplementation(async (projectPath) => [
+      { path: projectPath, content: '' },
+    ]);
+    const verSpy = jest.spyOn(projectFiles, 'readPackageVersionFromSnapshots').mockImplementation((snapshots) => {
+      const projectPath = snapshots[0]?.path ?? '';
+      return projectPath.includes('A.csproj') ? '2.0.0' : '1.0.0';
+    });
+
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+      const backend = makeBackend();
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE_MULTI',
+        projects: ['/sol/A/A.csproj', '/sol/B/B.csproj'],
+        packageId: 'Pkg',
+        version: '2.0.0',
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.installPackage).toHaveBeenCalledTimes(1);
+      expect(backend.installPackage.mock.calls[0][0]).toBe('/sol/B/B.csproj');
+      expect(posted.some((m) => m.type === 'OPERATION_SUCCESS')).toBe(true);
+    } finally {
+      snapSpy.mockRestore();
+      verSpy.mockRestore();
+    }
+  });
+
+  it('INSTALL_PACKAGE skips dotnet add when the project is already on the version', async () => {
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+      { path: '/p/App.csproj', content: '' },
+    ]);
+    const verSpy = jest.spyOn(projectFiles, 'readPackageVersionFromSnapshots').mockReturnValue('1.0.0');
+
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'INSTALL_PACKAGE', projectPath: '/p/App.csproj', packageId: 'Pkg', version: '1.0.0' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(backend.installPackage).not.toHaveBeenCalled();
+      expect(posted.some((m) => m.type === 'OPERATION_SUCCESS')).toBe(true);
+    } finally {
+      snapSpy.mockRestore();
+      verSpy.mockRestore();
+    }
+  });
+
   it('INSTALL_PACKAGE_MULTI never runs more than dotnetConcurrency installs at once', async () => {
     const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
       dotnetConcurrency: 2,

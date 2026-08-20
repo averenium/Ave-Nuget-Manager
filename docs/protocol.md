@@ -35,7 +35,7 @@ webview mount  →  WEBVIEW_READY
 | `GET_ALL_VERSIONS` | `VersionSelector` / сім’я Groups | Кеш (TTL 5 хв); інакше `getAllVersions` |
 | `INSTALL_PACKAGE` | Один проєкт | Snapshot файлів → `dotnet add` → успіх або rollback/patch; див. [install-and-rollback](install-and-rollback.md) |
 | `REMOVE_PACKAGE` | Один проєкт | `dotnet remove`, потім refresh scope |
-| `INSTALL_PACKAGE_MULTI` | Попап у solution | Snapshot усіх проєктів, потім add з лімітом `dotnetConcurrency` |
+| `INSTALL_PACKAGE_MULTI` | Попап у solution | Snapshot усіх проєктів, add з лімітом `dotnetConcurrency`; skip якщо вже на версії |
 | `REMOVE_PACKAGE_MULTI` | Попап у solution | Remove з лімітом `dotnetConcurrency`; refresh усієї solution |
 | `ROLLBACK_FAILED_UPDATE` | Кнопка Rollback (`onFailedUpdate: keep`) | Відновлює знімки невдалих проєктів + restore |
 | `UPDATE_PACKAGES_BATCH` | Update all / family / other | Послідовний add по пакетах; див. [batch-updates](batch-updates.md) |

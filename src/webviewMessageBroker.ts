@@ -12,6 +12,7 @@ import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, In
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from './blockedPackages';
 import { pathsEqual } from './pathCompare';
+import { compareSemVer } from './semver';
 import {
   listWorkspaceDotnetFiles,
   scopeFromDotnetFile,
@@ -53,6 +54,11 @@ interface InstallAttempt {
   snapshots: FileSnapshot[];
   previousVersion: string | null;
   result: CliResult;
+  skipped?: boolean;
+}
+
+function skippedInstallResult(): CliResult {
+  return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
 }
 
 interface CacheEntry {
@@ -594,6 +600,10 @@ export class WebviewMessageBroker {
           onProjectDone?.(p.projectPath, false);
           return { ...p, result };
         }
+        if (p.previousVersion && compareSemVer(p.previousVersion, version) === 0) {
+          onProjectDone?.(p.projectPath, true);
+          return { ...p, result: skippedInstallResult(), skipped: true };
+        }
         const result = await this.backend.installPackage(p.projectPath, packageId, version, signal);
         onProjectDone?.(p.projectPath, isCliOperationSuccess(result));
         return { ...p, result };
@@ -766,6 +776,7 @@ export class WebviewMessageBroker {
     }
 
     const succeededAttempts = attempts.filter((a) => isCliOperationSuccess(a.result));
+    const mutatedAttempts = succeededAttempts.filter((a) => !a.skipped);
     const failed = attempts.filter((a) => !isCliOperationSuccess(a.result));
     const cancelledAttempts = failed.filter((a) => a.result.cancelled);
     const realFailed = failed.filter((a) => !a.result.cancelled);
@@ -780,10 +791,10 @@ export class WebviewMessageBroker {
           packageId,
           affectedProjects: succeeded,
         });
-      } else if (succeededAttempts.length > 0) {
-        this._patchInstalledVersions(packageId, version, succeededAttempts);
+      } else if (mutatedAttempts.length > 0) {
+        this._patchInstalledVersions(packageId, version, mutatedAttempts);
       }
-      if (refresh) await this._refreshAfterMutation();
+      if (refresh && mutatedAttempts.length > 0) await this._refreshAfterMutation();
       return { status: 'ok', succeeded, keepAttempts: [] };
     }
 

@@ -8,6 +8,7 @@ import { DetailHeader } from './DetailHeader';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
 import { findingsAffectingPackage } from '../../vulnerabilities';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
+import { compareSemVer } from '../../semver';
 import type { VulnerabilityFinding } from '../../types';
 
 export function PackageDetailPanel() {
@@ -281,9 +282,13 @@ export function PackageDetailPanel() {
               : scope.projects
           }
           initiallySelected={
-            showPopup === 'remove' || isInstalled
+            showPopup === 'remove'
               ? Object.keys(currentVersions)
-              : undefined
+              : isInstalled
+                ? Object.keys(currentVersions).filter(
+                  (p) => compareSemVer(currentVersions[p], effectiveVersion) !== 0,
+                )
+                : undefined
           }
           currentVersions={currentVersions}
           targetVersion={showPopup === 'install' ? effectiveVersion : undefined}

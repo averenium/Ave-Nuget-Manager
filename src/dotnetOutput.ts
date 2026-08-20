@@ -35,6 +35,7 @@ export function hasDotnetErrorOutput(stdout: string, stderr: string): boolean {
 
 /** True when add/remove should be reported as success — exit 0 is not enough. */
 export function isCliOperationSuccess(result: CliResult): boolean {
+  if (result.cancelled) return false;
   if (result.timedOut) return false;
   if (result.exitCode !== 0) return false;
   return !hasDotnetErrorOutput(result.stdout, result.stderr);

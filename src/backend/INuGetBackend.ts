@@ -97,6 +97,7 @@ export interface INuGetBackend {
     projectPath: string,
     packageId: string,
     version: string,
+    signal?: AbortSignal,
   ): Promise<CliResult>;
 
   /**

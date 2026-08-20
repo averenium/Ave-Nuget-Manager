@@ -174,6 +174,34 @@ describe('CliRunner', () => {
 
   // ── spawn error ───────────────────────────────────────────────────────────
 
+  it('resolves cancelled without spawning when the signal is already aborted', async () => {
+    const ac = new AbortController();
+    ac.abort();
+
+    const result = await runner.run(makeCmd({ signal: ac.signal }));
+
+    expect(result.cancelled).toBe(true);
+    expect(result.timedOut).toBe(false);
+    expect(result.exitCode).toBeNull();
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('kills the process and sets cancelled=true when the signal aborts', async () => {
+    const { proc } = makeFakeProcess();
+    mockSpawn.mockReturnValue(proc as any);
+    const ac = new AbortController();
+
+    const promise = runner.run(makeCmd({ signal: ac.signal }));
+    ac.abort();
+    proc.emit('close', null);
+
+    const result = await promise;
+    expect(result.cancelled).toBe(true);
+    expect(result.timedOut).toBe(false);
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(result.exitCode).toBeNull();
+  });
+
   it('handles spawn error event (e.g. ENOENT) gracefully', async () => {
     const { proc } = makeFakeProcess();
     mockSpawn.mockReturnValue(proc as any);

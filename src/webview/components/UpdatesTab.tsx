@@ -31,6 +31,7 @@ function statusLabel(item: BatchUpdateItemView): string {
     case 'ok': return 'Updated';
     case 'error': return 'Failed';
     case 'timeout': return 'Timed out';
+    case 'cancelled': return 'Stopped';
     default: return item.status;
   }
 }
@@ -59,7 +60,7 @@ function itemFailedCount(item: BatchUpdateItemView): number {
   if (item.status === 'error' || item.status === 'timeout') {
     return Math.max(0, item.projects.length - succeeded);
   }
-  if (item.status === 'running') {
+  if (item.status === 'running' || item.status === 'cancelled') {
     return Math.max(0, itemCompletedCount(item) - succeeded);
   }
   return 0;
@@ -366,7 +367,17 @@ export function UpdatesTab() {
               {selection && (
                 <DetailHeader
                   name={title}
-                  actions={(
+                  actions={runningJob && jobMatchesSelection(runningJob, selection) ? (
+                    <button
+                      type="button"
+                      className="btn btn--icon btn--danger"
+                      title="Stop group update"
+                      aria-label="Stop group update"
+                      onClick={() => send({ type: 'CANCEL_BATCH_UPDATE' })}
+                    >
+                      ■
+                    </button>
+                  ) : (
                     <button
                       type="button"
                       className="btn btn--icon btn--primary"
@@ -470,6 +481,7 @@ function rowTone(item: BatchUpdateItemView): string {
   if (item.status === 'ok') return 'pkg-row--ok';
   if (item.status === 'error' || item.status === 'timeout') return 'pkg-row--fail';
   if (item.status === 'running') return 'pkg-row--running';
+  if (item.status === 'cancelled' || item.status === 'pending') return 'pkg-row--muted';
   return '';
 }
 
@@ -482,13 +494,14 @@ function BatchJobList({ job }: { job: BatchUpdateJob }) {
           const total = item.projects.length;
           const done = itemCompletedCount(item);
           const failed = item.status === 'error' || item.status === 'timeout';
+          const stopped = item.status === 'cancelled';
           return (
             <PkgListRow
               key={item.packageId}
               className={stale ? undefined : rowTone(item)}
               name={item.packageId}
               nameTitle={item.error ?? `${item.packageId} · ${projectNames(item.projects)}`}
-              muted={stale}
+              muted={stale || stopped}
               aside={(
                 <span
                   className="pkg-row__source"

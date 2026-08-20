@@ -39,6 +39,7 @@ webview mount  →  WEBVIEW_READY
 | `REMOVE_PACKAGE_MULTI` | Попап у solution | Паралельний remove; refresh усієї solution |
 | `ROLLBACK_FAILED_UPDATE` | Кнопка Rollback (`onFailedUpdate: keep`) | Відновлює знімки невдалих проєктів + restore |
 | `UPDATE_PACKAGES_BATCH` | Update all / family / other | Послідовний add по пакетах; див. [batch-updates](batch-updates.md) |
+| `CANCEL_BATCH_UPDATE` | Stop (■) замість Update в заголовку групи | Аборт поточного `dotnet add`, решта пакетів `cancelled` |
 | `FORCE_REFRESH` | Кнопка ↺ | Чистить кеш, list + restore |
 | `OPEN_CONFIG_FILE` | Вкладка Sources | `openTextDocument` |
 | `GET_LOG_ENTRIES` | Відкриття Log | Повний масив Logger |
@@ -63,8 +64,8 @@ webview mount  →  WEBVIEW_READY
 | `ROLLBACK_COMPLETE` | Після ручного rollback | Скидає банер і `pendingRollback` |
 | `OPERATION_TIMEOUT` | CLI timeout (single) | Банер timeout, спінери скидаються |
 | `BATCH_UPDATE_STARTED` | Початок batch | Вкладка Groups, таблиця queued |
-| `BATCH_UPDATE_ITEM` | Кожен пакет у batch | pending → running → ok/error/timeout |
-| `BATCH_UPDATE_FINISHED` | Кінець batch | `finishedAt`, опційно `canRollback` |
+| `BATCH_UPDATE_ITEM` | Кожен пакет у batch | pending → running → ok/error/timeout/cancelled |
+| `BATCH_UPDATE_FINISHED` | Кінець batch | `finishedAt`, опційно `canRollback`, `cancelled` |
 | `LOG_ENTRIES` / `LOG_ENTRY_ADDED` | Log | Масив записів |
 | `ERROR` | Пошук / metadata / list refresh / restore | Metadata → `detail.error`; list refresh / restore → `globalError` (restore не затирає `pendingRollback`) |
 | `CONFIG_CHAIN_UPDATE` | **Ніколи не шлеться** | Handler у reducer є |

@@ -71,6 +71,7 @@ export class WebviewMessageBroker {
   private _pendingRollback: { packageId: string; attempts: InstallAttempt[] } | null = null;
 
   private _batchRunning = false;
+  private _batchAbort: AbortController | null = null;
 
   constructor(
     private readonly provider: NugetManagerViewProvider,
@@ -107,6 +108,7 @@ export class WebviewMessageBroker {
   detach(): void {
     this._cancelEnrich();
     this._cancelVulnScan();
+    this._batchAbort?.abort();
     this._messageDisposable?.dispose();
     this._messageDisposable = undefined;
     this._logDisposable?.dispose();
@@ -180,6 +182,10 @@ export class WebviewMessageBroker {
 
       case 'UPDATE_PACKAGES_BATCH':
         await this._handleUpdateBatch(msg.kind, msg.items, msg.includePrerelease, msg.family);
+        break;
+
+      case 'CANCEL_BATCH_UPDATE':
+        this._batchAbort?.abort();
         break;
 
       case 'REFRESH_PACKAGES':
@@ -447,6 +453,7 @@ export class WebviewMessageBroker {
     version: string,
     projects: string[],
     onProjectDone?: (projectPath: string, ok: boolean) => void,
+    signal?: AbortSignal,
   ): Promise<InstallAttempt[]> {
     const prepared = await Promise.all(
       projects.map(async (projectPath) => {
@@ -460,7 +467,14 @@ export class WebviewMessageBroker {
     );
     return Promise.all(
       prepared.map(async (p) => {
-        const result = await this.backend.installPackage(p.projectPath, packageId, version);
+        if (signal?.aborted) {
+          const result: CliResult = {
+            exitCode: null, stdout: '', stderr: 'Cancelled', timedOut: false, cancelled: true,
+          };
+          onProjectDone?.(p.projectPath, false);
+          return { ...p, result };
+        }
+        const result = await this.backend.installPackage(p.projectPath, packageId, version, signal);
         onProjectDone?.(p.projectPath, isCliOperationSuccess(result));
         return { ...p, result };
       }),
@@ -488,6 +502,8 @@ export class WebviewMessageBroker {
     }
 
     this._batchRunning = true;
+    const abort = new AbortController();
+    this._batchAbort = abort;
     const jobId = `batch-${Date.now()}`;
     const job: BatchUpdateJob = {
       id: jobId,
@@ -507,7 +523,14 @@ export class WebviewMessageBroker {
     const keepFailures: InstallAttempt[] = [];
 
     try {
-      for (const item of queued) {
+      for (let i = 0; i < queued.length; i++) {
+        const item = queued[i];
+        if (abort.signal.aborted) {
+          for (const rest of queued.slice(i)) {
+            this._postBatchItem(jobId, rest.packageId, 'cancelled', [], 'Stopped', []);
+          }
+          break;
+        }
         this._postBatchItem(jobId, item.packageId, 'running', [], undefined, []);
         const succeededSoFar: string[] = [];
         const completedSoFar: string[] = [];
@@ -527,6 +550,7 @@ export class WebviewMessageBroker {
               [...completedSoFar],
             );
           },
+          abort.signal,
         );
         const outcome = await this._finishInstallAttempts(item.packageId, item.toVersion, attempts, {
           notify: false,
@@ -535,28 +559,39 @@ export class WebviewMessageBroker {
         if (outcome.keepAttempts.length > 0) {
           keepFailures.push(...outcome.keepAttempts);
         }
+        const stopped = abort.signal.aborted && outcome.status !== 'ok';
         this._postBatchItem(
           jobId,
           item.packageId,
-          outcome.status,
+          stopped ? 'cancelled' : outcome.status,
           outcome.succeeded,
-          outcome.error,
+          stopped ? (outcome.error ?? 'Stopped') : outcome.error,
           item.projects,
         );
+        if (abort.signal.aborted) {
+          for (const rest of queued.slice(i + 1)) {
+            this._postBatchItem(jobId, rest.packageId, 'cancelled', [], 'Stopped', []);
+          }
+          break;
+        }
       }
 
       if (keepFailures.length > 0) {
         this._pendingRollback = { packageId: queued[queued.length - 1].packageId, attempts: keepFailures };
+      } else if (abort.signal.aborted) {
+        this._pendingRollback = null;
       }
 
       this.provider.postMessage({
         type: 'BATCH_UPDATE_FINISHED',
         jobId,
         canRollback: keepFailures.length > 0,
+        cancelled: abort.signal.aborted,
       });
       await this._refreshAfterMutation({ notifyListError: false });
     } finally {
       this._batchRunning = false;
+      this._batchAbort = null;
     }
   }
 
@@ -606,6 +641,8 @@ export class WebviewMessageBroker {
 
     const succeededAttempts = attempts.filter((a) => isCliOperationSuccess(a.result));
     const failed = attempts.filter((a) => !isCliOperationSuccess(a.result));
+    const cancelledAttempts = failed.filter((a) => a.result.cancelled);
+    const realFailed = failed.filter((a) => !a.result.cancelled);
     const succeeded = succeededAttempts.map((a) => a.projectPath);
 
     if (failed.length === 0) {
@@ -624,23 +661,37 @@ export class WebviewMessageBroker {
       return { status: 'ok', succeeded, keepAttempts: [] };
     }
 
+    // Stop is not a failed update: always restore in-flight adds, never keep/patch.
+    if (cancelledAttempts.length > 0) {
+      await this._restoreAttempts(cancelledAttempts);
+    }
+
+    if (realFailed.length === 0) {
+      if (notify) this._pendingRollback = null;
+      if (succeededAttempts.length > 0) {
+        this._patchInstalledVersions(packageId, version, succeededAttempts);
+      }
+      if (refresh) await this._refreshAfterMutation({ notifyListError: false });
+      return { status: 'cancelled', succeeded, error: 'Stopped', keepAttempts: [] };
+    }
+
     const mode = getConfig().onFailedUpdate;
     let rollbackApplied = false;
     let keepAttempts: InstallAttempt[] = [];
     if (mode === 'rollback') {
-      await this._restoreAttempts(failed);
+      await this._restoreAttempts(realFailed);
       if (notify) this._pendingRollback = null;
       rollbackApplied = true;
       if (succeededAttempts.length > 0) {
         this._patchInstalledVersions(packageId, version, succeededAttempts);
       }
     } else {
-      keepAttempts = failed;
-      if (notify) this._pendingRollback = { packageId, attempts: failed };
-      this._patchInstalledVersions(packageId, version, [...succeededAttempts, ...failed]);
+      keepAttempts = realFailed;
+      if (notify) this._pendingRollback = { packageId, attempts: realFailed };
+      this._patchInstalledVersions(packageId, version, [...succeededAttempts, ...realFailed]);
     }
 
-    const failures = failed.map((a) => cliFailure(a.projectPath, a.result, {
+    const failures = realFailed.map((a) => cliFailure(a.projectPath, a.result, {
       previousVersion: a.previousVersion,
       attemptedVersion: version,
     }));

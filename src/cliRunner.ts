@@ -20,10 +20,22 @@ export class CliRunner {
    */
   run(command: CliCommand): Promise<CliResult> {
     return new Promise<CliResult>((resolve) => {
+      if (command.signal?.aborted) {
+        resolve({
+          exitCode: null,
+          stdout: '',
+          stderr: 'Cancelled',
+          timedOut: false,
+          cancelled: true,
+        });
+        return;
+      }
+
       const startedAt = Date.now();
       const stdoutChunks: string[] = [];
       const stderrChunks: string[] = [];
       let timedOut = false;
+      let cancelled = false;
       let settled = false;
 
       const child = spawn('dotnet', command.args, {
@@ -38,25 +50,39 @@ export class CliRunner {
       child.stdout?.on('data', (chunk: string) => stdoutChunks.push(chunk));
       child.stderr?.on('data', (chunk: string) => stderrChunks.push(chunk));
 
-      // ── Timeout handling ─────────────────────────────────────────────────
-      const timer = setTimeout(() => {
-        timedOut = true;
-        // Try graceful termination first, then force-kill
+      const killChild = () => {
         child.kill('SIGTERM');
         setTimeout(() => {
           try { child.kill('SIGKILL'); } catch { /* already exited */ }
         }, 500);
+      };
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        killChild();
       }, command.timeoutMs);
 
-      // ── Completion ───────────────────────────────────────────────────────
+      const onAbort = () => {
+        cancelled = true;
+        killChild();
+      };
+      command.signal?.addEventListener('abort', onAbort);
+
       const finish = (exitCode: number | null): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        command.signal?.removeEventListener('abort', onAbort);
 
         const stdout = stdoutChunks.join('');
         const stderr = stderrChunks.join('');
-        const result: CliResult = { exitCode, stdout, stderr, timedOut };
+        const result: CliResult = {
+          exitCode,
+          stdout,
+          stderr,
+          timedOut: timedOut && !cancelled,
+          cancelled,
+        };
 
         this.logger.logCliOperation({
           timestamp: new Date(startedAt),
@@ -65,7 +91,7 @@ export class CliRunner {
           stdout,
           stderr,
           exitCode,
-          timedOut,
+          timedOut: result.timedOut,
           durationMs: Date.now() - startedAt,
         });
 

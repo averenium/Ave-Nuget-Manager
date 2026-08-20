@@ -553,7 +553,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       return {
         ...state,
         pendingRollback: msg.canRollback === true,
-        globalError: dump ?? state.globalError,
+        globalError: dump ?? (msg.cancelled ? null : state.globalError),
         updates: { ...state.updates, jobs },
       };
     }

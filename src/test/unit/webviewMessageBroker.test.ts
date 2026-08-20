@@ -734,4 +734,128 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     expect(posted.some((m) => m.type === 'OPERATION_ERROR')).toBe(false);
     expect(backend.installPackage).toHaveBeenCalledTimes(2);
   });
+
+  it('CANCEL_BATCH_UPDATE aborts the in-flight add and skips remaining packages', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([]);
+
+    backend.installPackage.mockImplementation((_project, packageId, _version, signal) => {
+      return new Promise((resolve) => {
+        const finishCancelled = () => resolve(makeCliResult({
+          exitCode: null,
+          stderr: 'Cancelled',
+          cancelled: true,
+        }));
+        if (signal?.aborted) {
+          finishCancelled();
+          return;
+        }
+        if (packageId === 'A') {
+          signal?.addEventListener('abort', finishCancelled);
+          return;
+        }
+        resolve(makeCliResult());
+      });
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'UPDATE_PACKAGES_BATCH',
+      kind: 'all',
+      includePrerelease: false,
+      items: [
+        { packageId: 'A', fromVersion: '1.0.0', toVersion: '2.0.0', projects: ['/p/App.csproj'] },
+        { packageId: 'B', fromVersion: '1.0.0', toVersion: '1.1.0', projects: ['/p/App.csproj'] },
+      ],
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(backend.installPackage).toHaveBeenCalledTimes(1);
+    expect(backend.installPackage.mock.calls[0][3]).toBeInstanceOf(AbortSignal);
+
+    simulateMessage({ type: 'CANCEL_BATCH_UPDATE' });
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(backend.installPackage.mock.calls.map((c: unknown[]) => c[1])).toEqual(['A']);
+    const items = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM') as Array<{
+      packageId: string;
+      status: string;
+    }>;
+    const finals = items.filter((m) => m.status === 'cancelled');
+    expect(finals.map((m) => m.packageId).sort()).toEqual(['A', 'B']);
+    const finished = posted.find((m) => m.type === 'BATCH_UPDATE_FINISHED') as {
+      cancelled?: boolean;
+      canRollback?: boolean;
+    } | undefined;
+    expect(finished?.cancelled).toBe(true);
+    expect(finished?.canRollback).toBe(false);
+    expect(posted.some((m) => m.type === 'OPERATION_ERROR')).toBe(false);
+    snapSpy.mockRestore();
+  });
+
+  it('Stop restores in-flight files and does not offer Rollback even when onFailedUpdate is keep', async () => {
+    const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
+      enrichConcurrency: 4,
+      cacheTtlMs: 1000,
+      includePrerelease: true,
+      onFailedUpdate: 'keep',
+      vulnerabilityScript: '',
+    });
+    const restoreSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+      { path: '/p/App.csproj', content: '<PackageReference Include="A" Version="1.0.0" />' },
+    ]);
+
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+      backend.installPackage.mockImplementation((_project, _id, _version, signal) => {
+        return new Promise((resolve) => {
+          const finishCancelled = () => resolve(makeCliResult({
+            exitCode: null,
+            stderr: 'Cancelled',
+            cancelled: true,
+          }));
+          if (signal?.aborted) {
+            finishCancelled();
+            return;
+          }
+          signal?.addEventListener('abort', finishCancelled);
+        });
+      });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: [
+          { packageId: 'A', fromVersion: '1.0.0', toVersion: '2.0.0', projects: ['/p/App.csproj'] },
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      simulateMessage({ type: 'CANCEL_BATCH_UPDATE' });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(restoreSpy).toHaveBeenCalled();
+      const finished = posted.find((m) => m.type === 'BATCH_UPDATE_FINISHED') as {
+        cancelled?: boolean;
+        canRollback?: boolean;
+      } | undefined;
+      expect(finished?.cancelled).toBe(true);
+      expect(finished?.canRollback).toBe(false);
+      expect(posted.some((m) => m.type === 'INSTALLED_PACKAGES_PATCH')).toBe(false);
+    } finally {
+      cfgSpy.mockRestore();
+      restoreSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
 });

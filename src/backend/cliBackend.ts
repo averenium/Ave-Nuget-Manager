@@ -170,7 +170,7 @@ export class CliBackend implements INuGetBackend {
     query: string,
     configFiles: string[],
     enabledSourceNames: string[],
-    prerelease = true,
+    prerelease = false,
   ): Promise<AvailablePackage[]> {
     const enabledSet = new Set(enabledSourceNames.map((n) => n.toLowerCase()));
 
@@ -198,7 +198,7 @@ export class CliBackend implements INuGetBackend {
 
   // ── getAllVersions ─────────────────────────────────────────────────────────
 
-  async getAllVersions(packageId: string, configFiles: string[], prerelease = true): Promise<string[]> {
+  async getAllVersions(packageId: string, configFiles: string[], prerelease = false): Promise<string[]> {
     const versionSets = await Promise.all(
       configFiles.map((cf) => this._fetchVersionsFromConfigFile(packageId, cf, prerelease)),
     );
@@ -263,7 +263,7 @@ export class CliBackend implements INuGetBackend {
   async enrichPackage(
     packageId: string,
     configFiles: string[],
-    prerelease = true,
+    prerelease = false,
   ): Promise<{ latestVersion: string; sourceName: string; versions: string[] }> {
     // One search per configFile, stop at first hit to avoid redundant calls
     for (const cf of configFiles) {
@@ -490,7 +490,7 @@ export class CliBackend implements INuGetBackend {
     query: string,
     configFile: string,
     enabledSet: Set<string>,
-    prerelease = true,
+    prerelease = false,
   ): Promise<AvailablePackage[]> {
     const args = [
       'package', 'search', query,
@@ -537,7 +537,7 @@ export class CliBackend implements INuGetBackend {
   private async _fetchVersionsFromConfigFile(
     packageId: string,
     configFile: string,
-    prerelease = true,
+    prerelease = false,
   ): Promise<string[]> {
     const args = [
       'package', 'search', packageId,

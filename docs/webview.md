@@ -90,6 +90,6 @@ Toolbar:
 
 ## Налаштування, які читає UI
 
-Через `INIT_STATE.includePrerelease` і чекбокс → `SET_PRERELEASE_SETTING` → `config.ts` пише `averenium.nugetManager.includePrerelease` у Global.
+Через `INIT_STATE.includePrerelease` і чекбокс → `SET_PRERELEASE_SETTING` → `config.ts` пише `averenium.nugetManager.includePrerelease` у Global. За замовчуванням галочка **вимкнена** (`false`).
 
 `averenium.nugetManager.onFailedUpdate` читає host (`getConfig()`), не UI: `rollback` | `keep`.

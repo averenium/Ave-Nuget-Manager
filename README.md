@@ -33,7 +33,7 @@ Drag the view **title bar** (or **View: Move View**) to the sidebar / secondary 
 
 | Setting | Default | |
 |---|---|---|
-| `averenium.nugetManager.includePrerelease` | `true` | Pre-release versions in search and “latest”. |
+| `averenium.nugetManager.includePrerelease` | `false` | Pre-release versions in search and “latest”. |
 | `averenium.nugetManager.enrichConcurrency` | `4` | Parallel `dotnet` processes when fetching latest versions. |
 | `averenium.nugetManager.onFailedUpdate` | `rollback` | After a failed restore (`NU1605`): roll back the project file, or keep the version and show **Rollback**. |
 | `averenium.nugetManager.vulnerabilityScript` | `""` | Optional script that adds extra vulnerability findings (JSON on stdin/stdout). |

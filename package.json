@@ -48,7 +48,8 @@
     "onView:averenium.nugetManagerView",
     "onCommand:averenium.nugetManager.open",
     "onCommand:averenium.nugetManager.openInEditor",
-    "onCommand:averenium.nugetManager.openInNewWindow"
+    "onCommand:averenium.nugetManager.openInNewWindow",
+    "onCommand:averenium.nugetManager.installAgentSkill"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -121,6 +122,12 @@
         "title": "Open in New Window",
         "icon": "$(empty-window)",
         "category": "NuGet"
+      },
+      {
+        "command": "averenium.nugetManager.installAgentSkill",
+        "title": "SKILL -> Install Dependency Breaking Changes Review",
+        "icon": "$(mortar-board)",
+        "category": "NuGet"
       }
     ],
     "menus": {
@@ -144,6 +151,10 @@
         {
           "command": "averenium.nugetManager.openInNewWindow",
           "when": "averenium.nugetManager.hasDotnetWorkspace || averenium.nugetManager.editorOpen"
+        },
+        {
+          "command": "averenium.nugetManager.installAgentSkill",
+          "title": "NuGet: SKILL -> Install Dependency Breaking Changes Review"
         }
       ],
       "view/title": [
@@ -151,11 +162,21 @@
           "command": "averenium.nugetManager.openInNewWindow",
           "when": "view == averenium.nugetManagerView",
           "group": "navigation"
+        },
+        {
+          "command": "averenium.nugetManager.installAgentSkill",
+          "when": "view == averenium.nugetManagerView",
+          "group": "navigation"
         }
       ],
       "editor/title": [
         {
           "command": "averenium.nugetManager.openInNewWindow",
+          "when": "activeWebviewPanelId == averenium.nugetManager.editor",
+          "group": "navigation"
+        },
+        {
+          "command": "averenium.nugetManager.installAgentSkill",
           "when": "activeWebviewPanelId == averenium.nugetManager.editor",
           "group": "navigation"
         }

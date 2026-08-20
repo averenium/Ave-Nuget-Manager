@@ -21,6 +21,10 @@ Drag the view **title bar** (or **View: Move View**) to the sidebar / secondary 
 - Explorer context menu on a `.sln` / `.slnx` / `.csproj` / `.fsproj`
 - Click the solution/project name in the panel tab bar to switch among `.sln` / `.slnx` / `.csproj` / `.fsproj` in the workspace
 
+## Agent skill
+
+The panel does not review whether a bump is safe. Command **NuGet: SKILL -> Install Dependency Breaking Changes Review** (mortar-board on the view title) copies a Cursor / Claude / Kiro skill onto disk. The agent then reads official NuGet release notes for `Directory.Packages.props` / `.csproj` diffs — including transitives that never appear in the manifest. Pick a target in the QuickPick (detected CLIs first). Details: [docs/agent-skill.md](docs/agent-skill.md).
+
 ## Tabs
 
 | Tab | What it does |

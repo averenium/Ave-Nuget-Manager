@@ -36,6 +36,7 @@
 | `concurrency.test.ts` | `runWithConcurrency` / `createConcurrencyGate` |
 | `commandBuilder.test.ts` | Аргументи CLI, які будує `CliBackend` |
 | `commandRegistrar.test.ts` | Резолв URI / папки / QuickPick |
+| `agentSkillInstall.test.ts` | Detect/sort skill targets, atomic copy, frontmatter version |
 | `configChainResolver.test.ts` | Ланцюжок і парсинг XML |
 | `logger.test.ts` | Записи, subscribe, стійкість до помилок |
 | `solutionParser.test.ts` | `.sln` / `.slnx` |

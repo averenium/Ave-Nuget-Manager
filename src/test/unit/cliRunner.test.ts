@@ -184,6 +184,9 @@ describe('CliRunner', () => {
     expect(result.timedOut).toBe(false);
     expect(result.exitCode).toBeNull();
     expect(mockSpawn).not.toHaveBeenCalled();
+    expect(logger.getEntries()).toHaveLength(1);
+    expect(logger.getEntries()[0].stderr).toBe('Cancelled');
+    expect(logger.getEntries()[0].command).toContain('dotnet');
   });
 
   it('kills the process and sets cancelled=true when the signal aborts', async () => {

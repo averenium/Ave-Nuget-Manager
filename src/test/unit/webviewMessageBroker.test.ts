@@ -513,9 +513,33 @@ describe('WebviewMessageBroker', () => {
     simulateMessage({ type: 'WEBVIEW_READY' });
     await new Promise((r) => setTimeout(r, 30));
 
-    expect(backend.listVulnerable).toHaveBeenCalledWith('/p/App.csproj');
+    expect(backend.listVulnerable).toHaveBeenCalledWith('/p/App.csproj', expect.any(AbortSignal));
     const vuln = posted.find((m) => m.type === 'VULNERABILITIES') as { findings?: unknown[] } | undefined;
     expect(vuln?.findings).toHaveLength(1);
+  });
+
+  it('starts listVulnerable without waiting for restore on WEBVIEW_READY', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('SharpCompress', '/p/App.csproj')],
+      implicit: [],
+    });
+    let finishRestore!: (result: CliResult) => void;
+    backend.restoreProject.mockReturnValue(new Promise((resolve) => {
+      finishRestore = resolve;
+    }));
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(posted.some((m) => m.type === 'INSTALLED_PACKAGES')).toBe(true);
+    expect(backend.listVulnerable).toHaveBeenCalled();
+    expect(backend.restoreProject).toHaveBeenCalled();
+    finishRestore(makeCliResult());
   });
 
   // ── SEARCH_PACKAGES ────────────────────────────────────────────────────────

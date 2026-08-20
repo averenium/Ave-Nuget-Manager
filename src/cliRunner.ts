@@ -21,13 +21,24 @@ export class CliRunner {
   run(command: CliCommand): Promise<CliResult> {
     return new Promise<CliResult>((resolve) => {
       if (command.signal?.aborted) {
-        resolve({
+        const result: CliResult = {
           exitCode: null,
           stdout: '',
           stderr: 'Cancelled',
           timedOut: false,
           cancelled: true,
+        };
+        this.logger.logCliOperation({
+          timestamp: new Date(),
+          command: `dotnet ${command.args.join(' ')}`,
+          args: command.args,
+          stdout: '',
+          stderr: 'Cancelled',
+          exitCode: null,
+          timedOut: false,
+          durationMs: 0,
         });
+        resolve(result);
         return;
       }
 

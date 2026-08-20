@@ -16,6 +16,7 @@ import type {
   BatchUpdateJob,
   VulnerabilityFinding,
 } from '../../types';
+import type { SkillFamily, SkillInstallRow } from '../../agentSkillInstall';
 import type { ExtensionMessage } from '../../messages';
 import { sendMessage, onMessage } from '../vscodeApi';
 
@@ -71,7 +72,7 @@ function setProjectVersion(
 
 export interface AppState {
   scope: WorkspaceScope | null;
-  activeTab: 'packages' | 'sources' | 'updates' | 'log';
+  activeTab: 'packages' | 'sources' | 'updates' | 'log' | 'agents';
   packages: {
     installed: InstalledPackage[];
     implicit: ImplicitPackage[];
@@ -92,6 +93,11 @@ export interface AppState {
   };
   log: {
     entries: LogEntry[];
+  };
+  agents: {
+    bundledVersion: string;
+    detected: SkillFamily[];
+    installs: SkillInstallRow[];
   };
   updates: {
     jobs: BatchUpdateJob[];
@@ -133,6 +139,7 @@ const initialState: AppState = {
   },
   sources: { configChain: [], allSources: [] },
   log: { entries: [] },
+  agents: { bundledVersion: '?', detected: [], installs: [] },
   updates: { jobs: [], activeJobId: null, versionsByPackageId: {} },
   detail: {
     selectedPackageId: null,
@@ -295,6 +302,11 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         updates: { ...state.updates, versionsByPackageId: {} },
         workspaceActivity: null,
         traceRecording: !!msg.traceRecording,
+        agents: {
+          bundledVersion: msg.bundledVersion,
+          detected: msg.detected,
+          installs: msg.installs,
+        },
       };
 
     case 'INSTALLED_PACKAGES': {
@@ -446,6 +458,16 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
 
     case 'TRACE_STATE':
       return { ...state, traceRecording: msg.recording };
+
+    case 'SKILL_STATUS':
+      return {
+        ...state,
+        agents: {
+          bundledVersion: msg.bundledVersion,
+          detected: msg.detected,
+          installs: msg.installs,
+        },
+      };
 
     case 'CONFIG_CHAIN_UPDATE':
       return {

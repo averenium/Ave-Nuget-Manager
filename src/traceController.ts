@@ -298,16 +298,10 @@ export class TraceController implements ITrace {
     }
   }
 
-  clearLog(): void {
-    this.logger.clear();
-    this.provider.postMessage({ type: 'LOG_CLEARED' });
-  }
-
   register(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
       vscode.commands.registerCommand('averenium.nugetManager.startTrace', () => this.startFromUi()),
       vscode.commands.registerCommand('averenium.nugetManager.stopTrace', () => this.stopAndPack()),
-      vscode.commands.registerCommand('averenium.nugetManager.clearLog', () => this.clearLog()),
     );
   }
 

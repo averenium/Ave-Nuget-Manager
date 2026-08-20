@@ -15,7 +15,7 @@ webview mount  →  WEBVIEW_READY
                    └─ є scope
                         ├─ activateScope уже зробив init → пропуск (антидубль)
                         └─ інакше _initForScope
-                             → INIT_STATE (scope, sources, configChain, includePrerelease, blockedPackages, traceRecording)
+                             → INIT_STATE (scope, sources, configChain, includePrerelease, blockedPackages, traceRecording, bundledVersion, detected, installs)
                              → INSTALLED_PACKAGES + IMPLICIT_PACKAGES (`dotnet list --no-restore`)
                              → паралельно `dotnet restore` → ERROR «Restore failed» якщо впав
                              → фоновий enrich → PACKAGE_INFO_UPDATE / ENRICH_PROGRESS
@@ -49,13 +49,15 @@ webview mount  →  WEBVIEW_READY
 | `CLEAR_LOG` | Clear log | `Logger.clear()` + `LOG_CLEARED`. Не зупиняє trace |
 | `SET_PACKAGE_BLOCKED` | Контекстне меню Block / Unblock | Пише `averenium.nugetManager.blockedPackages` у Workspace settings |
 | `SHOW_TOAST` | Клік по недоступному **↑** (blocked) | `window.showInformationMessage` |
+| `INSTALL_AGENT_SKILL` | Вкладка Agents **Install…** / **Update** | Без `updateExisting` — QuickPick. `updateExisting: true` — копія в уже встановлені outdated шляхи, без вибору папки. Потім `SKILL_STATUS` |
 | `REFRESH_PACKAGES` | **UI не шле** | Handler є: refresh без restore і без очистки кешу |
 
 ## Host → Webview
 
 | `type` | Коли шлеться | Обробка в reducer |
 |---|---|---|
-| `INIT_STATE` | Початок scope | Scope, sources, loading, `blockedPackages`, `traceRecording` |
+| `INIT_STATE` | Початок scope | Scope, sources, loading, `blockedPackages`, `traceRecording`, skill status (`detected` може бути `[]`) |
+| `SKILL_STATUS` | Після Install… / Palette skill | `bundledVersion`, `detected`, `installs` |
 | `INSTALLED_PACKAGES` | Після успішного `dotnet list` | Список + `isLoadingPackages: false`; оновлює `detail.projectVersions` для вибраного пакета |
 | `IMPLICIT_PACKAGES` | Після `dotnet list` | Транзитивні |
 | `INSTALLED_PACKAGES_PATCH` | Після fail add (успішні проєкти завжди; невдалі — лише `keep`) | Точкове оновлення version у списку й деталях |

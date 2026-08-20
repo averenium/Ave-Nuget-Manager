@@ -17,7 +17,7 @@
 
 ## Доставка в UI
 
-При `attach()` broker підписується на logger і шле `LOG_ENTRY_ADDED`. Вкладка Log при монтуванні просить повний зріз `GET_LOG_ENTRIES`. `CLEAR_LOG` / команда **NuGet: Log -> Clear** шле `LOG_CLEARED`.
+При `attach()` broker підписується на logger і шле `LOG_ENTRY_ADDED`. Вкладка Log при монтуванні просить повний зріз `GET_LOG_ENTRIES`. `CLEAR_LOG` шле `LOG_CLEARED`.
 
 `LogTab`: toolbar (**● Trace** / **■ Stop & save zip**, **Clear log**), бедж `recording`, автоскрол вниз, рядок з часом / duration / командою / exit, перші 3 рядки виводу, решта за кнопкою розгортання.
 

@@ -1,8 +1,8 @@
 {
   "name": "averenium-nuget-manager",
   "displayName": "AVE NuGet Manager",
-  "description": "Preview: NuGet manager for .NET solutions and projects (Packages, Groups, Sources, Log). Requires the .NET SDK.",
-  "version": "0.1.0",
+  "description": "Preview: NuGet manager for .NET solutions and projects (Packages, Groups, Sources, Log, Agents). Requires the .NET SDK.",
+  "version": "0.2.0",
   "preview": true,
   "publisher": "averenium",
   "license": "MIT",
@@ -51,8 +51,7 @@
     "onCommand:averenium.nugetManager.openInNewWindow",
     "onCommand:averenium.nugetManager.installAgentSkill",
     "onCommand:averenium.nugetManager.startTrace",
-    "onCommand:averenium.nugetManager.stopTrace",
-    "onCommand:averenium.nugetManager.clearLog"
+    "onCommand:averenium.nugetManager.stopTrace"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -141,11 +140,6 @@
         "command": "averenium.nugetManager.stopTrace",
         "title": "Trace -> Stop & save zip",
         "category": "NuGet"
-      },
-      {
-        "command": "averenium.nugetManager.clearLog",
-        "title": "Log -> Clear",
-        "category": "NuGet"
       }
     ],
     "menus": {
@@ -181,10 +175,6 @@
         {
           "command": "averenium.nugetManager.stopTrace",
           "title": "NuGet: Trace -> Stop & save zip"
-        },
-        {
-          "command": "averenium.nugetManager.clearLog",
-          "title": "NuGet: Log -> Clear"
         }
       ],
       "view/title": [
@@ -192,21 +182,11 @@
           "command": "averenium.nugetManager.openInNewWindow",
           "when": "view == averenium.nugetManagerView",
           "group": "navigation"
-        },
-        {
-          "command": "averenium.nugetManager.installAgentSkill",
-          "when": "view == averenium.nugetManagerView",
-          "group": "navigation"
         }
       ],
       "editor/title": [
         {
           "command": "averenium.nugetManager.openInNewWindow",
-          "when": "activeWebviewPanelId == averenium.nugetManager.editor",
-          "group": "navigation"
-        },
-        {
-          "command": "averenium.nugetManager.installAgentSkill",
           "when": "activeWebviewPanelId == averenium.nugetManager.editor",
           "group": "navigation"
         }

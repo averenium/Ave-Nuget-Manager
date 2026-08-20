@@ -5,7 +5,7 @@
 `package.json` `activationEvents`:
 
 - `workspaceContains:*.sln` / `*.slnx` / `*.csproj` / `*.fsproj` і ті самі з `**/` — щоб у .NET папці розширення стартувало **без** відкриття вкладки і могло поставити context key;
-- `onView:averenium.nugetManagerView` і команди `open` / `openInEditor` / `openInNewWindow` / `installAgentSkill` / `startTrace` / `stopTrace` / `clearLog`.
+- `onView:averenium.nugetManagerView` і команди `open` / `openInEditor` / `openInNewWindow` / `installAgentSkill` / `startTrace` / `stopTrace`.
 
 **`onStartupFinished` немає.** У папці без `.sln`/`.csproj` JS не вантажиться. У .NET папці `activate()` ставить видимість вкладки (`findFiles`, без `dotnet`). Restore / list / enrich — лише після `WEBVIEW_READY`.
 
@@ -58,10 +58,9 @@ averenium.nugetManager.hasDotnetWorkspace && !averenium.nugetManager.editorOpen
 | `averenium.nugetManager.open` | Palette **NuGet: Management**, Explorer | Резолв `.sln`/`.csproj`, `reveal` + `activateScope` |
 | `averenium.nugetManager.openInEditor` | Palette **NuGet: Open in Editor** | Той самий UI як editor tab |
 | `averenium.nugetManager.openInNewWindow` | Title bar (`$(empty-window)`), Palette **NuGet: Open in New Window** | Editor tab, потім `workbench.action.moveEditorToNewWindow` |
-| `averenium.nugetManager.installAgentSkill` | Palette **NuGet: SKILL -> Install Dependency Breaking Changes Review**, title (`$(mortar-board)`) | Копіює bundled skill у `~/.cursor/skills/…` тощо. [agent-skill](agent-skill.md) |
+| `averenium.nugetManager.installAgentSkill` | Palette **NuGet: SKILL -> Install Dependency Breaking Changes Review**, вкладка **Agents → Install…** / **Update** | Копіює bundled skill. Update — в уже встановлений шлях. [agent-skill](agent-skill.md) |
 | `averenium.nugetManager.startTrace` | Palette **NuGet: Trace -> Start**, вкладка Log **● Trace** | Confirm, сесія в `globalStorage`. [logging](logging.md) |
 | `averenium.nugetManager.stopTrace` | Palette **NuGet: Trace -> Stop & save zip** | Sanitize zip для GitHub issue |
-| `averenium.nugetManager.clearLog` | Palette **NuGet: Log -> Clear** | Чистить вкладку Log / Output Channel, не trace |
 
 Контекстне меню Explorer (`when`):
 

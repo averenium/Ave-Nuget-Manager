@@ -9,6 +9,7 @@ import type { NuGetConfigChainResolver } from './nugetConfigChainResolver';
 import type { Logger } from './logger';
 import type { TraceController } from './traceController';
 import type { WebviewMessage } from './messages';
+import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
 import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus } from './types';
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from './blockedPackages';
@@ -109,7 +110,25 @@ export class WebviewMessageBroker {
     /** SDK check — runs on first WEBVIEW_READY, not during activate(). */
     private readonly onFirstWebviewReady?: () => Promise<void>,
     private readonly trace?: TraceController,
+    private readonly skill?: {
+      readStatus: () => Promise<SkillStatus>;
+      install: (opts?: { updateExisting?: boolean }) => Promise<void>;
+    },
   ) {}
+
+  private async _skillFields(): Promise<SkillStatus> {
+    if (!this.skill) return EMPTY_SKILL_STATUS;
+    try {
+      return await this.skill.readStatus();
+    } catch {
+      return EMPTY_SKILL_STATUS;
+    }
+  }
+
+  async postSkillStatus(): Promise<void> {
+    const status = await this._skillFields();
+    this.provider.postMessage({ type: 'SKILL_STATUS', ...status });
+  }
 
   attach(): void {
     // Subscribe to webview messages (safe before view is resolved)
@@ -301,6 +320,11 @@ export class WebviewMessageBroker {
         void vscode.window.showInformationMessage(msg.message);
         break;
 
+      case 'INSTALL_AGENT_SKILL':
+        await this.skill?.install({ updateExisting: !!msg.updateExisting });
+        await this.postSkillStatus();
+        break;
+
       default:
         break;
     }
@@ -335,6 +359,7 @@ export class WebviewMessageBroker {
           includePrerelease: getConfig().includePrerelease,
           blockedPackages: getBlockedPackages(),
           traceRecording: this.trace?.isRecording() ?? false,
+          ...(await this._skillFields()),
         });
       }
       return;
@@ -478,6 +503,7 @@ export class WebviewMessageBroker {
       includePrerelease: getConfig().includePrerelease,
       blockedPackages: getBlockedPackages(),
       traceRecording: this.trace?.isRecording() ?? false,
+      ...(await this._skillFields()),
     });
 
     // List with --no-restore so the UI fills even if restore is broken;

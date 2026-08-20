@@ -30,6 +30,19 @@ Drag the view **title bar** (or **View: Move View**) to the sidebar / secondary 
 | **Sources** | Read-only `nuget.config` chain. |
 | **Log** | `dotnet` commands this extension ran. |
 
+## Block updates
+
+Pin a package so its **version cannot change** in this workspace until you unblock it. Use this when a bump is likely to break the restore graph (a new major, a transitive conflict, or a package the rest of the solution is not ready for). **✕ Remove** still works; installing an id that is not yet in Installed is still allowed.
+
+**How**
+
+1. Right-click a row in **Packages** (Installed) or in a **Groups** preview.
+2. Choose **Block updates**. The row stays visible, with **⊘** next to the name. **↑** still shows if a newer version exists, but a click only explains that updates are blocked.
+3. **Groups** still lists blocked packages on the right (muted, **⊘**, no green `from → to`). Left-side counts skip them; **↑** on All / a family / Other updates only the rest. If every item in the selection is blocked, **↑** does not run an update.
+4. Right-click again and choose **Unblock updates** when you are ready to bump.
+
+The list is stored in workspace settings (`.vscode/settings.json`, `averenium.nugetManager.blockedPackages`) so the pin is shared with the repo, not only on your machine.
+
 ## Settings
 
 | Setting | Default | |
@@ -38,6 +51,7 @@ Drag the view **title bar** (or **View: Move View**) to the sidebar / secondary 
 | `averenium.nugetManager.enrichConcurrency` | `4` | Parallel `dotnet` processes when fetching latest versions. |
 | `averenium.nugetManager.onFailedUpdate` | `rollback` | After a failed restore (`NU1605`): roll back the project file, or keep the version and show **Rollback**. |
 | `averenium.nugetManager.vulnerabilityScript` | `""` | Optional script that adds extra vulnerability findings (JSON on stdin/stdout). |
+| `averenium.nugetManager.blockedPackages` | `[]` | Workspace package ids that must not change version (Packages **↑** and Groups). Right-click a row to block or unblock. |
 
 ## Known limits (preview)
 

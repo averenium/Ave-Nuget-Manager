@@ -11,7 +11,7 @@
 Основні гілки стану:
 
 - `scope`, `activeTab` (`packages` | `updates` | `sources` | `log`);
-- `packages` — installed / implicit / available, пошук, джерела, prerelease, enrich progress, loading;
+- `packages` — installed / implicit / available, пошук, джерела, prerelease, enrich progress, loading, `blockedPackages`;
 - `updates` — історія batch-джобів (Update all / family);
 - `sources.configChain` / `allSources`;
 - `log.entries`;
@@ -57,7 +57,11 @@ Toolbar:
 
 Локальний фільтр Installed/Implicit — `utils/search.ts`: case-insensitive, абревіатури `ef`, `aspnet`, `mvc`, `di`, `ioc`, ранжування `relevanceScore`.
 
-`PackageRow`: назва на першому рядку (може переноситись); версії / latest — окремий рядок. **↑** якщо SemVer latest > resolved; **⚠** якщо є finding на цьому id **або** на restore-граф залежності (implicit / інший installed). Прямий ⚠ червоний, через залежність — warning. Вразливі пакети в Installed/Implicit сортуються вище. Підказка implicit-версій батька залежить від `dependsOn`, яке CLI **не заповнює**.
+`PackageRow`: назва на першому рядку (може переноситись); версії / latest — окремий рядок. **↑** якщо SemVer latest > resolved; **⊘** якщо id у workspace `blockedPackages` (tooltip *Updates blocked for this workspace*); **⚠** якщо є finding на цьому id **або** на restore-граф залежності (implicit / інший installed). Прямий ⚠ червоний, через залежність — warning. Вразливі пакети в Installed/Implicit сортуються вище. Підказка implicit-версій батька залежить від `dependsOn`, яке CLI **не заповнює**.
+
+Правий клік по Installed або прев’ю Groups: **Block updates** / **Unblock updates** (стандартне меню webview на цих рядках глушиться). Список пишеться в `.vscode/settings.json`. **↑** у деталях і per-project не виконує add, поки пакет заблоковано; **✕** Remove лишається. Новий install id, якого ще немає в Installed, дозволений.
+
+Host відхиляє `INSTALL_PACKAGE` / `INSTALL_PACKAGE_MULTI` / `UPDATE_PACKAGES_BATCH` для вже встановленого blocked id.
 
 ### Деталі
 
@@ -91,5 +95,7 @@ Toolbar:
 ## Налаштування, які читає UI
 
 Через `INIT_STATE.includePrerelease` і чекбокс → `SET_PRERELEASE_SETTING` → `config.ts` пише `averenium.nugetManager.includePrerelease` у Global. За замовчуванням галочка **вимкнена** (`false`).
+
+`averenium.nugetManager.blockedPackages` — лише Workspace (`.vscode/settings.json`). Host шле список у `INIT_STATE` / `BLOCKED_PACKAGES`. User-level значення ігнорується.
 
 `averenium.nugetManager.onFailedUpdate` читає host (`getConfig()`), не UI: `rollback` | `keep`.

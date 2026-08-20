@@ -180,7 +180,16 @@ export const workspace = {
   onDidChangeWorkspaceFolders: jest.fn((_listener: (...args: any[]) => any): Disposable =>
     new Disposable(() => { /* no-op */ })
   ),
+  onDidChangeConfiguration: jest.fn((_listener: (...args: any[]) => any): Disposable =>
+    new Disposable(() => { /* no-op */ })
+  ),
 };
+
+export enum ConfigurationTarget {
+  Global = 1,
+  Workspace = 2,
+  WorkspaceFolder = 3,
+}
 
 // ─── commands ─────────────────────────────────────────────────────────────────
 

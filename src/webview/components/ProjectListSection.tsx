@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import type { InstalledPackage, ProjectInfo } from '../../types';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
+import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
 import { VersionSelect } from './VersionSelector';
 
 interface Props {
@@ -13,6 +14,7 @@ interface Props {
 
 export function ProjectListSection({ packageId, projects, installed, allVersions }: Props) {
   const { state, dispatch, send } = useNugetManager();
+  const updatesBlocked = isPackageBlocked(packageId, state.packages.blockedPackages);
 
   // Only list projects that have this package installed
   const projectsWithPkg = projects.filter((p) =>
@@ -32,6 +34,7 @@ export function ProjectListSection({ packageId, projects, installed, allVersions
           project={proj}
           installed={installed}
           allVersions={allVersions}
+          updatesBlocked={updatesBlocked}
           state={state}
           dispatch={dispatch}
           send={send}
@@ -46,12 +49,13 @@ interface RowProps {
   project: ProjectInfo;
   installed: InstalledPackage[];
   allVersions: string[];
+  updatesBlocked: boolean;
   state: ReturnType<typeof useNugetManager>['state'];
   dispatch: ReturnType<typeof useNugetManager>['dispatch'];
   send: ReturnType<typeof useNugetManager>['send'];
 }
 
-function ProjectRow({ packageId, project, installed, allVersions, state, dispatch, send }: RowProps) {
+function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked, state, dispatch, send }: RowProps) {
   const p = project.absolutePath;
   const currentPkg = installed.find(
     (i) => packageIdsEqual(i.id, packageId) && pathsEqual(i.projectPath, p),
@@ -72,6 +76,7 @@ function ProjectRow({ packageId, project, installed, allVersions, state, dispatc
   }, [installedVersion]);
 
   const handleApply = async () => {
+    if (updatesBlocked) return;
     dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
     dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
     send({ type: 'INSTALL_PACKAGE', projectPath: p, packageId, version: localVersion });
@@ -98,9 +103,16 @@ function ProjectRow({ packageId, project, installed, allVersions, state, dispatc
       <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
         <button
           className="btn btn--icon btn--primary"
-          onClick={handleApply}
+          onClick={() => {
+            if (updatesBlocked) {
+              send({ type: 'SHOW_TOAST', message: `${packageId}: ${BLOCKED_UPDATES_TOOLTIP}` });
+              return;
+            }
+            void handleApply();
+          }}
           disabled={isLoading}
-          title={`Update ${project.name} to ${localVersion}`}
+          aria-disabled={updatesBlocked || undefined}
+          title={updatesBlocked ? BLOCKED_UPDATES_TOOLTIP : `Update ${project.name} to ${localVersion}`}
           aria-label={`Apply version for ${project.name}`}
         >{isLoading ? '…' : '↑'}</button>
         <button

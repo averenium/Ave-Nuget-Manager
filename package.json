@@ -77,6 +77,12 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Optional script that adds extra vulnerability findings. Receives a JSON snapshot on stdin (`scope`, `installed`, `implicit`) and must print a JSON array of findings (or `{ \"findings\": [...] }`) on stdout. Relative paths resolve from the workspace folder. See the extension docs for the finding shape."
+        },
+        "averenium.nugetManager.blockedPackages": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "markdownDescription": "Package ids that must not change version in **this workspace** (written to `.vscode/settings.json`). Applies to Packages **↑** and Groups All / family / Other. Remove and first-time install stay allowed. Right-click a package row to block or unblock."
         }
       }
     },

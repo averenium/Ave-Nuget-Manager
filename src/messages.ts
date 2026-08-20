@@ -60,7 +60,11 @@ export type WebviewMessage =
   // Log tab
   | { type: 'GET_LOG_ENTRIES' }
   /** Click the solution/project name in the panel tab bar. */
-  | { type: 'SELECT_SCOPE' };
+  | { type: 'SELECT_SCOPE' }
+  /** Add/remove an id in workspace `blockedPackages`. */
+  | { type: 'SET_PACKAGE_BLOCKED'; packageId: string; blocked: boolean }
+  /** Host `showInformationMessage` (toast). */
+  | { type: 'SHOW_TOAST'; message: string };
 
 // ─────────────────────────────────────────────
 // Extension Host → Webview
@@ -74,6 +78,7 @@ export type ExtensionMessage =
       sources: PackageSource[];
       configChain: NuGetConfigFile[];
       includePrerelease: boolean;
+      blockedPackages: string[];
     }
 
   // Packages
@@ -83,6 +88,7 @@ export type ExtensionMessage =
   | { type: 'PACKAGE_INFO_UPDATE'; packageId: string; latestVersion: string; sourceName: string }
   | { type: 'ENRICH_PROGRESS'; done: number; total: number }
   | { type: 'VULNERABILITIES'; findings: VulnerabilityFinding[] }
+  | { type: 'BLOCKED_PACKAGES'; packageIds: string[] }
   | { type: 'SEARCH_RESULTS'; query: string; packages: AvailablePackage[] }
   | { type: 'PACKAGE_METADATA'; metadata: PackageMetadata }
   | { type: 'ALL_VERSIONS'; packageId: string; versions: string[] }

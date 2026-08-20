@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { PackageRow } from './PackageRow';
+import { BlockedPackageMenu } from './BlockedPackageMenu';
 import { matchesQuery, sortByRelevance } from '../utils/search';
 import type { InstalledPackage } from '../../types';
 import { findingsAffectingPackage, vulnerabilityAffectRank } from '../../vulnerabilities';
 import { compareSemVer } from '../../semver';
+import { isPackageBlocked } from '../../blockedPackages';
 
 function PackagesSkeleton() {
   return (
@@ -42,7 +44,9 @@ function withUnionedDeps(entries: InstalledPackage[]): InstalledPackage {
 
 export function InstalledList() {
   const { state, dispatch } = useNugetManager();
-  const { installed, implicit, searchQuery, isLoadingPackages, vulnerabilities } = state.packages;
+  const { installed, implicit, searchQuery, isLoadingPackages, vulnerabilities, blockedPackages } = state.packages;
+  const [menu, setMenu] = useState<{ packageId: string; blocked: boolean; x: number; y: number } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
 
   // implicit versions by parent package id
   const implicitByParent: Record<string, string[]> = {};
@@ -99,6 +103,7 @@ export function InstalledList() {
         <div className="pkg-section__list" role="listbox" aria-label="Installed packages list">
           {displayed.map((pkg) => {
             const allEntries = grouped.get(pkg.id.toLowerCase())!;
+            const blocked = isPackageBlocked(pkg.id, blockedPackages);
             return (
               <PackageRow
                 key={pkg.id}
@@ -108,12 +113,23 @@ export function InstalledList() {
                 implicitVersions={implicitByParent[pkg.id]}
                 allProjectEntries={allEntries}
                 findings={vulnerabilities}
+                blocked={blocked}
                 onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
+                onContextMenu={(e) => setMenu({ packageId: pkg.id, blocked, x: e.clientX, y: e.clientY })}
               />
             );
           })}
         </div>
       )}
+      {menu ? (
+        <BlockedPackageMenu
+          packageId={menu.packageId}
+          blocked={menu.blocked}
+          x={menu.x}
+          y={menu.y}
+          onClose={closeMenu}
+        />
+      ) : null}
     </section>
   );
 }

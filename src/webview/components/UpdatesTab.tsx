@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import {
   collectFamilyGroups,
@@ -19,6 +19,8 @@ import { PrereleaseToggle } from './PrereleaseToggle';
 import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
 import { ActivityStrip } from './ActivityStrip';
 import { DetailHeader } from './DetailHeader';
+import { BlockedPackageMenu } from './BlockedPackageMenu';
+import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from '../../blockedPackages';
 import type { BatchUpdateItem, BatchUpdateJob, BatchUpdateItemView } from '../../types';
 
 type Selection =
@@ -144,14 +146,25 @@ function GroupRow({
 
 export function UpdatesTab() {
   const { state, send } = useNugetManager();
-  const { installed, prerelease, enrichProgress, isLoadingPackages } = state.packages;
+  const { installed, prerelease, enrichProgress, isLoadingPackages, blockedPackages } = state.packages;
   const { jobs, versionsByPackageId = {} } = state.updates;
   const configFiles = state.sources.configChain.map((c) => c.filePath);
   const batchBusy = jobs.some((j) => !j.finishedAt);
+  const [menu, setMenu] = useState<{ packageId: string; blocked: boolean; x: number; y: number } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
 
-  const updatable = collectUpdatableItems(installed);
-  const families = collectFamilyGroups(installed);
-  const otherItems = collectOtherItems(installed, families);
+  const allUpdatable = collectUpdatableItems(installed);
+  const updatable = withoutBlocked(allUpdatable, blockedPackages);
+  const families = collectFamilyGroups(installed).map((g) => ({
+    ...g,
+    updateCount: g.members.filter((m) =>
+      !isPackageBlocked(m.packageId, blockedPackages)
+      && !!m.latestVersion
+      && compareSemVer(m.latestVersion, g.fromVersion) > 0,
+    ).length,
+  }));
+  const allOther = collectOtherItems(installed, families);
+  const otherItems = withoutBlocked(allOther, blockedPackages);
 
   const [selection, setSelection] = useState<Selection | null>(null);
   const [familyTarget, setFamilyTarget] = useState('');
@@ -209,29 +222,36 @@ export function UpdatesTab() {
     selection?.type === 'all' ? updatable
       : selection?.type === 'other' ? otherItems
         : selectedFamily
-          ? familyItemsAtVersion(selectedFamily.members, familyTarget)
+          ? withoutBlocked(familyItemsAtVersion(selectedFamily.members, familyTarget), blockedPackages)
           : [];
 
   const previewRows = selection?.type === 'family' && selectedFamily
-    ? selectedFamily.members.map((m) => ({
-        packageId: m.packageId,
-        fromVersion: m.fromVersion,
-        toVersion: familyTarget || m.latestVersion || m.fromVersion,
-        skipped: !familyTarget || familyTarget === m.fromVersion,
-        projects: m.projects,
-      }))
-    : previewItems.map((i) => ({
-        packageId: i.packageId,
-        fromVersion: i.fromVersion,
-        toVersion: i.toVersion,
-        skipped: false,
-        projects: i.projects,
-      }));
+    ? selectedFamily.members.map((m) => {
+        const blocked = isPackageBlocked(m.packageId, blockedPackages);
+        return {
+          packageId: m.packageId,
+          fromVersion: m.fromVersion,
+          toVersion: familyTarget || m.latestVersion || m.fromVersion,
+          skipped: blocked || !familyTarget || familyTarget === m.fromVersion,
+          blocked,
+          projects: m.projects,
+        };
+      })
+    : (selection?.type === 'all' ? allUpdatable : allOther).map((i) => {
+        const blocked = isPackageBlocked(i.packageId, blockedPackages);
+        return {
+          packageId: i.packageId,
+          fromVersion: i.fromVersion,
+          toVersion: i.toVersion,
+          skipped: blocked,
+          blocked,
+          projects: i.projects,
+        };
+      });
 
-  const listRows = selection?.type === 'family'
-    ? previewRows
-    : previewRows.filter((row) => !row.skipped);
+  const listRows = previewRows;
   const showPackageList = listRows.length > 0;
+  const blockedOnly = previewItems.length === 0 && listRows.some((row) => row.blocked);
 
   const runningJob = jobs.find((j) => !j.finishedAt);
   const selKey = selectionKey(selection);
@@ -255,6 +275,10 @@ export function UpdatesTab() {
     ?? (lockedJob && !lockedJob.stale && lockedJob.finishedAt ? lockedJob : undefined);
 
   const startBatch = () => {
+    if (blockedOnly) {
+      send({ type: 'SHOW_TOAST', message: BLOCKED_UPDATES_TOOLTIP });
+      return;
+    }
     if (previewItems.length === 0) return;
     setResultLockKey(selKey);
     if (selection?.type === 'all' || selection?.type === 'other') {
@@ -376,10 +400,13 @@ export function UpdatesTab() {
                     <button
                       type="button"
                       className="btn btn--icon btn--primary"
-                      disabled={batchBusy || previewItems.length === 0}
-                      title={selection.type === 'family'
-                        ? `Update ${previewItems.length} package(s) to ${familyTarget}`
-                        : `Update ${previewItems.length} package(s) to latest`}
+                      disabled={batchBusy || (previewItems.length === 0 && !blockedOnly)}
+                      aria-disabled={blockedOnly || undefined}
+                      title={blockedOnly
+                        ? BLOCKED_UPDATES_TOOLTIP
+                        : selection.type === 'family'
+                          ? `Update ${previewItems.length} package(s) to ${familyTarget}`
+                          : `Update ${previewItems.length} package(s) to latest`}
                       aria-label="Update"
                       onClick={startBatch}
                     >
@@ -424,8 +451,15 @@ export function UpdatesTab() {
                         <PkgListRow
                           key={row.packageId}
                           name={row.packageId}
-                          muted={row.skipped}
-                          hasUpdate={!row.skipped}
+                          muted={row.skipped || row.blocked}
+                          hasUpdate={!row.skipped && !row.blocked}
+                          blocked={row.blocked}
+                          onContextMenu={(e) => setMenu({
+                            packageId: row.packageId,
+                            blocked: row.blocked,
+                            x: e.clientX,
+                            y: e.clientY,
+                          })}
                           aside={(
                             <span className="pkg-row__source" title={projectNames(row.projects)}>
                               {row.projects.length} proj
@@ -434,8 +468,8 @@ export function UpdatesTab() {
                         >
                           <VersionPair
                             from={row.fromVersion}
-                            to={row.skipped ? row.fromVersion : row.toVersion}
-                            highlight={!row.skipped}
+                            to={row.blocked || row.skipped ? row.fromVersion : row.toVersion}
+                            highlight={!row.skipped && !row.blocked}
                           />
                         </PkgListRow>
                       ))}
@@ -447,6 +481,15 @@ export function UpdatesTab() {
           )
         }
       />
+      {menu ? (
+        <BlockedPackageMenu
+          packageId={menu.packageId}
+          blocked={menu.blocked}
+          x={menu.x}
+          y={menu.y}
+          onClose={closeMenu}
+        />
+      ) : null}
     </div>
   );
 }

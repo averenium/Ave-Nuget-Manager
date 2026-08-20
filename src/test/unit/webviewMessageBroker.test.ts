@@ -136,6 +136,7 @@ describe('WebviewMessageBroker', () => {
     expect(initMsg).toBeDefined();
     expect(initMsg.scope).toEqual(PROJECT_SCOPE);
     expect(initMsg.sources).toHaveLength(1);
+    expect(initMsg.blockedPackages).toEqual([]);
   });
 
   it('runs onFirstWebviewReady once, then still inits on a later WEBVIEW_READY', async () => {
@@ -708,6 +709,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       includePrerelease: true,
       onFailedUpdate: 'keep',
       vulnerabilityScript: '',
+      blockedPackages: [],
     });
     const restoreSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
     const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
@@ -1032,6 +1034,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       includePrerelease: true,
       onFailedUpdate: 'keep',
       vulnerabilityScript: '',
+      blockedPackages: [],
     });
     const restoreSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
     const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
@@ -1151,5 +1154,100 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     await new Promise((r) => setTimeout(r, 20));
 
     expect(stub.setScope).not.toHaveBeenCalled();
+  });
+
+  it('rejects INSTALL_PACKAGE for a blocked installed id', async () => {
+    const blockedSpy = jest.spyOn(config, 'getBlockedPackages').mockReturnValue(['Pkg']);
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Pkg', '/p/App.csproj')],
+      implicit: [],
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+    backend.installPackage.mockClear();
+
+    simulateMessage({ type: 'INSTALL_PACKAGE', projectPath: '/p/App.csproj', packageId: 'Pkg', version: '2.0.0' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.installPackage).not.toHaveBeenCalled();
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Updates blocked for this workspace'),
+    );
+    blockedSpy.mockRestore();
+  });
+
+  it('allows INSTALL_PACKAGE of a blocked id that is not installed', async () => {
+    const blockedSpy = jest.spyOn(config, 'getBlockedPackages').mockReturnValue(['NewPkg']);
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    simulateMessage({ type: 'INSTALL_PACKAGE', projectPath: '/p/App.csproj', packageId: 'NewPkg', version: '1.0.0' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.installPackage).toHaveBeenCalledWith('/p/App.csproj', 'NewPkg', '1.0.0', undefined);
+    blockedSpy.mockRestore();
+  });
+
+  it('drops blocked ids from UPDATE_PACKAGES_BATCH', async () => {
+    const blockedSpy = jest.spyOn(config, 'getBlockedPackages').mockReturnValue(['A']);
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'UPDATE_PACKAGES_BATCH',
+      kind: 'all',
+      includePrerelease: false,
+      items: [
+        { packageId: 'A', fromVersion: '1.0.0', toVersion: '2.0.0', projects: ['/p/App.csproj'] },
+        { packageId: 'B', fromVersion: '1.0.0', toVersion: '1.1.0', projects: ['/p/App.csproj'] },
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(backend.installPackage.mock.calls.map((c: unknown[]) => c[1])).toEqual(['B']);
+    blockedSpy.mockRestore();
+  });
+
+  it('SET_PACKAGE_BLOCKED posts BLOCKED_PACKAGES', async () => {
+    const setSpy = jest.spyOn(config, 'setPackageBlocked').mockResolvedValue(['Pkg']);
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'SET_PACKAGE_BLOCKED', packageId: 'Pkg', blocked: true });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(setSpy).toHaveBeenCalledWith('Pkg', true);
+    const msg = posted.find((m) => m.type === 'BLOCKED_PACKAGES') as { packageIds?: string[] } | undefined;
+    expect(msg?.packageIds).toEqual(['Pkg']);
+    setSpy.mockRestore();
+  });
+
+  it('SHOW_TOAST uses showInformationMessage', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'SHOW_TOAST', message: 'Updates blocked for this workspace.' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      'Updates blocked for this workspace.',
+    );
   });
 });

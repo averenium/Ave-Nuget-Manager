@@ -32,11 +32,11 @@ webview mount  →  WEBVIEW_READY
 | `SEARCH_PACKAGES` | Пошук ≥2 символи | `searchPackages`; config files беруться з поточного scope, не з payload |
 | `SET_PRERELEASE_SETTING` | Чекбокс Pre-release | Пише Global settings, чистить кеш, refresh |
 | `GET_PACKAGE_METADATA` | `VersionSelector` | `getMetadata` |
-| `GET_ALL_VERSIONS` | `VersionSelector` | Кеш, потім `getAllVersions` |
+| `GET_ALL_VERSIONS` | `VersionSelector` / сім’я Groups | Кеш (TTL 5 хв); інакше `getAllVersions` |
 | `INSTALL_PACKAGE` | Один проєкт | Snapshot файлів → `dotnet add` → успіх або rollback/patch; див. [install-and-rollback](install-and-rollback.md) |
 | `REMOVE_PACKAGE` | Один проєкт | `dotnet remove`, потім refresh scope |
-| `INSTALL_PACKAGE_MULTI` | Попап у solution | Snapshot усіх проєктів, потім паралельний add |
-| `REMOVE_PACKAGE_MULTI` | Попап у solution | Паралельний remove; refresh усієї solution |
+| `INSTALL_PACKAGE_MULTI` | Попап у solution | Snapshot усіх проєктів, потім add з лімітом `dotnetConcurrency` |
+| `REMOVE_PACKAGE_MULTI` | Попап у solution | Remove з лімітом `dotnetConcurrency`; refresh усієї solution |
 | `ROLLBACK_FAILED_UPDATE` | Кнопка Rollback (`onFailedUpdate: keep`) | Відновлює знімки невдалих проєктів + restore |
 | `UPDATE_PACKAGES_BATCH` | Update all / family / other | Послідовний add по пакетах; див. [batch-updates](batch-updates.md) |
 | `CANCEL_BATCH_UPDATE` | Stop (■) замість Update в заголовку групи | Аборт поточного `dotnet add`, решта пакетів `cancelled` |
@@ -83,11 +83,11 @@ webview mount  →  WEBVIEW_READY
 
 - TTL: `getConfig().cacheTtlMs` = 5 хвилин (не в settings).
 - Hit: одразу `PACKAGE_INFO_UPDATE`.
-- Miss: `enrichPackage` з лімітом `enrichConcurrency`. Порожній search або throw — **один retry** після решти хвилі. Abort (FORCE_REFRESH) між хвилями доводить `ENRICH_PROGRESS` до `done === total`.
+- Miss: `enrichPackage` з лімітом `dotnetConcurrency`. Порожній search або throw — **один retry** після решти хвилі. Abort (FORCE_REFRESH) між хвилями доводить `ENRICH_PROGRESS` до `done === total`.
 - Новий scope / `FORCE_REFRESH` / зміна prerelease — abort поточного job (`AbortController`) і `cache.clear()`.
 - `RESTORE_PACKAGES` — abort enrich/vuln, `dotnet restore` + list, кеш latest лишається.
 
-`GET_ALL_VERSIONS` спочатку віддає кешований список, потім оновлює у фоні, якщо список змінився.
+`GET_ALL_VERSIONS` віддає кешований список. Якщо TTL ще живий — CLI не викликається (сім’я Groups не штормить search після enrich). Якщо кеш порожній або протух — fetch і пост, лише коли список змінився.
 
 Install після NU1605, rollback і patch: [install-and-rollback](install-and-rollback.md).  
 Пакетні оновлення: [batch-updates](batch-updates.md).

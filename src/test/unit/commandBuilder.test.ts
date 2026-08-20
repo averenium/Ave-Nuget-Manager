@@ -44,6 +44,7 @@ describe('CliBackend — command construction', () => {
 
       expect(calls).toHaveLength(1);
       expect(calls[0].args).toEqual(['list', p, 'package', '--format', 'json', '--no-restore']);
+      expect(calls[0].timeoutMs).toBe(30_000);
     });
 
     it('cwd is dirname of project file (Property 19)', async () => {
@@ -202,6 +203,13 @@ describe('CliBackend — command construction', () => {
 
       expect(calls[0].cwd).toBe('/projects/A');
     });
+
+    it('uses a 120s timeout (restore-heavy)', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      await backend.installPackage('/abs/Foo.csproj', 'Pkg', '1.0.0');
+      expect(calls[0].timeoutMs).toBe(120_000);
+    });
   });
 
   describe('restoreProject', () => {
@@ -210,6 +218,7 @@ describe('CliBackend — command construction', () => {
       const backend = new CliBackend(runner);
       await backend.restoreProject('/abs/Foo.csproj');
       expect(calls[0].args).toEqual(['restore', '/abs/Foo.csproj']);
+      expect(calls[0].timeoutMs).toBe(120_000);
     });
   });
 
@@ -230,6 +239,13 @@ describe('CliBackend — command construction', () => {
       await backend.removePackage(p, 'Serilog');
 
       expect(calls[0].args).toEqual(['remove', p, 'package', 'Serilog']);
+    });
+
+    it('uses a 120s timeout (restore-heavy)', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      await backend.removePackage('/abs/Bar.csproj', 'Serilog');
+      expect(calls[0].timeoutMs).toBe(120_000);
     });
 
     it('cwd is dirname of project file (Property 19)', async () => {

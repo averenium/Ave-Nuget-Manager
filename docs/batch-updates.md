@@ -45,7 +45,7 @@ History після запуску — під прев’ю. Одиночний u
 
 ## Виконання
 
-`UPDATE_PACKAGES_BATCH`: пакети **послідовно** (щоб не писати один csproj паралельно). Проєкти одного пакета — як і раніше, паралельний `dotnet add`. Rollback / keep — ті самі правила, що для одиночного add ([install-and-rollback](install-and-rollback.md)); batch не зупиняється на першій помилці.
+`UPDATE_PACKAGES_BATCH`: пакети **послідовно** (щоб не писати один csproj паралельно). Проєкти одного пакета — `dotnet add` з лімітом `dotnetConcurrency`. Rollback / keep — ті самі правила, що для одиночного add ([install-and-rollback](install-and-rollback.md)); batch не зупиняється на першій помилці.
 
 **Stop (■)** замінює **↑** у заголовку групи і шле `CANCEL_BATCH_UPDATE`: host убиває поточний `dotnet add` (`AbortSignal` у `CliRunner`), відновлює знімки цього add (навіть при `onFailedUpdate: keep`), поточний пакет → `cancelled`, решта queued → `cancelled` без CLI. Stop не банер помилки і не Rollback.
 

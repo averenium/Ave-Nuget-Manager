@@ -3,12 +3,27 @@ import { normalizeBlockedIds } from './blockedPackages';
 
 const SECTION = 'averenium.nugetManager';
 const BLOCKED_PACKAGES_KEY = 'blockedPackages';
+const DOTNET_CONCURRENCY_KEY = 'dotnetConcurrency';
+const DEFAULT_DOTNET_CONCURRENCY = 4;
+const MIN_DOTNET_CONCURRENCY = 1;
+const MAX_DOTNET_CONCURRENCY = 16;
+
+function clampDotnetConcurrency(n: number): number {
+  return Math.min(MAX_DOTNET_CONCURRENCY, Math.max(MIN_DOTNET_CONCURRENCY, Math.round(n)));
+}
+
+/** Max parallel `dotnet` processes (list, search, enrich, install, remove, restore). */
+export function getDotnetConcurrency(): number {
+  const cfg = vscode.workspace.getConfiguration(SECTION);
+  const raw = cfg.get<number>(DOTNET_CONCURRENCY_KEY, DEFAULT_DOTNET_CONCURRENCY);
+  return clampDotnetConcurrency(typeof raw === 'number' && Number.isFinite(raw) ? raw : DEFAULT_DOTNET_CONCURRENCY);
+}
 
 /** Read current config values from VSCode settings (with defaults). */
 export function getConfig() {
   const cfg = vscode.workspace.getConfiguration(SECTION);
   return {
-    enrichConcurrency: cfg.get<number>('enrichConcurrency', 4),
+    dotnetConcurrency: getDotnetConcurrency(),
     cacheTtlMs: 5 * 60 * 1000, // 5 min — not user-configurable yet
     includePrerelease: cfg.get<boolean>('includePrerelease', false),
     /**

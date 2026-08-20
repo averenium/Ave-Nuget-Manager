@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { CliRunner } from '../../cliRunner';
 import type { CliCommand } from '../../types';
 import { Logger } from '../../logger';
+import { createConcurrencyGate } from '../../concurrency';
 
 // ─── Mock child_process ───────────────────────────────────────────────────────
 
@@ -216,5 +217,36 @@ describe('CliRunner', () => {
     const result = await promise;
     expect(result.exitCode).toBeNull();
     expect(result.stderr).toContain('spawn ENOENT');
+  });
+
+  it('never spawns more than the gate limit at once', async () => {
+    jest.useRealTimers();
+    const gate = createConcurrencyGate(() => 2);
+    runner = new CliRunner(logger, gate);
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mockSpawn.mockImplementation(() => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      const { proc } = makeFakeProcess();
+      setTimeout(() => {
+        inFlight--;
+        proc.emit('close', 0);
+      }, 25);
+      return proc as any;
+    });
+
+    await Promise.all([
+      runner.run(makeCmd()),
+      runner.run(makeCmd()),
+      runner.run(makeCmd()),
+      runner.run(makeCmd()),
+      runner.run(makeCmd()),
+    ]);
+
+    expect(mockSpawn).toHaveBeenCalledTimes(5);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(2);
   });
 });

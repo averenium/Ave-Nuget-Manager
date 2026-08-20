@@ -48,7 +48,7 @@ The list is stored in workspace settings (`.vscode/settings.json`, `averenium.nu
 | Setting | Default | |
 |---|---|---|
 | `averenium.nugetManager.includePrerelease` | `false` | Pre-release versions in search and “latest”. |
-| `averenium.nugetManager.enrichConcurrency` | `4` | Parallel `dotnet` processes when fetching latest versions. |
+| `averenium.nugetManager.dotnetConcurrency` | `4` | Max parallel `dotnet` processes (list, search, enrich, install, remove, restore). |
 | `averenium.nugetManager.onFailedUpdate` | `rollback` | After a failed restore (`NU1605`): roll back the project file, or keep the version and show **Rollback**. |
 | `averenium.nugetManager.vulnerabilityScript` | `""` | Optional script that adds extra vulnerability findings (JSON on stdin/stdout). |
 | `averenium.nugetManager.blockedPackages` | `[]` | Workspace package ids that must not change version (Packages **↑** and Groups). Right-click a row to block or unblock. |

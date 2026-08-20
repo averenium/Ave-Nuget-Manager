@@ -60,12 +60,12 @@
           "default": false,
           "description": "Include pre-release packages in search results"
         },
-        "averenium.nugetManager.enrichConcurrency": {
+        "averenium.nugetManager.dotnetConcurrency": {
           "type": "number",
           "default": 4,
           "minimum": 1,
           "maximum": 16,
-          "description": "Maximum number of parallel dotnet CLI processes when fetching latest package versions"
+          "markdownDescription": "Maximum number of parallel `dotnet` processes (list, search, enrich, install, remove, restore)."
         },
         "averenium.nugetManager.onFailedUpdate": {
           "type": "string",

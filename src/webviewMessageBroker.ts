@@ -510,29 +510,32 @@ export class WebviewMessageBroker {
   ): Promise<void> {
     const key = packageId.toLowerCase();
     const cached = this._cache.get(key);
+    const ttl = getConfig().cacheTtlMs;
+    const cacheIsFresh = !!(cached?.versions?.length && (Date.now() - cached.fetchedAt < ttl));
 
-    // Serve cached versions immediately — no waiting
     if (cached?.versions?.length) {
       this.provider.postMessage({ type: 'ALL_VERSIONS', packageId, versions: cached.versions });
     }
-
-    // Background refresh — fetch fresh versions and send only if list changed
+    if (cacheIsFresh) return;
     try {
-      const fresh = await this.backend.getAllVersions(packageId, configFiles, prerelease);
+      const prev = cached?.versions ?? [];
+      const versions = await this.backend.getAllVersions(packageId, configFiles, prerelease);
 
-      // Update cache with fresh versions (keep other fields if present)
       if (cached) {
-        cached.versions = fresh;
+        cached.versions = versions;
         cached.fetchedAt = Date.now();
       } else {
-        this._cache.set(key, { latestVersion: fresh[0] ?? '', sourceName: '', versions: fresh, fetchedAt: Date.now() });
+        this._cache.set(key, {
+          latestVersion: versions[0] ?? '',
+          sourceName: '',
+          versions,
+          fetchedAt: Date.now(),
+        });
       }
 
-      // Send only if different from what was already sent
-      const prev = cached?.versions ?? [];
-      const changed = fresh.length !== prev.length || fresh.some((v, i) => v !== prev[i]);
-      if (changed || !cached?.versions?.length) {
-        this.provider.postMessage({ type: 'ALL_VERSIONS', packageId, versions: fresh });
+      const changed = versions.length !== prev.length || versions.some((v, i) => v !== prev[i]);
+      if (changed || prev.length === 0) {
+        this.provider.postMessage({ type: 'ALL_VERSIONS', packageId, versions });
       }
     } catch {
       // If fetch fails and we already sent cached — that's fine, no error needed
@@ -582,8 +585,8 @@ export class WebviewMessageBroker {
         };
       }),
     );
-    return Promise.all(
-      prepared.map(async (p) => {
+    return runWithConcurrency(
+      prepared.map((p) => async () => {
         if (signal?.aborted) {
           const result: CliResult = {
             exitCode: null, stdout: '', stderr: 'Cancelled', timedOut: false, cancelled: true,
@@ -595,6 +598,7 @@ export class WebviewMessageBroker {
         onProjectDone?.(p.projectPath, isCliOperationSuccess(result));
         return { ...p, result };
       }),
+      getConfig().dotnetConcurrency,
     );
   }
 
@@ -925,11 +929,12 @@ export class WebviewMessageBroker {
     projects: string[],
     packageId: string,
   ): Promise<void> {
-    const results = await Promise.all(
-      projects.map(async (p) => ({
+    const results = await runWithConcurrency(
+      projects.map((p) => async () => ({
         projectPath: p,
         result: await this.backend.removePackage(p, packageId),
       })),
+      getConfig().dotnetConcurrency,
     );
 
     const failures = results
@@ -1093,7 +1098,7 @@ export class WebviewMessageBroker {
     projectPaths: string[],
     opts?: RefreshOpts,
   ): Promise<void> {
-    const concurrency = getConfig().enrichConcurrency;
+    const concurrency = getConfig().dotnetConcurrency;
     const results: PackageListResult[] = new Array(projectPaths.length);
 
     await runWithConcurrency(
@@ -1163,7 +1168,7 @@ export class WebviewMessageBroker {
   /** Fetches latestVersion + sourceName for each unique package id and pushes
    *  individual PACKAGE_INFO_UPDATE messages as results arrive.
    *  Uses an in-memory cache (TTL: config.cacheTtlMs) and limits concurrency
-   *  to config.enrichConcurrency parallel dotnet processes.
+   *  to config.dotnetConcurrency parallel dotnet processes (same cap as install/remove).
    *  Search errors / empty results retry once after the rest of the wave finishes. */
   private async _enrichInstalledPackages(
     installed: import('./types').InstalledPackage[],
@@ -1229,7 +1234,7 @@ export class WebviewMessageBroker {
       }
     });
 
-    await runWithConcurrency(tasks, getConfig().enrichConcurrency);
+    await runWithConcurrency(tasks, getConfig().dotnetConcurrency);
     if (signal.aborted) {
       this._finishEnrichProgress(done, total);
       return;
@@ -1243,7 +1248,7 @@ export class WebviewMessageBroker {
         done++;
         this.provider.postMessage({ type: 'ENRICH_PROGRESS', done, total });
       });
-      await runWithConcurrency(retries, getConfig().enrichConcurrency);
+      await runWithConcurrency(retries, getConfig().dotnetConcurrency);
       if (signal.aborted) {
         this._finishEnrichProgress(done, total);
       }

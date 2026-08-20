@@ -561,6 +561,69 @@ describe('WebviewMessageBroker', () => {
     expect(result?.packages[0].id).toBe('Newtonsoft.Json');
   });
 
+  it('GET_ALL_VERSIONS uses enrich cache without a second search', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '13.0.3',
+      sourceName: 'nuget.org',
+      versions: ['13.0.3', '13.0.1'],
+    });
+    backend.getAllVersions.mockResolvedValue(['14.0.0']);
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    posted.length = 0;
+    simulateMessage({
+      type: 'GET_ALL_VERSIONS',
+      packageId: 'Newtonsoft.Json',
+      configFiles: ['/p/nuget.config'],
+      prerelease: false,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.getAllVersions).not.toHaveBeenCalled();
+    const msg = posted.find((m) => m.type === 'ALL_VERSIONS') as { versions?: string[] } | undefined;
+    expect(msg?.versions).toEqual(['13.0.3', '13.0.1']);
+  });
+
+  it('GET_ALL_VERSIONS fetches when the cache is empty', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.getAllVersions.mockResolvedValue(['2.0.0', '1.0.0']);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({
+      type: 'GET_ALL_VERSIONS',
+      packageId: 'Pkg',
+      configFiles: ['/p/nuget.config'],
+      prerelease: false,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.getAllVersions).toHaveBeenCalledWith('Pkg', ['/p/nuget.config'], false);
+    const msg = posted.find((m) => m.type === 'ALL_VERSIONS') as { versions?: string[] } | undefined;
+    expect(msg?.versions).toEqual(['2.0.0', '1.0.0']);
+  });
+
   // ── INSTALL_PACKAGE ────────────────────────────────────────────────────────
 
   it('responds to INSTALL_PACKAGE with OPERATION_SUCCESS on exit 0', async () => {
@@ -704,7 +767,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
 
   it('patches installed version and offers rollback when onFailedUpdate is keep', async () => {
     const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
-      enrichConcurrency: 4,
+      dotnetConcurrency: 4,
       cacheTtlMs: 1000,
       includePrerelease: true,
       onFailedUpdate: 'keep',
@@ -797,6 +860,95 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       ]),
     );
     expect(patch?.packages.some((p: { projectPath: string }) => p.projectPath === '/sol/B/B.csproj')).toBe(false);
+  });
+
+  it('INSTALL_PACKAGE_MULTI never runs more than dotnetConcurrency installs at once', async () => {
+    const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
+      dotnetConcurrency: 2,
+      cacheTtlMs: 1000,
+      includePrerelease: false,
+      onFailedUpdate: 'rollback',
+      vulnerabilityScript: '',
+      blockedPackages: [],
+    });
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([]);
+    const { stub, posted, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+    const backend = makeBackend();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    backend.installPackage.mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 40));
+      inFlight--;
+      return makeCliResult();
+    });
+
+    try {
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      const projects = ['/sol/A/A.csproj', '/sol/B/B.csproj', '/sol/C/C.csproj', '/sol/D/D.csproj', '/sol/E/E.csproj', '/sol/F/F.csproj'];
+      simulateMessage({ type: 'INSTALL_PACKAGE_MULTI', projects, packageId: 'Pkg', version: '1.0.0' });
+
+      for (let i = 0; i < 50; i++) {
+        if (posted.some((m) => m.type === 'OPERATION_SUCCESS' || m.type === 'OPERATION_ERROR')) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+
+      expect(maxInFlight).toBeGreaterThan(0);
+      expect(maxInFlight).toBeLessThanOrEqual(2);
+      expect(backend.installPackage).toHaveBeenCalledTimes(6);
+      const success = posted.find((m) => m.type === 'OPERATION_SUCCESS') as any;
+      expect(success?.affectedProjects).toHaveLength(6);
+    } finally {
+      cfgSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
+
+  it('REMOVE_PACKAGE_MULTI never runs more than dotnetConcurrency removes at once', async () => {
+    const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
+      dotnetConcurrency: 2,
+      cacheTtlMs: 1000,
+      includePrerelease: false,
+      onFailedUpdate: 'rollback',
+      vulnerabilityScript: '',
+      blockedPackages: [],
+    });
+    const { stub, posted, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+    const backend = makeBackend();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    backend.removePackage.mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 40));
+      inFlight--;
+      return makeCliResult();
+    });
+
+    try {
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      const projects = ['/sol/A/A.csproj', '/sol/B/B.csproj', '/sol/C/C.csproj', '/sol/D/D.csproj', '/sol/E/E.csproj', '/sol/F/F.csproj'];
+      simulateMessage({ type: 'REMOVE_PACKAGE_MULTI', projects, packageId: 'Pkg' });
+
+      for (let i = 0; i < 50; i++) {
+        if (posted.some((m) => m.type === 'OPERATION_SUCCESS' || m.type === 'OPERATION_ERROR')) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+
+      expect(maxInFlight).toBeGreaterThan(0);
+      expect(maxInFlight).toBeLessThanOrEqual(2);
+      expect(backend.removePackage).toHaveBeenCalledTimes(6);
+      const success = posted.find((m) => m.type === 'OPERATION_SUCCESS') as any;
+      expect(success?.operation).toBe('remove');
+      expect(success?.affectedProjects).toHaveLength(6);
+    } finally {
+      cfgSpy.mockRestore();
+    }
   });
 
   it('does not wipe INSTALLED_PACKAGES when all updates fail and list reports restore failure', async () => {
@@ -1029,7 +1181,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
 
   it('Stop restores in-flight files and does not offer Rollback even when onFailedUpdate is keep', async () => {
     const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
-      enrichConcurrency: 4,
+      dotnetConcurrency: 4,
       cacheTtlMs: 1000,
       includePrerelease: true,
       onFailedUpdate: 'keep',

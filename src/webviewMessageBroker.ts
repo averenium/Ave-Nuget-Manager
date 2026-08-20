@@ -88,6 +88,8 @@ export class WebviewMessageBroker {
     private readonly solutionParser: SolutionParser,
     private readonly configResolver: NuGetConfigChainResolver,
     private readonly logger: Logger,
+    /** SDK check — runs on first WEBVIEW_READY, not during activate(). */
+    private readonly onFirstWebviewReady?: () => Promise<void>,
   ) {}
 
   attach(): void {
@@ -235,7 +237,14 @@ export class WebviewMessageBroker {
 
   // ─── Handlers ─────────────────────────────────────────────────────────────
 
+  private _firstReady = false;
+
   private async _handleWebviewReady(): Promise<void> {
+    if (!this._firstReady) {
+      this._firstReady = true;
+      await this.onFirstWebviewReady?.();
+    }
+
     this.provider.markClientReady();
 
     const scope = this.provider.getCurrentScope();

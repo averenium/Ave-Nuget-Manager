@@ -18,13 +18,20 @@ export class CommandRegistrar {
   ) {}
 
   register(context: vscode.ExtensionContext): void {
-    const cmd = vscode.commands.registerCommand(
-      'averenium.nugetManager.open',
-      async (uri?: vscode.Uri) => {
-        await this._handleOpen(uri);
-      },
+    context.subscriptions.push(
+      vscode.commands.registerCommand(
+        'averenium.nugetManager.open',
+        async (uri?: vscode.Uri) => {
+          await this._handleOpen(uri);
+        },
+      ),
+      vscode.commands.registerCommand('averenium.nugetManager.openInEditor', async () => {
+        await this.viewProvider.openInEditor(false);
+      }),
+      vscode.commands.registerCommand('averenium.nugetManager.openInNewWindow', async () => {
+        await this.viewProvider.openInEditor(true);
+      }),
     );
-    context.subscriptions.push(cmd);
   }
 
   // ─── Core handler ──────────────────────────────────────────────────────────
@@ -168,7 +175,7 @@ export class CommandRegistrar {
       scope = { kind: 'project', projectPath: targetPath };
     }
 
-    await vscode.commands.executeCommand('averenium.nugetManagerView.focus');
+    await this.viewProvider.reveal();
     await this.broker.activateScope(scope);
   }
 }

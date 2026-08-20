@@ -2,35 +2,62 @@
 
 ## Activation
 
-`package.json`: `activationEvents: ["onStartupFinished"]`, точка входу `./dist/extension.js`.
+`package.json` `activationEvents`:
+
+- `workspaceContains:*.sln` / `*.slnx` / `*.csproj` / `*.fsproj` і ті самі з `**/` — щоб у .NET папці розширення стартувало **без** відкриття вкладки і могло поставити context key;
+- `onView:averenium.nugetManagerView` і команди `open` / `openInEditor` / `openInNewWindow`.
+
+**`onStartupFinished` немає.** У папці без `.sln`/`.csproj` JS не вантажиться. У .NET папці `activate()` ставить видимість вкладки (`findFiles`, без `dotnet`). Restore / list / enrich — лише після `WEBVIEW_READY`.
 
 `activate()` у `src/extension.ts`:
 
-1. Створює `Logger`, `CliRunner`, `CliBackend`, `SolutionParser`, `NuGetConfigChainResolver`.
-2. Викликає `runner.checkDotnetAvailable()` (`dotnet --version`). Помилка **не блокує** активацію — пишеться в лог. Повідомлення `DOTNET_NOT_FOUND` у webview **не надсилається** (див. [incomplete](incomplete.md)).
-3. Реєструє `NugetManagerViewProvider` як `WebviewViewProvider` для `averenium.nugetManagerView` з `retainContextWhenHidden: true`.
-4. Створює `WebviewMessageBroker`, викликає `attach()`.
-5. `CommandRegistrar.register(context)`.
+1. `Logger`
+2. `watchDotnetWorkspaceContext()` — `setContext('averenium.nugetManager.hasDotnetWorkspace')` + watcher
+3. Сервіси, реєстрація view provider і команд. **Не** викликає `dotnet --version`.
+
+| Коли | Що |
+|---|---|
+| `activate()` (workspaceContains або команда) | `findFiles` + context key. Без restore/list. |
+| Перший `WEBVIEW_READY` | `dotnet --version` (лог, не блокує), auto-detect scope, restore, list, enrich, vuln |
+| Повторний `WEBVIEW_READY` (переміщення view, editor tab) | Знову init (list/restore). `dotnet --version` не повторюється |
+
+Якщо вкладка NuGet лишилась відкритою з минулої сесії, VS Code відновлює view → `onView` активує розширення — це очікувано.
 
 `deactivate()` dispose’ить logger.
 
+## Видимість панелі
+
+Вкладка **NuGet** у нижній панелі (`viewsContainers.panel` / `averenium-nuget-panel`).
+
+`when` на **view** (не на контейнері — у schema контейнера немає `when`):
+
+```
+averenium.nugetManager.hasDotnetWorkspace && !averenium.nugetManager.editorOpen
+```
+
+`workspaceContains` у `when` **не** є context key (це activation event). Якщо поставити його в `when`, умова завжди false → вкладка зникає назавжди і `onView` ніколи не стріляє.
+
+`editorOpen` ховає нижню вкладку, поки UI живе в editor tab / окремому вікні (один живий UI).
+
+Перетягування: **title bar** вкладки (не webview). `View: Move View` / `Move Focused View` — Panel, Primary Sidebar, Secondary Sidebar. Після move VS Code dispose + `resolveWebviewView`; HTML збирається знову, React шле `WEBVIEW_READY`, broker знову робить init.
+
 ## View provider
 
-`src/nugetManagerViewProvider.ts` — панель у `viewsContainers.panel` (`averenium-nuget-panel`).
+`src/nugetManagerViewProvider.ts` — `WebviewView` (панель) або `WebviewPanel` (`averenium.nugetManager.editor`).
 
-Особливості життєвого циклу:
-
-- `onDidReceiveMessage()` можна викликати **до** `resolveWebviewView()`. Handlers зберігаються і перереєстровуються, коли view з’являється.
-- HTML збирається один раз (`_htmlBuilt`). Повторне присвоєння `webview.html` зламало б React через `retainContextWhenHidden`.
+- `onDidReceiveMessage()` можна викликати **до** `resolveWebviewView()`. Handlers перев’язуються на активний webview.
 - CSP: `default-src 'none'`, скрипти/стилі з nonce, картинки з `https:` і `data:`.
 - Скрипт і CSS — `dist/webview/bundle.js` / `bundle.css` через `asWebviewUri`.
 
-Публічне API: `setScope`, `getCurrentScope`, `postMessage`, `onDidReceiveMessage`, `setOnViewReady`, `isVisible`.
+Публічне API: `setScope`, `getCurrentScope`, `postMessage`, `onDidReceiveMessage`, `setOnViewReady`, `setOnSurface`, `isVisible`, `reveal`, `openInEditor`.
 
-## Команда відкриття
+## Команди
 
-Команда: `averenium.nugetManager.open`  
-Заголовок: «C# Solution / C# Project: NuGet Management».
+| Команда | Де | Дія |
+|---|---|---|
+| `averenium.nugetManager.open` | Palette **NuGet: Management**, Explorer | Резолв `.sln`/`.csproj`, `reveal` + `activateScope` |
+| `averenium.nugetManager.openInEditor` | Palette **NuGet: Open in Editor** | Той самий UI як editor tab |
+| `averenium.nugetManager.openInNewWindow` | Title bar (`$(empty-window)`), Palette **NuGet: Open in New Window** | Editor tab, потім `workbench.action.moveEditorToNewWindow` |
 
 Контекстне меню Explorer (`when`):
 
@@ -55,7 +82,7 @@ Multi-root workspace не підтримується: завжди перша п
 - `.sln`/`.slnx` → `SolutionParser.getProjects()` → scope `solution`;
 - інакше → scope `project`;
 - `broker.activateScope(scope)`;
-- `averenium.nugetManagerView.focus`.
+- `viewProvider.reveal()` (editor panel, якщо він живий, інакше `averenium.nugetManagerView.focus`).
 
 ## Автодетект без команди
 

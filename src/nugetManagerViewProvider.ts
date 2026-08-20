@@ -3,37 +3,63 @@ import { randomUUID } from 'crypto';
 import type { WorkspaceScope } from './types';
 import type { ExtensionMessage } from './messages';
 
+/** Hides the panel WebviewView while the editor/new-window panel is the live UI. */
+export const EDITOR_OPEN_CONTEXT = 'averenium.nugetManager.editorOpen';
+
 /**
- * Implements vscode.WebviewViewProvider to render the NuGet Manager in the
- * bottom panel (registered via `contributes.viewsContainers.panel`).
+ * Hosts the NuGet UI as a panel `WebviewView` (default) or as a `WebviewPanel`
+ * (editor tab / new window). One live webview at a time in v1.
  *
- * Lifecycle fix:
+ * Lifecycle:
  *  - attach() / onDidReceiveMessage() may be called BEFORE resolveWebviewView().
- *  - We store pending handlers and re-register them when the view resolves.
- *  - setScope() immediately pushes INIT_STATE if the view is already open.
+ *  - Pending handlers are re-bound when the view resolves or an editor panel opens.
+ *  - Moving a WebviewView disposes it and re-resolves; HTML is rebuilt so React
+ *    remounts and WEBVIEW_READY runs init again.
  */
 export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
   static readonly viewId = 'averenium.nugetManagerView';
+  static readonly editorViewType = 'averenium.nugetManager.editor';
 
   private _view?: vscode.WebviewView;
+  private _editor?: vscode.WebviewPanel;
   private _currentScope?: WorkspaceScope;
 
-  // Callbacks registered via onDidReceiveMessage() before the view is resolved
   private _pendingHandlers: Array<(message: unknown) => void> = [];
   private _handlerDisposables: vscode.Disposable[] = [];
+  private _viewDisposeSub?: vscode.Disposable;
+  private _editorDisposeSub?: vscode.Disposable;
 
-  // Callback to call when the view is first resolved (set by broker)
   private _onViewReady?: () => void;
+  private _onSurface?: () => void;
+  private _surfaced = false;
 
-  /** React has subscribed — outbound messages can be delivered. */
   private _clientReady = false;
   private readonly _outboundQueue: ExtensionMessage[] = [];
+  private _htmlBuilt = false;
 
   constructor(private readonly _extensionUri: vscode.Uri) {}
 
-  // ─── WebviewViewProvider implementation ───────────────────────────────────
+  /** Called once the first surface (panel view or editor) exists — e.g. start file watch. */
+  setOnSurface(cb: () => void): void {
+    this._onSurface = cb;
+    if (this._surfaced) cb();
+  }
 
-  private _htmlBuilt = false;
+  private _notifySurface(): void {
+    if (this._surfaced) return;
+    this._surfaced = true;
+    this._onSurface?.();
+  }
+
+  private _activeWebview(): vscode.Webview | undefined {
+    return this._editor?.webview ?? this._view?.webview;
+  }
+
+  get hasEditor(): boolean {
+    return this._editor !== undefined;
+  }
+
+  // ─── WebviewViewProvider ───────────────────────────────────────────────────
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -41,6 +67,7 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken,
   ): void {
     this._view = webviewView;
+    this._notifySurface();
 
     webviewView.webview.options = {
       enableScripts: true,
@@ -49,53 +76,110 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
       ],
     };
 
-    // Set HTML only on the very first resolve — retainContextWhenHidden keeps
-    // the webview alive between hide/show cycles, so setting html again would
-    // tear down and re-mount the React app, causing a double WEBVIEW_READY.
-    if (!this._htmlBuilt) {
+    // Every resolve is a new view instance (first open, or after move / editor close).
+    // Hide/show with retainContextWhenHidden does not re-resolve.
+    if (!this._editor) {
+      this._clientReady = false;
+      this._outboundQueue.length = 0;
       webviewView.webview.html = this._buildHtml(webviewView.webview);
       this._htmlBuilt = true;
     }
 
-    // Re-register any handlers that were attached before the view was ready
-    this._handlerDisposables.forEach((d) => d.dispose());
-    this._handlerDisposables = [];
+    this._bindHandlers(webviewView.webview);
 
-    for (const handler of this._pendingHandlers) {
-      const d = webviewView.webview.onDidReceiveMessage(handler);
-      this._handlerDisposables.push(d);
-    }
-
-    webviewView.onDidDispose(() => {
-      this._handlerDisposables.forEach((d) => d.dispose());
-      this._handlerDisposables = [];
+    this._viewDisposeSub?.dispose();
+    this._viewDisposeSub = webviewView.onDidDispose(() => {
       this._view = undefined;
-      this._htmlBuilt = false;
-      this._clientReady = false;
+      this._viewDisposeSub = undefined;
+      if (this._editor) {
+        this._bindHandlers(this._editor.webview);
+        return;
+      }
+      this._resetSurface();
     });
 
-    // Notify the broker that the view is now available
     this._onViewReady?.();
+  }
+
+  /**
+   * Host the same UI as an editor tab. Optionally move that tab to a new window
+   * (`workbench.action.moveEditorToNewWindow`).
+   */
+  async openInEditor(moveToNewWindow: boolean): Promise<void> {
+    if (this._editor) {
+      this._editor.reveal(this._editor.viewColumn ?? vscode.ViewColumn.Active);
+      if (moveToNewWindow) {
+        await vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow');
+      }
+      return;
+    }
+
+    this._notifySurface();
+    this._clientReady = false;
+    this._outboundQueue.length = 0;
+
+    const panel = vscode.window.createWebviewPanel(
+      NugetManagerViewProvider.editorViewType,
+      'NuGet',
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [
+          vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview'),
+        ],
+      },
+    );
+    panel.iconPath = vscode.Uri.joinPath(this._extensionUri, 'media', 'icon.png');
+    panel.webview.html = this._buildHtml(panel.webview);
+    this._htmlBuilt = true;
+    this._editor = panel;
+    this._bindHandlers(panel.webview);
+
+    await vscode.commands.executeCommand('setContext', EDITOR_OPEN_CONTEXT, true);
+
+    this._editorDisposeSub = panel.onDidDispose(() => {
+      this._editor = undefined;
+      this._editorDisposeSub = undefined;
+      void vscode.commands.executeCommand('setContext', EDITOR_OPEN_CONTEXT, false);
+      if (!this._view) {
+        this._resetSurface();
+      } else {
+        this._bindHandlers(this._view.webview);
+      }
+    });
+
+    if (moveToNewWindow) {
+      panel.reveal(vscode.ViewColumn.Active);
+      await vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow');
+    }
+  }
+
+  private _resetSurface(): void {
+    this._handlerDisposables.forEach((d) => d.dispose());
+    this._handlerDisposables = [];
+    this._htmlBuilt = false;
+    this._clientReady = false;
+    this._outboundQueue.length = 0;
+  }
+
+  private _bindHandlers(webview: vscode.Webview): void {
+    this._handlerDisposables.forEach((d) => d.dispose());
+    this._handlerDisposables = [];
+    for (const handler of this._pendingHandlers) {
+      this._handlerDisposables.push(webview.onDidReceiveMessage(handler));
+    }
   }
 
   // ─── Public API ───────────────────────────────────────────────────────────
 
-  /**
-   * Register a callback to invoke once the WebviewView is first resolved.
-   * If it's already resolved, the callback is invoked immediately.
-   */
   setOnViewReady(cb: () => void): void {
     this._onViewReady = cb;
-    if (this._view) {
-      cb(); // already resolved — call immediately
+    if (this._view || this._editor) {
+      cb();
     }
   }
 
-  /**
-   * Update the active scope. If the view is already open, push INIT_STATE
-   * immediately so the webview re-initialises without waiting for WEBVIEW_READY.
-   * The broker will call this and then push the data itself.
-   */
   setScope(scope: WorkspaceScope): void {
     this._currentScope = scope;
   }
@@ -108,71 +192,68 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
     return this._clientReady;
   }
 
-  /** Rebuild HTML so a newly compiled bundle is picked up (watch mode). */
   reloadHtml(): void {
-    if (!this._view) return;
+    const webview = this._activeWebview();
+    if (!webview) return;
     this._clientReady = false;
     this._outboundQueue.length = 0;
-    this._view.webview.html = this._buildHtml(this._view.webview);
+    webview.html = this._buildHtml(webview);
     this._htmlBuilt = true;
   }
 
-  /** Send a typed message to the webview. Queued until React signals WEBVIEW_READY. */
   postMessage(message: ExtensionMessage): void {
-    if (!this._view || !this._clientReady) {
+    const webview = this._activeWebview();
+    if (!webview || !this._clientReady) {
       this._outboundQueue.push(message);
       return;
     }
-    void this._view.webview.postMessage(message);
+    void webview.postMessage(message);
   }
 
-  /**
-   * Flush queued host→webview messages. Called when the webview sends WEBVIEW_READY
-   * (listener is already attached on the React side).
-   */
   markClientReady(): void {
     this._clientReady = true;
     const queued = this._outboundQueue.splice(0);
+    const webview = this._activeWebview();
     for (const message of queued) {
-      void this._view?.webview.postMessage(message);
+      void webview?.postMessage(message);
     }
   }
 
-  /**
-   * Register a handler for messages arriving from the webview.
-   * Safe to call before the view is resolved — the handler will be re-registered
-   * when resolveWebviewView fires.
-   */
   onDidReceiveMessage(handler: (message: unknown) => void): vscode.Disposable {
     this._pendingHandlers.push(handler);
 
-    if (this._view) {
-      // View already resolved — register immediately
-      const d = this._view.webview.onDidReceiveMessage(handler);
+    const webview = this._activeWebview();
+    if (webview) {
+      const d = webview.onDidReceiveMessage(handler);
       this._handlerDisposables.push(d);
     }
 
-    // Return a disposable that removes the handler from both lists
     return new vscode.Disposable(() => {
       this._pendingHandlers = this._pendingHandlers.filter((h) => h !== handler);
       this._handlerDisposables.forEach((d) => d.dispose());
       this._handlerDisposables = [];
-      // Re-register remaining handlers
-      if (this._view) {
+      const active = this._activeWebview();
+      if (active) {
         for (const h of this._pendingHandlers) {
-          this._handlerDisposables.push(
-            this._view.webview.onDidReceiveMessage(h),
-          );
+          this._handlerDisposables.push(active.onDidReceiveMessage(h));
         }
       }
     });
   }
 
   get isVisible(): boolean {
-    return this._view?.visible ?? false;
+    return this._editor?.visible ?? this._view?.visible ?? false;
   }
 
-  // ─── HTML generation ──────────────────────────────────────────────────────
+  async reveal(): Promise<void> {
+    if (this._editor) {
+      this._editor.reveal(this._editor.viewColumn ?? vscode.ViewColumn.Active);
+      return;
+    }
+    await vscode.commands.executeCommand(`${NugetManagerViewProvider.viewId}.focus`);
+  }
+
+  // ─── HTML ─────────────────────────────────────────────────────────────────
 
   private _buildHtml(webview: vscode.Webview): string {
     const nonce = randomUUID().replace(/-/g, '');

@@ -65,6 +65,11 @@ export class Uri {
     this.path = fsPath;
   }
 
+  static joinPath(base: Uri, ...pathSegments: string[]): Uri {
+    const joined = [base.fsPath, ...pathSegments].join('/');
+    return Uri.file(joined);
+  }
+
   static file(path: string): Uri {
     return new Uri('file', path);
   }
@@ -118,6 +123,22 @@ export const window = {
   registerWebviewViewProvider: jest.fn((_viewId: string, _provider: any, _options?: any): Disposable =>
     new Disposable(() => { /* no-op */ })
   ),
+  createWebviewPanel: jest.fn((_viewType: string, _title: string, _column: any, _options?: any) => ({
+    webview: {
+      html: '',
+      options: {},
+      cspSource: 'https://example',
+      asWebviewUri: (uri: Uri) => uri,
+      postMessage: jest.fn(() => Promise.resolve(true)),
+      onDidReceiveMessage: jest.fn(() => new Disposable(() => { /* no-op */ })),
+    },
+    reveal: jest.fn(),
+    dispose: jest.fn(),
+    onDidDispose: jest.fn(() => new Disposable(() => { /* no-op */ })),
+    visible: true,
+    viewColumn: ViewColumn.One,
+    iconPath: undefined as Uri | undefined,
+  })),
   _outputChannels,
 };
 
@@ -144,6 +165,18 @@ export const workspace = {
     stat: jest.fn((_uri: Uri): Promise<any> => Promise.resolve({})),
     readDirectory: jest.fn((_uri: Uri): Promise<any[]> => Promise.resolve([])),
   },
+  findFiles: jest.fn((_include?: unknown, _exclude?: unknown, _maxResults?: number): Promise<Uri[]> =>
+    Promise.resolve([])
+  ),
+  createFileSystemWatcher: jest.fn((_glob: unknown) => ({
+    onDidCreate: jest.fn(() => new Disposable(() => { /* no-op */ })),
+    onDidDelete: jest.fn(() => new Disposable(() => { /* no-op */ })),
+    onDidChange: jest.fn(() => new Disposable(() => { /* no-op */ })),
+    dispose: jest.fn(),
+  })),
+  onDidChangeWorkspaceFolders: jest.fn((_listener: (...args: any[]) => any): Disposable =>
+    new Disposable(() => { /* no-op */ })
+  ),
 };
 
 // ─── commands ─────────────────────────────────────────────────────────────────

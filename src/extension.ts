@@ -9,35 +9,22 @@ import { NuGetConfigChainResolver } from './nugetConfigChainResolver';
 import { NugetManagerViewProvider } from './nugetManagerViewProvider';
 import { CommandRegistrar } from './commandRegistrar';
 import { WebviewMessageBroker } from './webviewMessageBroker';
+import { watchDotnetWorkspaceContext } from './dotnetWorkspace';
 
 let logger: Logger | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  // ── Core services ──────────────────────────────────────────────────────────
   logger = new Logger();
+
+  // Show/hide the panel tab. Cheap: findFiles(max=1), no dotnet.
+  // Runs because workspaceContains activated us, or the user invoked a command.
+  await watchDotnetWorkspaceContext(context);
+
   const runner = new CliRunner(logger);
   const backend = new CliBackend(runner);
   const solutionParser = new SolutionParser();
   const configResolver = new NuGetConfigChainResolver();
 
-  // ── Verify dotnet availability ─────────────────────────────────────────────
-  try {
-    await runner.checkDotnetAvailable();
-  } catch {
-    // Don't block activation — just send DOTNET_NOT_FOUND once the webview connects
-    logger.logCliOperation({
-      timestamp: new Date(),
-      command: 'dotnet --version',
-      args: ['--version'],
-      stdout: '',
-      stderr: '.NET SDK not found in PATH',
-      exitCode: null,
-      timedOut: false,
-      durationMs: 0,
-    });
-  }
-
-  // ── View provider ──────────────────────────────────────────────────────────
   const viewProvider = new NugetManagerViewProvider(context.extensionUri);
 
   const viewProviderDisposable = vscode.window.registerWebviewViewProvider(
@@ -46,17 +33,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     { webviewOptions: { retainContextWhenHidden: true } },
   );
 
-  // ── Message broker ─────────────────────────────────────────────────────────
   const broker = new WebviewMessageBroker(
     viewProvider,
     backend,
     solutionParser,
     configResolver,
     logger,
+    async () => {
+      try {
+        await runner.checkDotnetAvailable();
+      } catch {
+        logger?.logCliOperation({
+          timestamp: new Date(),
+          command: 'dotnet --version',
+          args: ['--version'],
+          stdout: '',
+          stderr: '.NET SDK not found in PATH',
+          exitCode: null,
+          timedOut: false,
+          durationMs: 0,
+        });
+      }
+    },
   );
   broker.attach();
 
-  // ── Reload webview when Vite rebuilds the bundle (watch mode) ────────────
+  // Reload webview when Vite rebuilds the bundle (watch mode).
   // fs.watch: vscode FileSystemWatcher often skips gitignored dist/
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleReload = () => {
@@ -76,7 +78,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     bundleWatcher = undefined;
   }
 
-  // ── Commands ───────────────────────────────────────────────────────────────
   const registrar = new CommandRegistrar(viewProvider, broker, solutionParser);
   registrar.register(context);
 

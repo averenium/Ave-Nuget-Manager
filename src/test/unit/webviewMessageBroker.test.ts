@@ -137,6 +137,26 @@ describe('WebviewMessageBroker', () => {
     expect(initMsg.sources).toHaveLength(1);
   });
 
+  it('runs onFirstWebviewReady once, then still inits on a later WEBVIEW_READY', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    const onFirst = jest.fn().mockResolvedValue(undefined);
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), makeConfigResolver(), logger, onFirst,
+    );
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onFirst).toHaveBeenCalledTimes(1);
+    expect(backend.listAllForProject).toHaveBeenCalledTimes(1);
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onFirst).toHaveBeenCalledTimes(1);
+    expect(backend.listAllForProject).toHaveBeenCalledTimes(2);
+  });
+
   it('sends INSTALLED_PACKAGES and IMPLICIT_PACKAGES after WEBVIEW_READY', async () => {
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();

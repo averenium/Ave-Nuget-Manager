@@ -13,7 +13,11 @@ Requires the **.NET SDK** on `PATH`.
 
 ## Open
 
-- Command Palette: **C# Solution / C# Project: NuGet Management**
+The **NuGet** panel tab is shown when the workspace contains a `.sln`, `.slnx`, `.csproj`, or `.fsproj`. Opening the folder activates the extension enough to show the tab; `dotnet` runs only after you open NuGet.
+
+Drag the view **title bar** (or **View: Move View**) to the sidebar / secondary sidebar / panel. **Open in New Window** (title menu) hosts the same UI as an editor tab in a new window.
+
+- Command Palette: **NuGet: Management**
 - Explorer context menu on a `.sln` / `.slnx` / `.csproj` / `.fsproj`
 
 ## Tabs

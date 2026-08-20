@@ -36,7 +36,20 @@
       "supported": false
     }
   },
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "workspaceContains:*.sln",
+    "workspaceContains:*.slnx",
+    "workspaceContains:*.csproj",
+    "workspaceContains:*.fsproj",
+    "workspaceContains:**/*.sln",
+    "workspaceContains:**/*.slnx",
+    "workspaceContains:**/*.csproj",
+    "workspaceContains:**/*.fsproj",
+    "onView:averenium.nugetManagerView",
+    "onCommand:averenium.nugetManager.open",
+    "onCommand:averenium.nugetManager.openInEditor",
+    "onCommand:averenium.nugetManager.openInNewWindow"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
@@ -81,7 +94,8 @@
         {
           "id": "averenium.nugetManagerView",
           "name": "NuGet",
-          "type": "webview"
+          "type": "webview",
+          "when": "averenium.nugetManager.hasDotnetWorkspace && !averenium.nugetManager.editorOpen"
         }
       ]
     },
@@ -89,7 +103,18 @@
       {
         "command": "averenium.nugetManager.open",
         "title": "NuGet Management",
-        "category": "C# Solution / C# Project"
+        "category": "NuGet"
+      },
+      {
+        "command": "averenium.nugetManager.openInEditor",
+        "title": "Open in Editor",
+        "category": "NuGet"
+      },
+      {
+        "command": "averenium.nugetManager.openInNewWindow",
+        "title": "Open in New Window",
+        "icon": "$(empty-window)",
+        "category": "NuGet"
       }
     ],
     "menus": {
@@ -103,7 +128,30 @@
       "commandPalette": [
         {
           "command": "averenium.nugetManager.open",
-          "title": "C# Solution / C# Project: NuGet Management"
+          "title": "NuGet: Management",
+          "when": "averenium.nugetManager.hasDotnetWorkspace"
+        },
+        {
+          "command": "averenium.nugetManager.openInEditor",
+          "when": "averenium.nugetManager.hasDotnetWorkspace || averenium.nugetManager.editorOpen"
+        },
+        {
+          "command": "averenium.nugetManager.openInNewWindow",
+          "when": "averenium.nugetManager.hasDotnetWorkspace || averenium.nugetManager.editorOpen"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "averenium.nugetManager.openInNewWindow",
+          "when": "view == averenium.nugetManagerView",
+          "group": "navigation"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "averenium.nugetManager.openInNewWindow",
+          "when": "activeWebviewPanelId == averenium.nugetManager.editor",
+          "group": "navigation"
         }
       ]
     }

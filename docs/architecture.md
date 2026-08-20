@@ -31,7 +31,7 @@
 
 | Шар | Файли | Відповідальність |
 |---|---|---|
-| Activation | `src/extension.ts` | Збирає сервіси, реєструє view і команду, перевіряє `dotnet` |
+| Activation | `src/extension.ts`, `src/dotnetWorkspace.ts` | Лінива активація (view/команда), видимість панелі, реєстрація view і команд |
 | Commands | `src/commandRegistrar.ts` | Резолвить `.sln`/`.csproj` з URI або кореня workspace, викликає `activateScope` |
 | View | `src/nugetManagerViewProvider.ts` | `WebviewViewProvider`, HTML/CSP, `postMessage`, відкладені handlers |
 | Broker | `src/webviewMessageBroker.ts` | Маршрутизація, init, refresh, enrich-кеш, install/remove/rollback, batch update, vulns |

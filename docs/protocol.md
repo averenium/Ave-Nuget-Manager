@@ -22,13 +22,13 @@ webview mount  →  WEBVIEW_READY
                              → фоновий vuln scan → VULNERABILITIES
 ```
 
-`activateScope()` (з команди) одразу пушить init, щоб не чекати round-trip `WEBVIEW_READY`. Прапорець `_scopeInitialized` запобігає подвійному завантаженню, коли React потім шле `WEBVIEW_READY`.
+`activateScope()` (з команди) одразу пушить init, якщо React уже слухає. Повторний `WEBVIEW_READY` (переміщення view або editor tab) знову викликає `_initForScope` — HTML після dispose збирається заново.
 
 ## Webview → Host
 
 | `type` | Коли UI шле | Що робить host |
 |---|---|---|
-| `WEBVIEW_READY` | Після `root.render` у `index.tsx` | Init або skip |
+| `WEBVIEW_READY` | Після `root.render` у `index.tsx` | `dotnet --version` (один раз), потім init |
 | `SEARCH_PACKAGES` | Пошук ≥2 символи | `searchPackages`; config files беруться з поточного scope, не з payload |
 | `SET_PRERELEASE_SETTING` | Чекбокс Pre-release | Пише Global settings, чистить кеш, refresh |
 | `GET_PACKAGE_METADATA` | `VersionSelector` | `getMetadata` |

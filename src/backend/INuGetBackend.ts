@@ -116,5 +116,5 @@ export interface INuGetBackend {
    * Known vulnerabilities for top-level and transitive packages.
    * CLI: `dotnet list <path> package --vulnerable --include-transitive --format json --no-restore`
    */
-  listVulnerable(projectOrSolutionPath: string): Promise<VulnerabilityFinding[]>;
+  listVulnerable(projectOrSolutionPath: string, signal?: AbortSignal): Promise<VulnerabilityFinding[]>;
 }

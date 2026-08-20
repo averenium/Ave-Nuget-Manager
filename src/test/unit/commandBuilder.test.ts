@@ -105,13 +105,15 @@ describe('CliBackend — command construction', () => {
       const backend = new CliBackend(runner);
       const sln = '/abs/My.sln';
 
-      await backend.listVulnerable(sln);
+      const ac = new AbortController();
+      await backend.listVulnerable(sln, ac.signal);
 
       expect(calls).toHaveLength(1);
       expect(calls[0].args).toEqual([
         'list', sln, 'package', '--vulnerable', '--include-transitive', '--format', 'json', '--no-restore',
       ]);
       expect(calls[0].cwd).toBe(path.dirname(sln));
+      expect(calls[0].signal).toBe(ac.signal);
     });
   });
 

@@ -119,7 +119,7 @@ export class CliBackend implements INuGetBackend {
 
   // ── listVulnerable ─────────────────────────────────────────────────────────
 
-  async listVulnerable(projectOrSolutionPath: string): Promise<VulnerabilityFinding[]> {
+  async listVulnerable(projectOrSolutionPath: string, signal?: AbortSignal): Promise<VulnerabilityFinding[]> {
     const result = await this.runner.run({
       args: [
         'list', projectOrSolutionPath, 'package',
@@ -128,6 +128,7 @@ export class CliBackend implements INuGetBackend {
       ],
       cwd: path.dirname(projectOrSolutionPath),
       timeoutMs: TIMEOUT_MS,
+      signal,
     });
     return parseDotnetVulnerableJson(result.stdout);
   }

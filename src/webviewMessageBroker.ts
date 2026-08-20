@@ -1013,7 +1013,7 @@ export class WebviewMessageBroker {
     const restoreP = opts?.restore ? this.backend.restoreProject(solutionPath) : undefined;
     const listed = await this.backend.listAllForSolution(solutionPath);
     await this._applyListedPackages(listed, opts);
-    if (restoreP) await this._reportRestoreIfCurrent(solutionPath, await restoreP);
+    if (restoreP) this._reportRestoreIfCurrent(solutionPath, await restoreP);
   }
 
   private async _refreshPackagesForProjects(
@@ -1031,7 +1031,7 @@ export class WebviewMessageBroker {
 
     const restoreP = opts?.restore ? this.backend.restoreProject(projectPaths[0]) : undefined;
     await this._listProjectsThenApply(projectPaths, opts);
-    if (restoreP) await this._reportRestoreIfCurrent(projectPaths[0], await restoreP);
+    if (restoreP) this._reportRestoreIfCurrent(projectPaths[0], await restoreP);
   }
 
   private async _listProjectsThenApply(
@@ -1080,11 +1080,13 @@ export class WebviewMessageBroker {
     signal: AbortSignal,
   ): Promise<void> {
     const scope = this.provider.getCurrentScope();
-    if (!scope || signal.aborted) return;
+    const targetPath = scope
+      ? (scope.kind === 'solution' ? scope.solutionPath : scope.projectPath)
+      : undefined;
+    if (!scope || !targetPath) return;
 
-    const targetPath = scope.kind === 'solution' ? scope.solutionPath : scope.projectPath;
-    if (!targetPath) return;
-
+    // Always invoke list --vulnerable so the Log tab records the attempt.
+    // A pre-check on `signal.aborted` skipped the CLI entirely (no log line).
     const findings = await collectVulnerabilityFindings(
       [
         new DotnetVulnerableProvider(this.backend),

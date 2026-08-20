@@ -49,7 +49,10 @@
     "onCommand:averenium.nugetManager.open",
     "onCommand:averenium.nugetManager.openInEditor",
     "onCommand:averenium.nugetManager.openInNewWindow",
-    "onCommand:averenium.nugetManager.installAgentSkill"
+    "onCommand:averenium.nugetManager.installAgentSkill",
+    "onCommand:averenium.nugetManager.startTrace",
+    "onCommand:averenium.nugetManager.stopTrace",
+    "onCommand:averenium.nugetManager.clearLog"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -128,6 +131,21 @@
         "title": "SKILL -> Install Dependency Breaking Changes Review",
         "icon": "$(mortar-board)",
         "category": "NuGet"
+      },
+      {
+        "command": "averenium.nugetManager.startTrace",
+        "title": "Trace -> Start",
+        "category": "NuGet"
+      },
+      {
+        "command": "averenium.nugetManager.stopTrace",
+        "title": "Trace -> Stop & save zip",
+        "category": "NuGet"
+      },
+      {
+        "command": "averenium.nugetManager.clearLog",
+        "title": "Log -> Clear",
+        "category": "NuGet"
       }
     ],
     "menus": {
@@ -155,6 +173,18 @@
         {
           "command": "averenium.nugetManager.installAgentSkill",
           "title": "NuGet: SKILL -> Install Dependency Breaking Changes Review"
+        },
+        {
+          "command": "averenium.nugetManager.startTrace",
+          "title": "NuGet: Trace -> Start"
+        },
+        {
+          "command": "averenium.nugetManager.stopTrace",
+          "title": "NuGet: Trace -> Stop & save zip"
+        },
+        {
+          "command": "averenium.nugetManager.clearLog",
+          "title": "NuGet: Log -> Clear"
         }
       ],
       "view/title": [

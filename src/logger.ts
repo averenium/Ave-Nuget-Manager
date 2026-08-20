@@ -74,6 +74,16 @@ export class Logger {
     this.channel.dispose();
   }
 
+  /** Wipe in-memory entries and the Output Channel. Does not touch a trace session. */
+  clear(): void {
+    this.entries.length = 0;
+    try {
+      this.channel.clear();
+    } catch {
+      // Output channel errors must never propagate
+    }
+  }
+
   // ─── Private helpers ──────────────────────────────────────────────────────
 
   private _writeToChannel(entry: LogEntry): void {

@@ -1,20 +1,37 @@
-# NuGet: transitives, cache, `.deps.json`
+# NuGet: transitives, cache, graph
 
 ## Direct vs resolved
 
-`Directory.Packages.props` and `PackageReference` in `*.csproj` are **direct** pins. The graph NuGet actually resolved — including transitives — is **`.deps.json`** after a build:
+`Directory.Packages.props` and `PackageReference` in `*.csproj` are **direct** pins. After restore, **resolved** versions (including transitives) are in `obj/project.assets.json` and `dotnet list --include-transitive`.
 
-`bin/<configuration>/<tfm>/<AssemblyName>.deps.json`
+Requested ranges per consumer (diamonds) are in the same `project.assets.json`: `targets` → each library’s `dependencies` map (`id` → version range). `.deps.json` after a build is an optional extra copy, not a prerequisite.
+
+`bin/<configuration>/<tfm>/<AssemblyName>.deps.json` — use only if it already exists and is newer than the manifest. Do **not** start `dotnet build` to obtain it.
+
+## Restore graph (always)
+
+Release notes do not show what NuGet actually resolved. **Always** restore and inspect the graph in the same review as the notes, including patch/minor. Do not wait for a major bump or for the user to ask.
+
+If `packages.lock.json` is in the diff, `git diff` that file first (old and new transitives without restore). Still restore if the lockfile is absent, stale, or not committed.
+
+Then:
+
+1. `dotnet restore` then `dotnet list <path> package --include-transitive`.
+2. `dotnet nuget why <path> <id>` for shared ids and for any transitive whose major moved.
+3. Read `obj/project.assets.json` next to each relevant `.csproj` (after restore it must exist).
+   - `libraries` / list output — exact resolved id/version.
+   - `targets` → `dependencies` — the version **range** that consumer asked for.
+4. In the report: requested (csproj / `Directory.Packages.props`) vs resolved, new or majorly-moved transitives, the same id pulled by several directs.
+
+A failed restore (no assets file) is **Unverified** for the graph, not Compatible.
+
+`dotnet list --include-transitive` shows the **unified** version only. If two consumers requested different majors for the same id (e.g. Npgsql 9 vs 10) and NuGet unified to one version, flag a **potential runtime incompatibility**, not a confirmed bug and not a compile error. Recommend a smoke test on the older consumer’s code path.
 
 ## Old vs new transitives (Rule 3)
 
 The manifest diff usually does not list transitives. `bin/` is almost never in git, so the **old** transitive version is often unknown — say so; still scan recent releases of those ids (Rule 2).
 
-After the bump, get the **current** tree (flag restore/build to the user first):
-
-1. Prefer a lighter path when a full build is not already required: `dotnet restore` then `dotnet list <path> package --include-transitive`, and `dotnet nuget why <path> <id>` to see which direct pulls a transitive. That is enough to name the handful of transitives under the majorly-bumped direct package.
-2. If a fresh `.deps.json` already exists (mtime newer than the manifest), read it instead — see below. Do not trust a stale or failed-build file.
-3. Under the majorly-bumped **direct** package, pick the handful of transitives the app code is exposed to (DB driver, HTTP, serialization). Read **recent** tags of those ids (Rule 2).
+The **current** tree comes from the restore step above. Under a majorly-bumped **direct** package (or a transitive major the graph just revealed), pick the handful of transitives the app code is exposed to (DB driver, HTTP, serialization). Read **recent** tags of those ids (Rule 2).
 
 ## Authoritative notes
 
@@ -33,24 +50,14 @@ Public GitHub may not exist. After restore, inspect:
 
 Look for `CHANGELOG.md`, `RELEASENOTES.md`, or similar at the package root, `content/`, `contentFiles/`, or `lib/`. Read `.nuspec` `<releaseNotes>` (and `PackageReleaseNotes` if present in the nupkg). Do not skip an id only because it has no public repo. If nothing is there, mark **Unverified** and state that this cache path was inspected.
 
-## Rule 4 — diamonds (gated)
-
-Only after a **major** direct bump **and** Rule 3, or if the user asks about conflicts. Not for routine patch/minor.
-
-`dotnet list --include-transitive` shows the unified version. Rule 4 needs **requested ranges per consumer**, which live in `.deps.json` after `dotnet build` or `dotnet publish`:
-
-1. Confirm with the user before a large/slow full-solution build. Prefer the project(s) that reference the bumped id.
-2. Read **current** `.deps.json` only if it is newer than the manifest you are reviewing. A failed or incremental build can leave a stale file — rebuild that project if `mtime` is older than `Directory.Packages.props` / the `.csproj`.
-3. `libraries` — exact resolved id/version. `targets` → each library’s `dependencies` — the version range that consumer asked for.
-4. If two consumers requested different majors for the same id (e.g. Npgsql 9 vs 10) and NuGet unified to one version, flag a **potential runtime incompatibility**, not a confirmed bug and not a compile error. The older consumer was not necessarily tested against the unified version. Recommend a smoke test on that consumer’s code path.
-
 ## Commands (copy-paste)
 
 ```bash
 dotnet restore
-dotnet build <path>
 dotnet list <path> package --include-transitive
 dotnet nuget why <path> <package-id>
 ```
 
 `<path>` is a `.sln` / `.slnx` / `.csproj` / `.fsproj`.
+
+Do not add `dotnet build` to this checklist. Graph data is in `obj/project.assets.json` after restore.

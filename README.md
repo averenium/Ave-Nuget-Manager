@@ -32,7 +32,7 @@ The panel does not review whether a bump is safe. Command **NuGet: SKILL -> Inst
 | **Packages** | Installed, implicit, catalog search. Details, install / update / remove. Vulnerability marks from `dotnet list --vulnerable`. |
 | **Groups** | Update **All**, package **families** (`Microsoft.Extensions.*`, …), or **Other**. |
 | **Sources** | Read-only `nuget.config` chain. |
-| **Log** | `dotnet` commands this extension ran. |
+| **Log** | `dotnet` commands this extension ran. **● Trace** records a sanitised zip for a GitHub issue; **Clear log** wipes the list. |
 
 ## Block updates
 

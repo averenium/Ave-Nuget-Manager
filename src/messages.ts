@@ -59,6 +59,9 @@ export type WebviewMessage =
 
   // Log tab
   | { type: 'GET_LOG_ENTRIES' }
+  | { type: 'START_TRACE' }
+  | { type: 'STOP_TRACE' }
+  | { type: 'CLEAR_LOG' }
   /** Click the solution/project name in the panel tab bar. */
   | { type: 'SELECT_SCOPE' }
   /** Add/remove an id in workspace `blockedPackages`. */
@@ -79,6 +82,7 @@ export type ExtensionMessage =
       configChain: NuGetConfigFile[];
       includePrerelease: boolean;
       blockedPackages: string[];
+      traceRecording: boolean;
     }
 
   // Packages
@@ -138,6 +142,8 @@ export type ExtensionMessage =
   // Log
   | { type: 'LOG_ENTRIES'; entries: LogEntry[] }
   | { type: 'LOG_ENTRY_ADDED'; entry: LogEntry }
+  | { type: 'LOG_CLEARED' }
+  | { type: 'TRACE_STATE'; recording: boolean }
 
   // Errors
   | { type: 'DOTNET_NOT_FOUND' }

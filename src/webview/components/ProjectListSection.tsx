@@ -4,6 +4,7 @@ import type { InstalledPackage, ProjectInfo } from '../../types';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
 import { VersionSelect } from './VersionSelector';
+import { compareSemVer } from '../../semver';
 
 interface Props {
   packageId: string;
@@ -77,6 +78,7 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
 
   const handleApply = async () => {
     if (updatesBlocked) return;
+    if (installedVersion && compareSemVer(localVersion, installedVersion) === 0) return;
     dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
     dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
     send({ type: 'INSTALL_PACKAGE', projectPath: p, packageId, version: localVersion });

@@ -62,6 +62,15 @@ describe('collectUpdatableItems', () => {
     expect(items[0].fromVersion).toBe('1.0.0 / 1.1.0');
   });
 
+  it('does not include projects already on latest', () => {
+    const items = collectUpdatableItems([
+      pkg('Pkg', '2.0.0', '2.0.0', '/a/A.csproj'),
+      pkg('Pkg', '1.0.0', '2.0.0', '/b/B.csproj'),
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0].projects).toEqual(['/b/B.csproj']);
+  });
+
   it('orders All by the restore dependency graph', () => {
     const items = collectUpdatableItems([
       pkg('Microsoft.Extensions.Http', '10.0.0', '10.0.11', '/p/App.csproj', [

@@ -70,7 +70,7 @@ Host відхиляє `INSTALL_PACKAGE` / `INSTALL_PACKAGE_MULTI` / `UPDATE_PACK
 - при виборі пакета — `GET_ALL_VERSIONS` і `GET_PACKAGE_METADATA`;
 - зміна версії — повторний metadata;
 - project scope: Install / Update / Remove одразу в цей `.csproj`;
-- solution scope: попап `ProjectSelectionPopup` (усі проєкти для install, лише з пакетом для remove) або рядки `ProjectListSection` для per-project update/remove.
+- solution scope: попап `ProjectSelectionPopup` (усі проєкти для install, лише з пакетом для remove; для update за замовчуванням зняті проєкти вже на цільовій версії) або рядки `ProjectListSection` для per-project update/remove.
 
 `ProjectListSection`: select версії синхронізується з `installed` / `detail.projectVersions` після PATCH або нового `dotnet list` (`useEffect` на встановлену версію), щоб відкрита панель деталей не лишалась на старих значеннях при частковому успіху.
 

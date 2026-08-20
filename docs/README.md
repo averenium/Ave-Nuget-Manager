@@ -18,6 +18,7 @@
 | [Webview UI](webview.md) | `src/webview/**` |
 | [Логування](logging.md) | `logger.ts`, вкладка Log |
 | [Збірка і тести](build-and-test.md) | npm-скрипти, Jest, launch |
+| [Agent skill](agent-skill.md) | `installAgentSkill`, `skills/dependency-breaking-changes-review/` |
 | [Незавершене](incomplete.md) | Оголошено, але не доведено |
 
 ## Швидкий старт розробки

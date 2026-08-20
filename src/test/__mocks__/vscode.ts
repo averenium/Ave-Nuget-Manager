@@ -120,6 +120,9 @@ export const window = {
   showQuickPick: jest.fn((_items: any[], _options?: any): Promise<any> =>
     Promise.resolve(undefined)
   ),
+  showOpenDialog: jest.fn((_options?: any): Promise<any[] | undefined> =>
+    Promise.resolve(undefined)
+  ),
   registerWebviewViewProvider: jest.fn((_viewId: string, _provider: any, _options?: any): Disposable =>
     new Disposable(() => { /* no-op */ })
   ),

@@ -12,6 +12,7 @@ import { WebviewMessageBroker } from './webviewMessageBroker';
 import { watchDotnetWorkspaceContext } from './dotnetWorkspace';
 import { createConcurrencyGate } from './concurrency';
 import { getConfig } from './config';
+import { registerAgentSkillCommand } from './agentSkillInstall';
 
 let logger: Logger | undefined;
 
@@ -85,6 +86,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const registrar = new CommandRegistrar(viewProvider, broker, solutionParser);
   registrar.register(context);
+  registerAgentSkillCommand(context);
 
   context.subscriptions.push(
     viewProviderDisposable,

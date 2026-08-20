@@ -110,6 +110,7 @@ export interface AppState {
   dotnetMissing: boolean;
   globalError: string | null;
   pendingRollback: boolean;
+  workspaceActivity: { kind: 'restore' | 'refresh'; phase: 'work' | 'enrich' } | null;
 }
 
 const initialState: AppState = {
@@ -143,6 +144,7 @@ const initialState: AppState = {
   dotnetMissing: false,
   globalError: null,
   pendingRollback: false,
+  workspaceActivity: null,
 };
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -286,6 +288,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           prerelease: msg.includePrerelease,
         },
         updates: { ...state.updates, versionsByPackageId: {} },
+        workspaceActivity: null,
       };
 
     case 'INSTALLED_PACKAGES': {
@@ -324,6 +327,9 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           ...state.packages,
           enrichProgress: finished ? null : { done: msg.done, total: msg.total },
         },
+        workspaceActivity: finished && state.workspaceActivity?.phase === 'enrich'
+          ? null
+          : state.workspaceActivity,
       };
     }
 
@@ -563,6 +569,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         ...state,
         globalError: null,
         pendingRollback: false,
+        workspaceActivity: { kind: msg.kind, phase: 'work' },
         updates: {
           ...state.updates,
           jobs: state.updates.jobs.map((job) => (
@@ -570,6 +577,16 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           )),
         },
       };
+
+    case 'REFRESH_FINISHED': {
+      const keepEnrich = state.workspaceActivity?.kind === 'refresh' && !!state.packages.enrichProgress;
+      return {
+        ...state,
+        workspaceActivity: keepEnrich
+          ? { kind: 'refresh', phase: 'enrich' }
+          : null,
+      };
+    }
 
     default:
       return state;

@@ -91,6 +91,45 @@ html { height: 100vh; }
   cursor: default;
 }
 
+.activity-strip {
+  box-sizing: border-box;
+  height: 7px;
+  padding: 2px var(--spacing-sm) 2px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.activity-strip__track {
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--color-tab-inactive) 16%, transparent);
+}
+.activity-strip--busy:not(.activity-strip--determinate) .activity-strip__track {
+  background-color: color-mix(in srgb, var(--color-tab-inactive) 22%, transparent);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-fg) 42%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 36% 100%;
+  background-repeat: no-repeat;
+  animation: activity-strip-shimmer 2.4s ease-in-out infinite;
+}
+.activity-strip__fill {
+  display: block;
+  height: 100%;
+  background: color-mix(in srgb, var(--color-fg) 40%, transparent);
+  transition: width 200ms ease-out;
+}
+@keyframes activity-strip-shimmer {
+  0% { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
+}
+
 /* ── Tab content ────────────────────────────────────────────────────────────── */
 .tab-content { flex: 1; min-height: 0; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
 .tab-content > [role="tabpanel"] { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
@@ -103,8 +142,8 @@ html { height: 100vh; }
 /* Toolbar: search + source filter + prerelease — single row above the split */
 .pkg-toolbar {
   display: flex; align-items: center; gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border-bottom: 1px solid var(--color-border);
+  padding: var(--spacing-xs) var(--spacing-sm) 2px;
+  border-bottom: none;
   flex-shrink: 0; flex-wrap: nowrap; min-width: 0;
   position: relative; z-index: 5;
 }
@@ -118,9 +157,10 @@ html { height: 100vh; }
 .pkg-toolbar__search:focus { outline: 1px solid var(--color-btn-bg); border-color: var(--color-btn-bg); }
 .pkg-toolbar__refresh {
   flex-shrink: 0;
+  width: 24px; height: 24px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
   background: none; border: 1px solid var(--color-border); border-radius: var(--radius);
-  color: var(--color-fg); cursor: pointer; font-size: 14px;
-  padding: 2px 6px; line-height: 1;
+  color: var(--color-fg); cursor: pointer;
 }
 .pkg-toolbar__refresh:hover { border-color: var(--color-btn-bg); color: var(--color-btn-bg); }
 .pkg-toolbar__refresh:disabled { opacity: 0.5; cursor: not-allowed; }

@@ -29,7 +29,7 @@
 
 `dotnet list` з .NET 10 без `--no-restore` після зламаного restore виходить з кодом 1 і JSON лише з `problems` (`"Restore failed. Run dotnet restore…"`). Це **не** підставляється замість NU1605. Host завжди викликає list з `--no-restore`, щоб показати поточні PackageReference навіть коли restore не проходить.
 
-Окремо, при відкритті scope і на ↺, host паралельно запускає `dotnet restore`. Якщо він падає — банер **Restore failed** зі спойлером CLI (закритий за замовчуванням). Повний лог також на вкладці Log.
+Окремо, при відкритті scope і на Restore / Force refresh, host паралельно запускає `dotnet restore`. Якщо він падає — банер **Restore failed** зі спойлером CLI (закритий за замовчуванням). Повний лог також на вкладці Log.
 
 ## Потік install / update
 
@@ -89,7 +89,7 @@ Reducer на `INSTALLED_PACKAGES` / `INSTALLED_PACKAGES_PATCH` оновлює `d
 - якщо list повернув пакети — шле `INSTALLED_PACKAGES` / `IMPLICIT_PACKAGES`;
 - якщо порожньо **і** є `error` (restore JSON без `projects`) **або** це refresh після fail (`notifyListError: false`) — **нічого не шле**, попередній список лишається.
 
-Примусовий ↺ (`FORCE_REFRESH`) при зламаному restore покаже банер list-помилки, але теж не замінить список на порожній.
+Примусовий Force refresh і Restore при зламаному restore покажуть банер list-помилки, але теж не замінять список на порожній.
 
 ## Банер UI
 

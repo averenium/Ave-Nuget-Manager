@@ -36,11 +36,14 @@
 
 Toolbar:
 
-- Force refresh (`FORCE_REFRESH`);
+- Restore (`RESTORE_PACKAGES`) — `dotnet restore`, потім list/vuln; кеш latest лишається;
+- Force refresh (`FORCE_REFRESH`) — те саме з очищенням кешу latest;
 - пошук (inline `<input>`, не `SearchBar.tsx` — той файл **не підключений**);
 - `SourceFilterDropdown`;
 - лічильник enrich `done/total`;
 - чекбокс Pre-release.
+
+Під рядком пошуку / toolbar — завжди 7px `activity-strip`. Restore/refresh: повільний shimmer; Force refresh заповнює смужку за enrich. Group update: shimmer на старті, далі fill за проєктами. Restore штампує latest з кешу в list і не шле повторний `PACKAGE_INFO_UPDATE`, щоб лічильники не скакали.
 
 Пошук каталогу: мінімум 2 символи, debounce 300 ms. Зміна джерел або prerelease повторює search.
 

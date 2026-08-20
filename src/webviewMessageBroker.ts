@@ -56,6 +56,15 @@ interface CacheEntry {
   versions: string[];
 }
 
+type RefreshOpts = {
+  notifyListError?: boolean;
+  restore?: boolean;
+  listAfterRestore?: boolean;
+  awaitVuln?: boolean;
+  /** Restore: stamp latest from cache and skip cache-hit PACKAGE_INFO_UPDATE so counts do not jump. */
+  quietEnrich?: boolean;
+};
+
 export class WebviewMessageBroker {
   private _messageDisposable?: vscode.Disposable;
   private _logDisposable?: vscode.Disposable;
@@ -194,12 +203,12 @@ export class WebviewMessageBroker {
         await this._handleRefresh();
         break;
 
+      case 'RESTORE_PACKAGES':
+        await this._refreshWithRestore(false);
+        break;
+
       case 'FORCE_REFRESH':
-        this._cancelEnrich();
-        this._cancelVulnScan();
-        this._cache.clear();
-        this.provider.postMessage({ type: 'REFRESH_STARTED' });
-        await this._handleRefresh({ restore: true });
+        await this._refreshWithRestore(true);
         break;
 
       case 'SET_PRERELEASE_SETTING':
@@ -829,7 +838,28 @@ export class WebviewMessageBroker {
     await this._handleRefresh(opts);
   }
 
-  private async _handleRefresh(opts?: { notifyListError?: boolean; restore?: boolean }): Promise<void> {
+  /** List + `dotnet restore`. `clearCache` drops latest-version enrich so Force refresh re-fetches. */
+  private async _refreshWithRestore(clearCache: boolean): Promise<void> {
+    this._cancelEnrich();
+    this._cancelVulnScan();
+    if (clearCache) this._cache.clear();
+    this.provider.postMessage({
+      type: 'REFRESH_STARTED',
+      kind: clearCache ? 'refresh' : 'restore',
+    });
+    try {
+      await this._handleRefresh({
+        restore: true,
+        listAfterRestore: true,
+        awaitVuln: true,
+        quietEnrich: !clearCache,
+      });
+    } finally {
+      this.provider.postMessage({ type: 'REFRESH_FINISHED' });
+    }
+  }
+
+  private async _handleRefresh(opts?: RefreshOpts): Promise<void> {
     const scope = this.provider.getCurrentScope();
     if (!scope) return;
 
@@ -845,10 +875,10 @@ export class WebviewMessageBroker {
    * `dotnet list` return `{ problems: [...] }` with no projects — posting that
    * as INSTALLED_PACKAGES: [] wipes the UI.
    */
-  private _applyListedPackages(
+  private async _applyListedPackages(
     listed: PackageListResult,
-    opts?: { notifyListError?: boolean },
-  ): void {
+    opts?: RefreshOpts,
+  ): Promise<void> {
     const notifyListError = opts?.notifyListError !== false;
     const empty = listed.installed.length === 0 && listed.implicit.length === 0;
 
@@ -866,37 +896,89 @@ export class WebviewMessageBroker {
       return;
     }
 
-    this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: listed.installed });
+    const installed = this._stampCachedLatest(listed.installed);
+    this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: installed });
     this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
 
     this._cancelVulnScan();
     const vulnSignal = this._vulnAbort.signal;
-    void this._scanVulnerabilities(listed, vulnSignal);
+    const vuln = this._scanVulnerabilities(listed, vulnSignal);
 
-    if (listed.installed.length > 0) {
+    const skipEnrich = opts?.quietEnrich && installed.length > 0 && this._allLatestCached(installed);
+    if (installed.length > 0 && !skipEnrich) {
       this._cancelEnrich();
       const signal = this._enrichAbort.signal;
-      void this._enrichInstalledPackages(listed.installed, signal);
+      void this._enrichInstalledPackages(installed, signal, { quietCacheHits: !!opts?.quietEnrich });
     }
+
+    if (opts?.awaitVuln) await vuln;
+    else void vuln;
+  }
+
+  private _stampCachedLatest(installed: InstalledPackage[]): InstalledPackage[] {
+    const now = Date.now();
+    const ttl = getConfig().cacheTtlMs;
+    return installed.map((pkg) => {
+      const cached = this._cache.get(pkg.id.toLowerCase());
+      if (!cached || now - cached.fetchedAt >= ttl) return pkg;
+      return {
+        ...pkg,
+        latestVersion: pkg.latestVersion || cached.latestVersion,
+        sourceName: pkg.sourceName || cached.sourceName,
+      };
+    });
+  }
+
+  private _allLatestCached(installed: InstalledPackage[]): boolean {
+    const now = Date.now();
+    const ttl = getConfig().cacheTtlMs;
+    for (const id of new Set(installed.map((p) => p.id.toLowerCase()))) {
+      const cached = this._cache.get(id);
+      if (!cached || now - cached.fetchedAt >= ttl) return false;
+    }
+    return true;
   }
 
   private async _refreshForSolution(
     solutionPath: string,
-    opts?: { notifyListError?: boolean; restore?: boolean },
+    opts?: RefreshOpts,
   ): Promise<void> {
+    if (opts?.restore && opts.listAfterRestore) {
+      const restoreResult = await this.backend.restoreProject(solutionPath);
+      const listed = await this.backend.listAllForSolution(solutionPath);
+      await this._applyListedPackages(listed, opts);
+      this._reportRestoreIfCurrent(solutionPath, restoreResult);
+      return;
+    }
+
     const restoreP = opts?.restore ? this.backend.restoreProject(solutionPath) : undefined;
     const listed = await this.backend.listAllForSolution(solutionPath);
-    this._applyListedPackages(listed, opts);
+    await this._applyListedPackages(listed, opts);
     if (restoreP) await this._reportRestoreIfCurrent(solutionPath, await restoreP);
   }
 
   private async _refreshPackagesForProjects(
     projectPaths: string[],
-    opts?: { notifyListError?: boolean; restore?: boolean },
+    opts?: RefreshOpts,
   ): Promise<void> {
     if (projectPaths.length === 0) return;
 
+    if (opts?.restore && opts.listAfterRestore) {
+      const restoreResult = await this.backend.restoreProject(projectPaths[0]);
+      await this._listProjectsThenApply(projectPaths, opts);
+      this._reportRestoreIfCurrent(projectPaths[0], restoreResult);
+      return;
+    }
+
     const restoreP = opts?.restore ? this.backend.restoreProject(projectPaths[0]) : undefined;
+    await this._listProjectsThenApply(projectPaths, opts);
+    if (restoreP) await this._reportRestoreIfCurrent(projectPaths[0], await restoreP);
+  }
+
+  private async _listProjectsThenApply(
+    projectPaths: string[],
+    opts?: RefreshOpts,
+  ): Promise<void> {
     const concurrency = getConfig().enrichConcurrency;
     const results: PackageListResult[] = new Array(projectPaths.length);
 
@@ -912,8 +994,7 @@ export class WebviewMessageBroker {
       implicit: results.flatMap((r) => r.implicit),
       error: results.find((r) => r.error)?.error,
     };
-    this._applyListedPackages(listed, opts);
-    if (restoreP) await this._reportRestoreIfCurrent(projectPaths[0], await restoreP);
+    await this._applyListedPackages(listed, opts);
   }
 
   private _reportRestoreIfCurrent(targetPath: string, result: CliResult): void {
@@ -970,6 +1051,7 @@ export class WebviewMessageBroker {
   private async _enrichInstalledPackages(
     installed: import('./types').InstalledPackage[],
     signal: AbortSignal,
+    opts?: { quietCacheHits?: boolean },
   ): Promise<void> {
     const scope = this.provider.getCurrentScope();
     if (!scope || signal.aborted) return;
@@ -985,17 +1067,18 @@ export class WebviewMessageBroker {
     const uniqueIds = [...new Set(installed.map((p) => p.id))];
     const now = Date.now();
 
-    // Push cached entries immediately (no network call needed)
     const needsFetch: string[] = [];
     for (const id of uniqueIds) {
       const cached = this._cache.get(id.toLowerCase());
       if (cached && now - cached.fetchedAt < getConfig().cacheTtlMs) {
-        this.provider.postMessage({
-          type: 'PACKAGE_INFO_UPDATE',
-          packageId: id,
-          latestVersion: cached.latestVersion,
-          sourceName: cached.sourceName,
-        });
+        if (!opts?.quietCacheHits) {
+          this.provider.postMessage({
+            type: 'PACKAGE_INFO_UPDATE',
+            packageId: id,
+            latestVersion: cached.latestVersion,
+            sourceName: cached.sourceName,
+          });
+        }
       } else {
         needsFetch.push(id);
       }

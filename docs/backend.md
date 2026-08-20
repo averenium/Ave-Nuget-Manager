@@ -50,7 +50,7 @@
 
 З **.NET 10** `dotnet list package` спочатку робить restore; якщо restore падає (NU1605 тощо), команда виходить з кодом 1 і JSON лише з `problems` (без `projects`). Тому всі list-виклики йдуть з **`--no-restore`**: читають уже наявний `project.assets.json` / PackageReference, навіть коли restore зламаний. Якщо assets немає і list усе одно порожній з `error`, host **не** перетворює це на `INSTALLED_PACKAGES: []`.
 
-При відкритті solution/проєкту і на ↺ (`FORCE_REFRESH`) host паралельно ганяє `dotnet restore <sln|csproj>`. Список не чекає restore. Якщо restore падає — банер `Restore failed` з NU1605 (не затирає банер невдалого add / Rollback). Після install/remove повторний restore не запускається: `dotnet add` уже робить restore сам.
+При відкритті solution/проєкту host **паралельно** ганяє `dotnet restore` і `dotnet list --no-restore`, щоб UI заповнився одразу зі старого `assets.json`. Кнопки Restore / Force refresh навпаки: спочатку `restore`, потім list і vuln scan — інакше `--no-restore` читає граф ще до запису assets. Restore **не** чистить кеш latest-версій; Force refresh чистить. Якщо restore падає — банер `Restore failed` з NU1605 (не затирає банер невдалого add / Rollback). Після install/remove повторний restore не запускається: `dotnet add` уже робить restore сам.
 
 Успіх `dotnet add` — не лише `exitCode === 0`: див. `isCliOperationSuccess` у `src/dotnetOutput.ts`. Повний потік rollback / keep: [install-and-rollback](install-and-rollback.md).
 

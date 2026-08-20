@@ -24,7 +24,7 @@ Changelogs і breaking changes після batch-оновлення теж пот
 |---|---|
 | `DOTNET_NOT_FOUND` | Банер у `App.tsx` є; `activate()` лише логує відсутність SDK |
 | `CONFIG_CHAIN_UPDATE` | Reducer є, host не шле |
-| `REFRESH_PACKAGES` | Handler є, UI шле лише `FORCE_REFRESH` |
+| `REFRESH_PACKAGES` | Handler є, UI шле `RESTORE_PACKAGES` / `FORCE_REFRESH` |
 
 ## Settings
 

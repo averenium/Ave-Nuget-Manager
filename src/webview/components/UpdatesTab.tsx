@@ -16,6 +16,8 @@ import { SplitPane } from './SplitPane';
 import { VersionSelect } from './VersionSelector';
 import { PkgListRow } from './PkgListRow';
 import { PrereleaseToggle } from './PrereleaseToggle';
+import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
+import { ActivityStrip } from './ActivityStrip';
 import { DetailHeader } from './DetailHeader';
 import type { BatchUpdateItem, BatchUpdateJob, BatchUpdateItemView } from '../../types';
 
@@ -286,15 +288,7 @@ export function UpdatesTab() {
   return (
     <div className="split-tab">
       <div className="pkg-toolbar">
-        <button
-          className="pkg-toolbar__refresh"
-          title="Force refresh (clears cache)"
-          aria-label="Force refresh packages"
-          disabled={batchBusy}
-          onClick={() => send({ type: 'FORCE_REFRESH' })}
-        >
-          ↺
-        </button>
+        <ToolbarRestoreRefresh disabled={batchBusy} />
         {runningJob ? (
           <span className="pkg-toolbar__progress" aria-live="polite">
             {batchProgressLabel(runningJob)}
@@ -307,6 +301,7 @@ export function UpdatesTab() {
         <span className="pkg-toolbar__spacer" />
         <PrereleaseToggle />
       </div>
+      <ActivityStrip />
 
       <SplitPane
         splitLabel="Resize update groups"

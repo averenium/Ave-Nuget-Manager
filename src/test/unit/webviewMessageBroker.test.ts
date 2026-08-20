@@ -245,6 +245,7 @@ describe('WebviewMessageBroker', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(posted[0]?.type).toBe('REFRESH_STARTED');
+    expect((posted[0] as { kind?: string }).kind).toBe('refresh');
     const err = posted.find((m) => m.type === 'ERROR') as { message?: string; details?: string } | undefined;
     expect(err?.message).toBe('Restore failed');
     expect(err?.details).toContain('NU1605');
@@ -285,6 +286,76 @@ describe('WebviewMessageBroker', () => {
 
     expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
     expect(posted.some((m) => m.type === 'ENRICH_PROGRESS' && (m as any).done === 1 && (m as any).total === 1)).toBe(true);
+  });
+
+  it('RESTORE_PACKAGES restores without clearing the latest-version cache', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '13.0.3',
+      sourceName: 'nuget.org',
+      versions: ['13.0.3'],
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+    const restoresAfterReady = backend.restoreProject.mock.calls.length;
+
+    posted.length = 0;
+    simulateMessage({ type: 'RESTORE_PACKAGES' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(posted[0]?.type).toBe('REFRESH_STARTED');
+    expect((posted[0] as { kind?: string }).kind).toBe('restore');
+    expect(backend.restoreProject.mock.calls.length).toBe(restoresAfterReady + 1);
+    expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+    expect(posted.some((m) => m.type === 'REFRESH_FINISHED')).toBe(true);
+    expect(posted.some((m) => m.type === 'PACKAGE_INFO_UPDATE')).toBe(false);
+    expect(posted.some((m) => m.type === 'ENRICH_PROGRESS')).toBe(false);
+    const listed = posted.find((m) => m.type === 'INSTALLED_PACKAGES') as { packages?: Array<{ latestVersion?: string }> } | undefined;
+    expect(listed?.packages?.[0].latestVersion).toBe('13.0.3');
+  });
+
+  it('RESTORE_PACKAGES lists packages only after restore finishes', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    let restoreDone = false;
+    backend.restoreProject.mockImplementation(async () => {
+      expect(backend.listAllForProject).not.toHaveBeenCalled();
+      restoreDone = true;
+      return makeCliResult();
+    });
+    backend.listAllForProject.mockImplementation(async () => {
+      expect(restoreDone).toBe(true);
+      return { installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')], implicit: [] };
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'RESTORE_PACKAGES' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(restoreDone).toBe(true);
+    expect(backend.listAllForProject).toHaveBeenCalled();
   });
 
   it('posts VULNERABILITIES after listing packages', async () => {

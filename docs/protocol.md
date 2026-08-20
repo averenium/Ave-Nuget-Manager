@@ -40,10 +40,11 @@ webview mount  →  WEBVIEW_READY
 | `ROLLBACK_FAILED_UPDATE` | Кнопка Rollback (`onFailedUpdate: keep`) | Відновлює знімки невдалих проєктів + restore |
 | `UPDATE_PACKAGES_BATCH` | Update all / family / other | Послідовний add по пакетах; див. [batch-updates](batch-updates.md) |
 | `CANCEL_BATCH_UPDATE` | Stop (■) замість Update в заголовку групи | Аборт поточного `dotnet add`, решта пакетів `cancelled` |
-| `FORCE_REFRESH` | Кнопка ↺ | Чистить кеш, list + restore |
+| `RESTORE_PACKAGES` | Іконка пакета (Restore) | Restore → list → vuln; смужка Restoring… до `REFRESH_FINISHED`; кеш latest лишається |
+| `FORCE_REFRESH` | Кругова стрілка (Force refresh) | Те саме з очищенням кешу; смужка далі показує enrich latest |
 | `OPEN_CONFIG_FILE` | Вкладка Sources | `openTextDocument` |
 | `GET_LOG_ENTRIES` | Відкриття Log | Повний масив Logger |
-| `REFRESH_PACKAGES` | **UI не шле** | Handler є: refresh без очистки кешу |
+| `REFRESH_PACKAGES` | **UI не шле** | Handler є: refresh без restore і без очистки кешу |
 
 ## Host → Webview
 
@@ -54,7 +55,7 @@ webview mount  →  WEBVIEW_READY
 | `IMPLICIT_PACKAGES` | Після `dotnet list` | Транзитивні |
 | `INSTALLED_PACKAGES_PATCH` | Після fail add (успішні проєкти завжди; невдалі — лише `keep`) | Точкове оновлення version у списку й деталях |
 | `PACKAGE_INFO_UPDATE` | Enrich по id | `latestVersion` + `sourceName`; сортування: спочатку з оновленням |
-| `ENRICH_PROGRESS` | `done/total` | Лічильник у toolbar; зникає коли `done >= total` |
+| `ENRICH_PROGRESS` | `done/total` | Смужка Force refresh (`Refreshing latest n/m`); зникає коли `done >= total` |
 | `VULNERABILITIES` | Після list (паралельно з enrich) | Findings для ⚠ і деталей; див. [vulnerabilities](vulnerabilities.md) |
 | `SEARCH_RESULTS` | Пошук | Available-список |
 | `PACKAGE_METADATA` | Деталі | Права панель |
@@ -66,6 +67,8 @@ webview mount  →  WEBVIEW_READY
 | `BATCH_UPDATE_STARTED` | Початок batch | Вкладка Groups, таблиця queued |
 | `BATCH_UPDATE_ITEM` | Кожен пакет у batch | pending → running → ok/error/timeout/cancelled |
 | `BATCH_UPDATE_FINISHED` | Кінець batch | `finishedAt`, опційно `canRollback`, `cancelled` |
+| `REFRESH_STARTED` | Restore / Force refresh | `kind: restore \| refresh`; смужка Restoring… / Refreshing… |
+| `REFRESH_FINISHED` | Після restore + list + vuln | Restore: ховає смужку; refresh: лишає, якщо ще йде enrich |
 | `LOG_ENTRIES` / `LOG_ENTRY_ADDED` | Log | Масив записів |
 | `ERROR` | Пошук / metadata / list refresh / restore | Metadata → `detail.error`; list refresh / restore → `globalError` (restore не затирає `pendingRollback`) |
 | `CONFIG_CHAIN_UPDATE` | **Ніколи не шлеться** | Handler у reducer є |
@@ -78,7 +81,8 @@ webview mount  →  WEBVIEW_READY
 - TTL: `getConfig().cacheTtlMs` = 5 хвилин (не в settings).
 - Hit: одразу `PACKAGE_INFO_UPDATE`.
 - Miss: `enrichPackage` з лімітом `enrichConcurrency`.
-- Новий scope / `FORCE_REFRESH` / зміна prerelease — abort поточного job (`AbortController`) і за потреби `cache.clear()`.
+- Новий scope / `FORCE_REFRESH` / зміна prerelease — abort поточного job (`AbortController`) і `cache.clear()`.
+- `RESTORE_PACKAGES` — abort enrich/vuln, `dotnet restore` + list, кеш latest лишається.
 
 `GET_ALL_VERSIONS` спочатку віддає кешований список, потім оновлює у фоні, якщо список змінився.
 

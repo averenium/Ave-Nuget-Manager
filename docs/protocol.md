@@ -80,7 +80,7 @@ webview mount  →  WEBVIEW_READY
 
 - TTL: `getConfig().cacheTtlMs` = 5 хвилин (не в settings).
 - Hit: одразу `PACKAGE_INFO_UPDATE`.
-- Miss: `enrichPackage` з лімітом `enrichConcurrency`.
+- Miss: `enrichPackage` з лімітом `enrichConcurrency`. Порожній search або throw — **один retry** після решти хвилі. Abort (FORCE_REFRESH) між хвилями доводить `ENRICH_PROGRESS` до `done === total`.
 - Новий scope / `FORCE_REFRESH` / зміна prerelease — abort поточного job (`AbortController`) і `cache.clear()`.
 - `RESTORE_PACKAGES` — abort enrich/vuln, `dotnet restore` + list, кеш latest лишається.
 

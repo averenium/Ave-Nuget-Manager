@@ -378,6 +378,118 @@ describe('WebviewMessageBroker', () => {
     expect(backend.listAllForProject).toHaveBeenCalled();
   });
 
+  it('retries enrichPackage once after the rest of the wave finishes', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [
+        makeInstalledPkg('FailPkg', '/p/App.csproj'),
+        makeInstalledPkg('OkPkg', '/p/App.csproj'),
+      ],
+      implicit: [],
+    });
+    const calls: string[] = [];
+    let failAttempts = 0;
+    backend.enrichPackage.mockImplementation(async (id: string) => {
+      calls.push(id);
+      if (id === 'FailPkg') {
+        failAttempts += 1;
+        if (failAttempts === 1) throw new Error('search failed');
+        return { latestVersion: '2.0.0', sourceName: 'nuget.org', versions: ['2.0.0'] };
+      }
+      return { latestVersion: '1.0.0', sourceName: 'nuget.org', versions: ['1.0.0'] };
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(calls.filter((id) => id === 'FailPkg')).toHaveLength(2);
+    expect(calls.filter((id) => id === 'OkPkg')).toHaveLength(1);
+    expect(calls.lastIndexOf('FailPkg')).toBeGreaterThan(calls.indexOf('OkPkg'));
+
+    const updates = posted.filter((m) => m.type === 'PACKAGE_INFO_UPDATE') as Array<{
+      packageId: string;
+      latestVersion: string;
+    }>;
+    expect(updates.some((u) => u.packageId === 'FailPkg' && u.latestVersion === '2.0.0')).toBe(true);
+    expect(updates.some((u) => u.packageId === 'OkPkg')).toBe(true);
+  });
+
+  it('retries an empty enrich search once', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('EmptyThenOk', '/p/App.csproj')],
+      implicit: [],
+    });
+    backend.enrichPackage
+      .mockResolvedValueOnce({ latestVersion: '', sourceName: '', versions: [] })
+      .mockResolvedValueOnce({ latestVersion: '3.0.0', sourceName: 'nuget.org', versions: ['3.0.0'] });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(backend.enrichPackage).toHaveBeenCalledTimes(2);
+    const updates = posted.filter((m) => m.type === 'PACKAGE_INFO_UPDATE') as Array<{
+      packageId: string;
+      latestVersion: string;
+    }>;
+    expect(updates.some((u) => u.packageId === 'EmptyThenOk' && u.latestVersion === '3.0.0')).toBe(true);
+  });
+
+  it('does not call enrichPackage a third time when retry also fails', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('AlwaysFail', '/p/App.csproj')],
+      implicit: [],
+    });
+    backend.enrichPackage.mockRejectedValue(new Error('search failed'));
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(backend.enrichPackage).toHaveBeenCalledTimes(2);
+    expect(posted.some((m) => m.type === 'PACKAGE_INFO_UPDATE')).toBe(false);
+    expect(posted.some((m) => m.type === 'ENRICH_PROGRESS' && (m as { done: number; total: number }).done === 1)).toBe(true);
+  });
+
   it('posts VULNERABILITIES after listing packages', async () => {
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();

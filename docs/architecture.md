@@ -38,7 +38,7 @@
 | Vulnerabilities | `src/vulnerabilities.ts`, `src/vulnerabilityProvider.ts` | `dotnet list --vulnerable` + user script |
 | Batch | `src/batchUpdates.ts`, `src/packageFamily.ts` | Update all і родини `Microsoft.**.**` |
 | Snapshot | `src/projectFileSnapshot.ts` | Знімок csproj / Directory.Packages.props перед `dotnet add` |
-| CLI output | `src/dotnetOutput.ts` | Успіх add, summary NU1605, parse `problems` з list |
+| CLI output | `src/dotnetOutput.ts`, `src/cliRetry.ts` | Успіх add, summary NU1605, parse `problems` з list; retry group `dotnet add` за NU/HTTP-фразами в CLI |
 | Backend | `src/backend/` | Усі NuGet-операції через абстракцію `INuGetBackend` |
 | CLI | `src/cliRunner.ts` | `spawn('dotnet')`, timeout, логування |
 | Solution | `src/solutionParser.ts` | Список проєктів з `.sln` / `.slnx` |

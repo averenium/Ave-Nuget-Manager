@@ -30,6 +30,8 @@ export interface InstalledPackage {
   sourceName?: string;
   /** Latest available version from configured sources — undefined until fetched */
   latestVersion?: string;
+  /** Enrich version list (prerelease already applied). Used to cap Groups targets. */
+  versions?: string[];
   /** Implicit (transitive) versions derived from this package */
   implicitVersions?: string[];
   /** Restore-graph deps reachable among installed + implicit ids. */

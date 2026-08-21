@@ -737,6 +737,15 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   display: flex; gap: var(--spacing-sm); justify-content: flex-end;
   flex-shrink: 0;
 }
+.popup--narrow { width: min(420px, 100%); }
+.popup__body {
+  font-size: 12px;
+  display: flex; flex-direction: column; gap: var(--spacing-sm);
+  color: var(--color-fg);
+  overflow: auto;
+  min-height: 0;
+}
+.popup__body strong { font-weight: 600; }
 
 /* ── Error banner ───────────────────────────────────────────────────────────── */
 .error-banner { padding: var(--spacing-md); background: rgba(244,135,113,0.1); color: var(--color-error); border-left: 3px solid var(--color-error); }

@@ -15,6 +15,7 @@ function pkg(
   latest?: string,
   projectPath = '/p/App.csproj',
   dependencies?: string[],
+  versions?: string[],
 ): InstalledPackage {
   return {
     id,
@@ -23,6 +24,7 @@ function pkg(
     projectPath,
     latestVersion: latest,
     dependencies,
+    versions,
   };
 }
 
@@ -192,6 +194,52 @@ describe('collectOtherItems', () => {
       'Microsoft.Extensions.Logging',
       'Newtonsoft.Json',
     ]);
+  });
+});
+
+describe('Microsoft.CodeAnalysis SDK cap', () => {
+  const cap = { sdkVersion: '10.0.301', compilerVersion: '5.6.0' };
+  const versions = ['5.9.0', '5.6.0', '5.5.0'];
+
+  it('All uses max enrich version at or below csc, not nuget.org latest', () => {
+    const items = collectUpdatableItems([
+      pkg('Microsoft.CodeAnalysis.CSharp', '5.6.0', '5.9.0', '/p/App.csproj', undefined, versions),
+      pkg('Newtonsoft.Json', '13.0.1', '13.0.3'),
+    ], cap);
+    expect(items.map((i) => i.packageId)).toEqual(['Newtonsoft.Json']);
+  });
+
+  it('All includes CodeAnalysis when a capped version is newer than installed', () => {
+    const items = collectUpdatableItems([
+      pkg('Microsoft.CodeAnalysis.CSharp', '5.5.0', '5.9.0', '/p/App.csproj', undefined, versions),
+    ], cap);
+    expect(items).toEqual([
+      expect.objectContaining({
+        packageId: 'Microsoft.CodeAnalysis.CSharp',
+        fromVersion: '5.5.0',
+        toVersion: '5.6.0',
+      }),
+    ]);
+  });
+
+  it('omits CodeAnalysis from All and families when csc failed', () => {
+    const installed = [
+      pkg('Microsoft.CodeAnalysis.CSharp', '5.5.0', '5.9.0', '/p/App.csproj', undefined, versions),
+      pkg('Microsoft.CodeAnalysis.Common', '5.5.0', '5.9.0', '/p/App.csproj', undefined, versions),
+    ];
+    expect(collectUpdatableItems(installed, null)).toEqual([]);
+    expect(collectFamilyGroups(installed, null)).toEqual([]);
+  });
+
+  it('family suggested latest is the cap, not 5.9.0', () => {
+    const groups = collectFamilyGroups([
+      pkg('Microsoft.CodeAnalysis.CSharp', '5.5.0', '5.9.0', '/p/App.csproj', undefined, versions),
+      pkg('Microsoft.CodeAnalysis.Common', '5.5.0', '5.9.0', '/p/App.csproj', undefined, versions),
+    ], cap);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].family).toBe('Microsoft.CodeAnalysis');
+    expect(groups[0].updateCount).toBe(2);
+    expect(groups[0].members.every((m) => m.latestVersion === '5.6.0')).toBe(true);
   });
 });
 

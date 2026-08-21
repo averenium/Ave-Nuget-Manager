@@ -5,6 +5,8 @@ import { packageIdsEqual, pathsEqual } from '../../pathCompare';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
 import { VersionSelect } from './VersionSelector';
 import { compareSemVer } from '../../semver';
+import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
+import { RoslynCapPopup } from './RoslynCapPopup';
 
 interface Props {
   packageId: string;
@@ -71,6 +73,7 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
   const error = errorKey ? state.detail.projectErrors[errorKey] : undefined;
 
   const [localVersion, setLocalVersion] = useState(currentVersion);
+  const [showRoslynWarning, setShowRoslynWarning] = useState(false);
 
   useEffect(() => {
     if (installedVersion) setLocalVersion(installedVersion);
@@ -82,6 +85,23 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
     dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
     dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
     send({ type: 'INSTALL_PACKAGE', projectPath: p, packageId, version: localVersion });
+  };
+
+  const requestApply = () => {
+    if (updatesBlocked) {
+      send({ type: 'SHOW_TOAST', message: `${packageId}: ${BLOCKED_UPDATES_TOOLTIP}` });
+      return;
+    }
+    if (needsRoslynUpgradeConfirm({
+      packageId,
+      chosenVersion: localVersion,
+      installedVersions: installedVersion ? [installedVersion] : [],
+      cap: state.roslynCap,
+    })) {
+      setShowRoslynWarning(true);
+      return;
+    }
+    void handleApply();
   };
 
   const handleRemove = () => {
@@ -105,13 +125,7 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
       <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
         <button
           className="btn btn--icon btn--primary"
-          onClick={() => {
-            if (updatesBlocked) {
-              send({ type: 'SHOW_TOAST', message: `${packageId}: ${BLOCKED_UPDATES_TOOLTIP}` });
-              return;
-            }
-            void handleApply();
-          }}
+          onClick={requestApply}
           disabled={isLoading}
           aria-disabled={updatesBlocked || undefined}
           title={updatesBlocked ? BLOCKED_UPDATES_TOOLTIP : `Update ${project.name} to ${localVersion}`}
@@ -127,6 +141,20 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
       </div>
 
       {error && <div className="project-row__error" role="alert">{error}</div>}
+
+      {showRoslynWarning && state.roslynCap && (
+        <RoslynCapPopup
+          packageId={packageId}
+          fromVersion={installedVersion}
+          toVersion={localVersion}
+          cap={state.roslynCap}
+          onConfirm={() => {
+            setShowRoslynWarning(false);
+            void handleApply();
+          }}
+          onCancel={() => setShowRoslynWarning(false)}
+        />
+      )}
     </div>
   );
 }

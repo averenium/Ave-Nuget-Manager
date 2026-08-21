@@ -46,6 +46,7 @@
 | `dotnetOutput.test.ts` | Summary NU1605 vs list JSON `problems` |
 | `projectFileSnapshot.test.ts` | Знімок / restore csproj, читання Version |
 | `legacyPackageReference.test.ts` | SDK vs legacy vs packages.config; зліплення дублікатів PackageReference |
+| `roslynSdkCap.test.ts` / `roslynSdkProbe.test.ts` | Cap `Microsoft.CodeAnalysis.*` версією `csc` з активного SDK |
 
 ### Property (`src/test/property/`, fast-check)
 

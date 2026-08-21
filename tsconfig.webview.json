@@ -23,7 +23,8 @@
     "src/semver.ts",
     "src/packageFamily.ts",
     "src/packageGraph.ts",
-    "src/batchUpdates.ts"
+    "src/batchUpdates.ts",
+    "src/roslynSdkCap.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

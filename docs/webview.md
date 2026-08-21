@@ -72,6 +72,7 @@ Host відхиляє `INSTALL_PACKAGE` / `INSTALL_PACKAGE_MULTI` / `UPDATE_PACK
 - зміна версії — повторний metadata;
 - project scope: Install / Update / Remove одразу в цей `.csproj`;
 - solution scope: попап `ProjectSelectionPopup` (усі проєкти для install, лише з пакетом для remove; для update за замовчуванням зняті проєкти вже на цільовій версії) або рядки `ProjectListSection` для per-project update/remove.
+- **↑** на вже встановлений `Microsoft.CodeAnalysis*` з версією новішою за SDK `csc`: спочатку `RoslynCapPopup` (Update anyway / Cancel). Solution — warning, потім picker. Перший Install і версії `≤ csc` — як раніше.
 
 `ProjectListSection`: select версії синхронізується з `installed` / `detail.projectVersions` після PATCH або нового `dotnet list` (`useEffect` на встановлену версію), щоб відкрита панель деталей не лишалась на старих значеннях при частковому успіху.
 

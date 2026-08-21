@@ -14,6 +14,7 @@ import type {
   VulnerabilityFinding,
 } from './types';
 import type { SkillFamily, SkillInstallRow } from './agentSkillInstall';
+import type { RoslynCap } from './roslynSdkCap';
 
 // ─────────────────────────────────────────────
 // Webview → Extension Host
@@ -89,19 +90,24 @@ export type ExtensionMessage =
       bundledVersion: string;
       detected: SkillFamily[];
       installs: SkillInstallRow[];
+      /** `null` when `csc -version` failed — Groups omit CodeAnalysis ids. */
+      roslynCap: RoslynCap | null;
     }
 
   // Packages
   | { type: 'INSTALLED_PACKAGES'; packages: InstalledPackage[] }
   | { type: 'IMPLICIT_PACKAGES'; packages: ImplicitPackage[] }
   | { type: 'INSTALLED_PACKAGES_PATCH'; packages: InstalledPackage[] }
-  | { type: 'PACKAGE_INFO_UPDATE'; packageId: string; latestVersion: string; sourceName: string }
+  | { type: 'PACKAGE_INFO_UPDATE'; packageId: string; latestVersion: string; sourceName: string; versions?: string[] }
   | { type: 'ENRICH_PROGRESS'; done: number; total: number }
   | { type: 'VULNERABILITIES'; findings: VulnerabilityFinding[] }
   | { type: 'BLOCKED_PACKAGES'; packageIds: string[] }
   | { type: 'SEARCH_RESULTS'; query: string; packages: AvailablePackage[] }
   | { type: 'PACKAGE_METADATA'; metadata: PackageMetadata }
   | { type: 'ALL_VERSIONS'; packageId: string; versions: string[] }
+
+  /** Restore / Force refresh re-read of the SDK compiler. */
+  | { type: 'ROSLYN_CAP'; cap: RoslynCap | null }
 
   // Operation results
   | {

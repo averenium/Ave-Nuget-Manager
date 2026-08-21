@@ -15,6 +15,7 @@ import { createConcurrencyGate } from './concurrency';
 import { getConfig } from './config';
 import { registerAgentSkillCommand, installAgentSkill, updateOutdatedAgentSkills, readSkillStatus } from './agentSkillInstall';
 import { TraceController } from './traceController';
+import { RoslynSdkProbe } from './roslynSdkProbe';
 
 let logger: Logger | undefined;
 
@@ -55,6 +56,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   const backend = new CliBackend(runner);
   const solutionParser = new SolutionParser();
+  const roslynProbe = new RoslynSdkProbe(runner);
 
   const viewProviderDisposable = vscode.window.registerWebviewViewProvider(
     NugetManagerViewProvider.viewId,
@@ -94,6 +96,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         ? updateOutdatedAgentSkills(context)
         : installAgentSkill(context),
     },
+    roslynProbe,
   );
   broker.attach();
 

@@ -49,6 +49,14 @@ History після запуску — під прев’ю. Одиночний u
 
 Якщо `dotnet add` падає **тимчасово**, host робить **ще одну** спробу того самого id/версії (пауза 750 мс). Між спробами знімки **не** відкочуються: другий add або дописує PackageReference, або лише restore. Rollback / keep — лише коли обидві спроби провалились. Stop / `cancelled` не ретраїться.
 
+## Microsoft.CodeAnalysis.* і SDK compiler
+
+`Microsoft.CodeAnalysis.CSharp` (і інші `Microsoft.CodeAnalysis*`) прив’язані до Roslyn у **активному SDK** (`dotnet --version`, з `global.json`), не до SemVer major. Джерело правди: `dotnet exec "<sdk>/Roslyn/bincore/csc.dll" -version` → numeric SemVer (`5.6.0`). Probe: `src/roslynSdkProbe.ts`. Кеш на сесію; Restore / Force refresh читають знову.
+
+**Groups** (All / family / Other) не цілять вище цієї версії. `toVersion` = max `versions[]` з enrich з SemVer `≤ csc`. Якщо це вже `resolvedVersion` (або версій немає) — id немає в All. Сім’я `Microsoft.CodeAnalysis.*`: suggested = cap; `VersionSelect` лише `≤ csc`. Host відкидає batch `toVersion` вище cap (або всі CodeAnalysis ids, якщо probe впав). `Microsoft.Extensions.*` / `Newtonsoft.Json` без змін.
+
+**Packages** лишає nuget.org latest у списку й dropdown (на SDK 10.300 видно 5.9.0). **↑** / Install на вже встановлений пакет, коли обрана версія новіша за installed **і** `> csc`: confirm popup (той самий chrome, що `ProjectSelectionPopup`) — Update anyway / Cancel. Перший Install, equal і downgrade — без попапа. Solution: спочатку warning, потім picker. `blockedPackages` перемагає: без update і без попапа.
+
 Ретрай (`src/cliRetry.ts`) дивиться **текст `dotnet add`** (NU-коди й HTTP-фрази у stdout/stderr). Catalog HTTP API v3, коли з’явиться, ретраїть у `HttpBackend`, не тут.
 
 | Сигнал | Чому |

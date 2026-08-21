@@ -18,7 +18,7 @@
 | Коли | Що |
 |---|---|
 | `activate()` (workspaceContains або команда) | `findFiles` + context key. Без restore/list. |
-| Перший `WEBVIEW_READY` | `dotnet --version` (лог, не блокує), auto-detect scope, restore, list, enrich, vuln |
+| Перший `WEBVIEW_READY` | `dotnet --version` (лог, не блокує), probe `csc -version` (cap для Groups), auto-detect scope, restore, list, enrich, vuln |
 | Повторний `WEBVIEW_READY` (переміщення view, editor tab) | Знову init (list/restore). `dotnet --version` не повторюється |
 
 Якщо вкладка NuGet лишилась відкритою з минулої сесії, VS Code відновлює view → `onView` активує розширення — це очікувано.

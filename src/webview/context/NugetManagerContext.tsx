@@ -19,6 +19,7 @@ import type {
 import type { SkillFamily, SkillInstallRow } from '../../agentSkillInstall';
 import type { ExtensionMessage } from '../../messages';
 import { sendMessage, onMessage } from '../vscodeApi';
+import type { RoslynCap } from '../../roslynSdkCap';
 
 /** Returns true only when latestVersion is strictly newer than installed version */
 function hasUpdate(pkg: InstalledPackage): boolean {
@@ -119,6 +120,7 @@ export interface AppState {
   pendingRollback: boolean;
   workspaceActivity: { kind: 'restore' | 'refresh'; phase: 'work' | 'enrich' } | null;
   traceRecording: boolean;
+  roslynCap: RoslynCap | null;
 }
 
 const initialState: AppState = {
@@ -156,6 +158,7 @@ const initialState: AppState = {
   pendingRollback: false,
   workspaceActivity: null,
   traceRecording: false,
+  roslynCap: null,
 };
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -194,6 +197,7 @@ function reducer(state: AppState, action: Action): AppState {
       const installed = state.packages.installed.map((pkg) => ({
         ...pkg,
         latestVersion: undefined,
+        versions: undefined,
       }));
       const unique = new Set(installed.map((pkg) => pkg.id.toLowerCase())).size;
       return {
@@ -307,6 +311,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           detected: msg.detected,
           installs: msg.installs,
         },
+        roslynCap: msg.roslynCap,
       };
 
     case 'INSTALLED_PACKAGES': {
@@ -367,7 +372,12 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       // Update latestVersion + sourceName for all installed packages with this id
       const updated = state.packages.installed.map((pkg) =>
         pkg.id.toLowerCase() === msg.packageId.toLowerCase()
-          ? { ...pkg, latestVersion: msg.latestVersion, sourceName: msg.sourceName }
+          ? {
+            ...pkg,
+            latestVersion: msg.latestVersion,
+            sourceName: msg.sourceName,
+            versions: msg.versions ?? pkg.versions,
+          }
           : pkg,
       );
       // Sort: packages with available update (latestVersion > resolvedVersion) first
@@ -627,6 +637,9 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           : null,
       };
     }
+
+    case 'ROSLYN_CAP':
+      return { ...state, roslynCap: msg.cap };
 
     default:
       return state;

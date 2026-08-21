@@ -15,7 +15,7 @@ webview mount  →  WEBVIEW_READY
                    └─ є scope
                         ├─ activateScope уже зробив init → пропуск (антидубль)
                         └─ інакше _initForScope
-                             → INIT_STATE (scope, sources, configChain, includePrerelease, blockedPackages, traceRecording, bundledVersion, detected, installs)
+                             → INIT_STATE (scope, sources, configChain, includePrerelease, blockedPackages, traceRecording, bundledVersion, detected, installs, roslynCap)
                              → INSTALLED_PACKAGES + IMPLICIT_PACKAGES (`dotnet list --no-restore`)
                              → паралельно `dotnet restore` → ERROR «Restore failed» якщо впав
                              → фоновий enrich → PACKAGE_INFO_UPDATE / ENRICH_PROGRESS
@@ -56,18 +56,19 @@ webview mount  →  WEBVIEW_READY
 
 | `type` | Коли шлеться | Обробка в reducer |
 |---|---|---|
-| `INIT_STATE` | Початок scope | Scope, sources, loading, `blockedPackages`, `traceRecording`, skill status (`detected` може бути `[]`) |
+| `INIT_STATE` | Початок scope | Scope, sources, loading, `blockedPackages`, `traceRecording`, skill status (`detected` може бути `[]`), `roslynCap` (`null` якщо `csc -version` не вдався) |
 | `SKILL_STATUS` | Після Install… / Palette skill | `bundledVersion`, `detected`, `installs` |
 | `INSTALLED_PACKAGES` | Після успішного `dotnet list` | Список + `isLoadingPackages: false`; оновлює `detail.projectVersions` для вибраного пакета |
 | `IMPLICIT_PACKAGES` | Після `dotnet list` | Транзитивні |
 | `INSTALLED_PACKAGES_PATCH` | Після fail add (успішні проєкти завжди; невдалі — лише `keep`) | Точкове оновлення version у списку й деталях |
-| `PACKAGE_INFO_UPDATE` | Enrich по id | `latestVersion` + `sourceName`; сортування: спочатку з оновленням |
+| `PACKAGE_INFO_UPDATE` | Enrich по id | `latestVersion` + `sourceName` + `versions[]`; сортування: спочатку з оновленням |
 | `ENRICH_PROGRESS` | `done/total` | Смужка Force refresh (`Refreshing latest n/m`); зникає коли `done >= total` |
 | `VULNERABILITIES` | Після list (паралельно з enrich) | Findings для ⚠ і деталей; див. [vulnerabilities](vulnerabilities.md) |
 | `BLOCKED_PACKAGES` | Після `SET_PACKAGE_BLOCKED` або зміни Workspace settings | Ids з `blockedPackages` |
 | `SEARCH_RESULTS` | Пошук | Available-список |
 | `PACKAGE_METADATA` | Деталі | Права панель |
 | `ALL_VERSIONS` | Деталі | Dropdown версій |
+| `ROSLYN_CAP` | Restore / Force refresh | Повторний `dotnet --version` + `csc -version`; `cap: null` якщо probe впав |
 | `OPERATION_SUCCESS` | Install/remove ok | Скидає спінери / `globalError`; далі нові списки |
 | `OPERATION_ERROR` | add/remove fail | Банер NU1605 з add; `rollbackApplied` / `canRollback`; списки `[]` не шле |
 | `ROLLBACK_COMPLETE` | Після ручного rollback | Скидає банер і `pendingRollback` |
@@ -92,7 +93,7 @@ webview mount  →  WEBVIEW_READY
 - Hit: одразу `PACKAGE_INFO_UPDATE`.
 - Miss: `enrichPackage` з лімітом `dotnetConcurrency`. Порожній search або throw — **один retry** після решти хвилі. Abort (FORCE_REFRESH) між хвилями доводить `ENRICH_PROGRESS` до `done === total`.
 - Новий scope / `FORCE_REFRESH` / зміна prerelease — abort поточного job (`AbortController`) і `cache.clear()`.
-- `RESTORE_PACKAGES` — abort enrich/vuln, `dotnet restore` + list, кеш latest лишається.
+- `RESTORE_PACKAGES` — abort enrich/vuln, `dotnet restore` + list, кеш latest лишається; заново читає SDK compiler (`ROSLYN_CAP`).
 
 `GET_ALL_VERSIONS` віддає кешований список. Якщо TTL ще живий — CLI не викликається (сім’я Groups не штормить search після enrich). Якщо кеш порожній або протух — fetch і пост, лише коли список змінився.
 

@@ -10,6 +10,7 @@ import {
   suggestedFamilyVersion,
   type FamilyGroup,
 } from '../../batchUpdates';
+import { isCodeAnalysisFamily, versionsAtOrBelow } from '../../roslynSdkCap';
 import { compareSemVer } from '../../semver';
 import { fileNameNoExt } from '../utils/pathUtils';
 import { SplitPane } from './SplitPane';
@@ -148,14 +149,15 @@ export function UpdatesTab() {
   const { state, send } = useNugetManager();
   const { installed, prerelease, enrichProgress, isLoadingPackages, blockedPackages } = state.packages;
   const { jobs, versionsByPackageId = {} } = state.updates;
+  const roslynCap = state.roslynCap;
   const configFiles = state.sources.configChain.map((c) => c.filePath);
   const batchBusy = jobs.some((j) => !j.finishedAt);
   const [menu, setMenu] = useState<{ packageId: string; blocked: boolean; x: number; y: number } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
 
-  const allUpdatable = collectUpdatableItems(installed);
+  const allUpdatable = collectUpdatableItems(installed, roslynCap);
   const updatable = withoutBlocked(allUpdatable, blockedPackages);
-  const families = collectFamilyGroups(installed).map((g) => ({
+  const families = collectFamilyGroups(installed, roslynCap).map((g) => ({
     ...g,
     updateCount: g.members.filter((m) =>
       !isPackageBlocked(m.packageId, blockedPackages)
@@ -163,7 +165,7 @@ export function UpdatesTab() {
       && compareSemVer(m.latestVersion, g.fromVersion) > 0,
     ).length,
   }));
-  const allOther = collectOtherItems(installed, families);
+  const allOther = collectOtherItems(installed, families, roslynCap);
   const otherItems = withoutBlocked(allOther, blockedPackages);
 
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -196,11 +198,15 @@ export function UpdatesTab() {
     const loaded = lists.filter((l) => l.length > 0);
     const suggested = suggestedFamilyVersion(selectedFamily.members, selectedFamily.fromVersion);
     const extras = suggested ? [suggested] : [];
-    if (loaded.length === selectedFamily.members.length) {
-      return sortVersionsDesc([...intersectVersions(loaded), ...extras]);
+    let versions = loaded.length === selectedFamily.members.length
+      ? sortVersionsDesc([...intersectVersions(loaded), ...extras])
+      : sortVersionsDesc([...loaded.flat(), ...extras]);
+    if (isCodeAnalysisFamily(selectedFamily.family)) {
+      if (!roslynCap) return [];
+      versions = sortVersionsDesc(versionsAtOrBelow(versions, roslynCap.compilerVersion));
     }
-    return sortVersionsDesc([...loaded.flat(), ...extras]);
-  }, [selectedFamily, versionsByPackageId]);
+    return versions;
+  }, [selectedFamily, versionsByPackageId, roslynCap]);
 
   useEffect(() => {
     if (!selectedFamily) {

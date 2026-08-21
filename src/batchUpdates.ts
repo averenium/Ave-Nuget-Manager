@@ -1,6 +1,7 @@
 import { compareSemVer } from './semver';
 import { packageFamilyId } from './packageFamily';
 import { sortPackagesByDependencies } from './packageGraph';
+import { groupsTargetVersion, isCodeAnalysisPackage, type RoslynCap } from './roslynSdkCap';
 import type { BatchItemStatus, BatchUpdateItem, InstalledPackage } from './types';
 
 export type { BatchUpdateItem };
@@ -27,9 +28,13 @@ function isNewer(latest: string | undefined, current: string): latest is string 
   return !!latest && compareSemVer(latest, current) > 0;
 }
 
-function latestForId(entries: InstalledPackage[]): string | undefined {
+function latestForId(
+  entries: InstalledPackage[],
+  cap?: RoslynCap | null,
+): string | undefined {
   for (const e of entries) {
-    if (e.latestVersion) return e.latestVersion;
+    const target = groupsTargetVersion(e.id, e.latestVersion, e.versions, cap);
+    if (target) return target;
   }
   return undefined;
 }
@@ -42,11 +47,15 @@ export function preserveInstalledEnrichment(
   incoming: InstalledPackage[],
   previous: InstalledPackage[],
 ): InstalledPackage[] {
-  const byId = new Map<string, { latestVersion?: string; sourceName?: string }>();
+  const byId = new Map<string, { latestVersion?: string; sourceName?: string; versions?: string[] }>();
   for (const pkg of previous) {
     const key = pkg.id.toLowerCase();
-    if (byId.has(key) || (!pkg.latestVersion && !pkg.sourceName)) continue;
-    byId.set(key, { latestVersion: pkg.latestVersion, sourceName: pkg.sourceName });
+    if (byId.has(key) || (!pkg.latestVersion && !pkg.sourceName && !pkg.versions?.length)) continue;
+    byId.set(key, {
+      latestVersion: pkg.latestVersion,
+      sourceName: pkg.sourceName,
+      versions: pkg.versions,
+    });
   }
   return incoming.map((pkg) => {
     const prev = byId.get(pkg.id.toLowerCase());
@@ -55,6 +64,7 @@ export function preserveInstalledEnrichment(
       ...pkg,
       latestVersion: pkg.latestVersion || prev.latestVersion,
       sourceName: pkg.sourceName || prev.sourceName,
+      versions: pkg.versions?.length ? pkg.versions : prev.versions,
     };
   });
 }
@@ -92,9 +102,13 @@ export function intersectVersions(lists: string[][]): string[] {
 /**
  * Every installed package (per id) that has a known latest version newer than
  * at least one project. Target is that latest — already filtered by the
- * current prerelease enrich.
+ * current prerelease enrich. `Microsoft.CodeAnalysis.*` uses max enrich version
+ * ≤ SDK `csc` (omitted when the probe failed).
  */
-export function collectUpdatableItems(installed: InstalledPackage[]): BatchUpdateItem[] {
+export function collectUpdatableItems(
+  installed: InstalledPackage[],
+  cap?: RoslynCap | null,
+): BatchUpdateItem[] {
   const byId = new Map<string, InstalledPackage[]>();
   for (const pkg of installed) {
     const key = pkg.id.toLowerCase();
@@ -105,7 +119,7 @@ export function collectUpdatableItems(installed: InstalledPackage[]): BatchUpdat
 
   const items: Array<BatchUpdateItem & { dependencies?: string[] }> = [];
   for (const entries of byId.values()) {
-    const latest = latestForId(entries);
+    const latest = latestForId(entries, cap);
     if (!latest) continue;
     const projects = entries
       .filter((e) => isNewer(latest, e.resolvedVersion))
@@ -130,9 +144,13 @@ export function collectUpdatableItems(installed: InstalledPackage[]): BatchUpdat
  * Families (A.B.*) with 2+ distinct packages on the same resolved version.
  * Includes every member — the UI picks a shared target version.
  */
-export function collectFamilyGroups(installed: InstalledPackage[]): FamilyGroup[] {
+export function collectFamilyGroups(
+  installed: InstalledPackage[],
+  cap?: RoslynCap | null,
+): FamilyGroup[] {
   const buckets = new Map<string, InstalledPackage[]>();
   for (const pkg of installed) {
+    if (isCodeAnalysisPackage(pkg.id) && cap === null) continue;
     const family = packageFamilyId(pkg.id);
     if (!family) continue;
     const key = `${family.toLowerCase()}\0${pkg.resolvedVersion}`;
@@ -161,7 +179,7 @@ export function collectFamilyGroups(installed: InstalledPackage[]): FamilyGroup[
       packageId: idEntries[0].id,
       fromVersion,
       projects: [...new Set(idEntries.map((e) => e.projectPath))],
-      latestVersion: latestForId(idEntries),
+      latestVersion: latestForId(idEntries, cap),
       dependencies: [...new Set(idEntries.flatMap((e) => e.dependencies ?? []))],
     }));
 
@@ -185,11 +203,12 @@ export function collectFamilyGroups(installed: InstalledPackage[]): FamilyGroup[
 export function collectOtherItems(
   installed: InstalledPackage[],
   families: FamilyGroup[],
+  cap?: RoslynCap | null,
 ): BatchUpdateItem[] {
   const inFamily = new Set(
     families.flatMap((g) => g.members.map((m) => m.packageId.toLowerCase())),
   );
-  return collectUpdatableItems(installed).filter(
+  return collectUpdatableItems(installed, cap).filter(
     (item) => !inFamily.has(item.packageId.toLowerCase()),
   );
 }

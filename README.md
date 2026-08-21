@@ -63,6 +63,7 @@ Gear on the **NuGet** title bar (or Command Palette **NuGet: Open Settings**) op
 ## Known limits (preview)
 
 - CLI backend only (no NuGet HTTP catalog yet): package metadata has no TFM / catalog dependency graph for a *selected* version. **↑** / Groups / the version list use feed latest from `dotnet package search`, not the latest that restores on this project’s TFM. The **Current Dependencies** tree is the restore graph of the *installed* version.
+- **Groups** will not target `Microsoft.CodeAnalysis.*` above the Roslyn version bundled with the active .NET SDK (`csc -version`). **Packages** still lists nuget.org latest and asks before an over-cap upgrade.
 - Scope: `.csproj` / `.fsproj` in the first workspace folder (or the opened solution).
 - `packages.config` projects are skipped (legacy csproj with `PackageReference` is updated in the XML, then `dotnet restore`).
 - Package sources are read-only.

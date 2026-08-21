@@ -10,6 +10,7 @@
 │                           │                             │
 │                           ├── INuGetBackend (CliBackend)│
 │                           │       └── CliRunner         │
+│                           ├── RoslynSdkProbe            │
 │                           ├── SolutionParser            │
 │                           ├── NuGetConfigChainResolver  │
 │                           └── Logger                    │

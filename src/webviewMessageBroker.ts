@@ -44,6 +44,11 @@ import {
   DotnetVulnerableProvider,
 } from './vulnerabilityProvider';
 import { UserScriptVulnerabilityProvider } from './userScriptVulnerabilities';
+import {
+  roslynCapRejectMessage,
+  withoutOverRoslynCap,
+  type RoslynCap,
+} from './roslynSdkCap';
 
 function cliFailure(
   projectPath: string,
@@ -117,6 +122,9 @@ export class WebviewMessageBroker {
   private _batchRunning = false;
   private _batchAbort: AbortController | null = null;
 
+  /** Probe result for Groups. `undefined` = not probed (tests without a probe). */
+  private _roslynCap: RoslynCap | null | undefined = undefined;
+
   constructor(
     private readonly provider: NugetManagerViewProvider,
     private readonly backend: INuGetBackend,
@@ -130,6 +138,7 @@ export class WebviewMessageBroker {
       readStatus: () => Promise<SkillStatus>;
       install: (opts?: { updateExisting?: boolean }) => Promise<void>;
     },
+    private readonly roslyn?: { probe: (cwd: string) => Promise<RoslynCap | null> },
   ) {}
 
   private async _skillFields(): Promise<SkillStatus> {
@@ -144,6 +153,25 @@ export class WebviewMessageBroker {
   async postSkillStatus(): Promise<void> {
     const status = await this._skillFields();
     this.provider.postMessage({ type: 'SKILL_STATUS', ...status });
+  }
+
+  private _probeCwd(): string {
+    const scope = this.provider.getCurrentScope();
+    if (scope?.kind === 'solution') return path.dirname(scope.solutionPath);
+    if (scope?.kind === 'project' && scope.projectPath) return path.dirname(scope.projectPath);
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  }
+
+  private async _refreshRoslynCap(post: boolean): Promise<void> {
+    if (!this.roslyn) return;
+    try {
+      this._roslynCap = await this.roslyn.probe(this._probeCwd());
+    } catch {
+      this._roslynCap = null;
+    }
+    if (post) {
+      this.provider.postMessage({ type: 'ROSLYN_CAP', cap: this._roslynCap ?? null });
+    }
   }
 
   attach(): void {
@@ -367,6 +395,7 @@ export class WebviewMessageBroker {
         this.provider.setScope(autoScope);
         await this._initForScope(autoScope);
       } else {
+        await this._refreshRoslynCap(false);
         this.provider.postMessage({
           type: 'INIT_STATE',
           scope: { kind: 'project', projectPath: '' },
@@ -375,6 +404,7 @@ export class WebviewMessageBroker {
           includePrerelease: getConfig().includePrerelease,
           blockedPackages: getBlockedPackages(),
           traceRecording: this.trace?.isRecording() ?? false,
+          roslynCap: this._roslynCap ?? null,
           ...(await this._skillFields()),
         });
       }
@@ -486,7 +516,10 @@ export class WebviewMessageBroker {
       durationMs: 0,
     });
 
-    const configChain = await this.configResolver.resolve(startDir);
+    const [configChain] = await Promise.all([
+      this.configResolver.resolve(startDir),
+      this._refreshRoslynCap(false),
+    ]);
 
     // Deduplicate sources by name (case-insensitive), nearest config wins
     const seenSourceNames = new Set<string>();
@@ -519,6 +552,7 @@ export class WebviewMessageBroker {
       includePrerelease: getConfig().includePrerelease,
       blockedPackages: getBlockedPackages(),
       traceRecording: this.trace?.isRecording() ?? false,
+      roslynCap: this._roslynCap ?? null,
       ...(await this._skillFields()),
     });
 
@@ -807,13 +841,21 @@ export class WebviewMessageBroker {
       return;
     }
 
-    const queued = withoutBlocked(
+    const unblocked = withoutBlocked(
       items.filter((i) => i.packageId && i.toVersion && i.projects.length > 0),
       getBlockedPackages(),
     );
-    if (queued.length === 0) {
+    if (unblocked.length === 0) {
       void vscode.window.showInformationMessage(
         items.length > 0 ? BLOCKED_UPDATES_TOOLTIP : 'No packages to update',
+      );
+      return;
+    }
+
+    const queued = withoutOverRoslynCap(unblocked, this._roslynCap);
+    if (queued.length === 0) {
+      void vscode.window.showInformationMessage(
+        roslynCapRejectMessage(unblocked, this._roslynCap),
       );
       return;
     }
@@ -1218,12 +1260,15 @@ export class WebviewMessageBroker {
       kind: clearCache ? 'refresh' : 'restore',
     });
     try {
-      await this._handleRefresh({
-        restore: true,
-        listAfterRestore: true,
-        awaitVuln: true,
-        quietEnrich: !clearCache,
-      });
+      await Promise.all([
+        this._refreshRoslynCap(true),
+        this._handleRefresh({
+          restore: true,
+          listAfterRestore: true,
+          awaitVuln: true,
+          quietEnrich: !clearCache,
+        }),
+      ]);
     } finally {
       this.provider.postMessage({ type: 'REFRESH_FINISHED' });
     }
@@ -1296,6 +1341,7 @@ export class WebviewMessageBroker {
         ...pkg,
         latestVersion: pkg.latestVersion || cached.latestVersion,
         sourceName: pkg.sourceName || cached.sourceName,
+        versions: pkg.versions?.length ? pkg.versions : cached.versions,
       };
     });
   }
@@ -1452,6 +1498,7 @@ export class WebviewMessageBroker {
             packageId: id,
             latestVersion: cached.latestVersion,
             sourceName: cached.sourceName,
+            versions: cached.versions,
           });
         }
       } else {
@@ -1534,6 +1581,7 @@ export class WebviewMessageBroker {
         packageId: id,
         latestVersion,
         sourceName,
+        versions,
       });
       return true;
     } catch {

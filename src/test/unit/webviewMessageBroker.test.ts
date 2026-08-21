@@ -147,6 +147,7 @@ describe('WebviewMessageBroker', () => {
     expect(initMsg.scope).toEqual(PROJECT_SCOPE);
     expect(initMsg.sources).toHaveLength(1);
     expect(initMsg.blockedPackages).toEqual([]);
+    expect(initMsg.roslynCap).toBeNull();
   });
 
   it('includes skill fields on INIT_STATE when detection is empty', async () => {
@@ -1971,5 +1972,124 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       'Updates blocked for this workspace.',
     );
+  });
+
+  it('INIT_STATE includes the SDK compiler cap from the probe', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{ name: 'nuget.org', url: 'https://api.nuget.org', enabled: true, configFilePath: '/p/nuget.config' }],
+    }]);
+    const roslyn = {
+      probe: jest.fn().mockResolvedValue({ sdkVersion: '10.0.301', compilerVersion: '5.6.0' }),
+    };
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), resolver, logger, undefined, undefined, undefined, roslyn,
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const initMsg = posted.find((m) => m.type === 'INIT_STATE') as { roslynCap?: unknown };
+    expect(initMsg.roslynCap).toEqual({ sdkVersion: '10.0.301', compilerVersion: '5.6.0' });
+    expect(roslyn.probe).toHaveBeenCalled();
+  });
+
+  it('rejects a Groups batch target above the SDK compiler for Microsoft.CodeAnalysis', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{ name: 'nuget.org', url: 'https://api.nuget.org', enabled: true, configFilePath: '/p/nuget.config' }],
+    }]);
+    const roslyn = {
+      probe: jest.fn().mockResolvedValue({ sdkVersion: '10.0.301', compilerVersion: '5.6.0' }),
+    };
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), resolver, logger, undefined, undefined, undefined, roslyn,
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+    backend.installPackage.mockClear();
+    posted.length = 0;
+
+    simulateMessage({
+      type: 'UPDATE_PACKAGES_BATCH',
+      kind: 'all',
+      includePrerelease: false,
+      items: [
+        { packageId: 'Microsoft.CodeAnalysis.CSharp', fromVersion: '5.6.0', toVersion: '5.9.0', projects: ['/p/App.csproj'] },
+        { packageId: 'Newtonsoft.Json', fromVersion: '13.0.1', toVersion: '13.0.3', projects: ['/p/App.csproj'] },
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(backend.installPackage.mock.calls.map((c: unknown[]) => c[1])).toEqual(['Newtonsoft.Json']);
+    expect(posted.some((m) => m.type === 'BATCH_UPDATE_STARTED')).toBe(true);
+  });
+
+  it('allows INSTALL_PACKAGE of Microsoft.CodeAnalysis above the compiler cap', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{ name: 'nuget.org', url: 'https://api.nuget.org', enabled: true, configFilePath: '/p/nuget.config' }],
+    }]);
+    const roslyn = {
+      probe: jest.fn().mockResolvedValue({ sdkVersion: '10.0.301', compilerVersion: '5.6.0' }),
+    };
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), resolver, logger, undefined, undefined, undefined, roslyn,
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+    backend.installPackage.mockClear();
+
+    simulateMessage({
+      type: 'INSTALL_PACKAGE',
+      projectPath: '/p/App.csproj',
+      packageId: 'Microsoft.CodeAnalysis.CSharp',
+      version: '5.9.0',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.installPackage).toHaveBeenCalledWith(
+      '/p/App.csproj',
+      'Microsoft.CodeAnalysis.CSharp',
+      '5.9.0',
+      undefined,
+    );
+  });
+
+  it('FORCE_REFRESH re-probes the SDK compiler after REFRESH_STARTED', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+    const roslyn = {
+      probe: jest.fn().mockResolvedValue({ sdkVersion: '10.0.301', compilerVersion: '5.6.0' }),
+    };
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), makeConfigResolver(), logger, undefined, undefined, undefined, roslyn,
+    );
+    broker.attach();
+    simulateMessage({ type: 'FORCE_REFRESH' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(posted[0]?.type).toBe('REFRESH_STARTED');
+    expect(posted.some((m) => m.type === 'ROSLYN_CAP')).toBe(true);
+    expect(roslyn.probe).toHaveBeenCalled();
   });
 });

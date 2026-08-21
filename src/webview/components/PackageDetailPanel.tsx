@@ -5,10 +5,12 @@ import { ProjectSelectionPopup } from './ProjectSelectionPopup';
 import { ProjectListSection } from './ProjectListSection';
 import { CurrentDependenciesSection } from './CurrentDependenciesSection';
 import { DetailHeader } from './DetailHeader';
+import { RoslynCapPopup } from './RoslynCapPopup';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
 import { findingsAffectingPackage } from '../../vulnerabilities';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
 import { compareSemVer } from '../../semver';
+import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import type { VulnerabilityFinding } from '../../types';
 
 export function PackageDetailPanel() {
@@ -27,6 +29,7 @@ export function PackageDetailPanel() {
   const findings = [...directFindings, ...viaFindings];
   const [selectedVersion, setSelectedVersion] = useState<string>('');
   const [showPopup, setShowPopup] = useState<'install' | 'remove' | null>(null);
+  const [showRoslynWarning, setShowRoslynWarning] = useState(false);
 
   if (!selectedPackageId) {
     return <div className="detail-panel__empty">Select a package to see details</div>;
@@ -38,14 +41,32 @@ export function PackageDetailPanel() {
   const updatesBlocked = isInstalled && isPackageBlocked(selectedPackageId, state.packages.blockedPackages);
 
   const effectiveVersion = selectedVersion || allVersions[0] || metadata?.version || '';
+  const installedVersions = state.packages.installed
+    .filter((p) => packageIdsEqual(p.id, selectedPackageId))
+    .map((p) => p.resolvedVersion);
+  const installedFrom = installedVersions[0] ?? '';
 
-  const handleInstallUpdate = () => {
+  const proceedInstall = () => {
     if (!effectiveVersion || updatesBlocked) return;
     if (isSolution) {
       setShowPopup('install');
     } else if (scope?.kind === 'project') {
       send({ type: 'INSTALL_PACKAGE', projectPath: scope.projectPath, packageId: selectedPackageId, version: effectiveVersion });
     }
+  };
+
+  const handleInstallUpdate = () => {
+    if (!effectiveVersion || updatesBlocked) return;
+    if (needsRoslynUpgradeConfirm({
+      packageId: selectedPackageId,
+      chosenVersion: effectiveVersion,
+      installedVersions,
+      cap: state.roslynCap,
+    })) {
+      setShowRoslynWarning(true);
+      return;
+    }
+    proceedInstall();
   };
 
   const handleRemove = () => {
@@ -271,6 +292,19 @@ export function PackageDetailPanel() {
       <CurrentDependenciesSection packageId={selectedPackageId} />
 
       {/* ── Popup ── */}
+      {showRoslynWarning && state.roslynCap && (
+        <RoslynCapPopup
+          packageId={selectedPackageId}
+          fromVersion={installedFrom}
+          toVersion={effectiveVersion}
+          cap={state.roslynCap}
+          onConfirm={() => {
+            setShowRoslynWarning(false);
+            proceedInstall();
+          }}
+          onCancel={() => setShowRoslynWarning(false)}
+        />
+      )}
       {showPopup && scope?.kind === 'solution' && (
         <ProjectSelectionPopup
           title={showPopup === 'install'

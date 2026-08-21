@@ -268,7 +268,9 @@ export class CliBackend implements INuGetBackend {
     configFiles: string[],
     prerelease = false,
   ): Promise<{ latestVersion: string; sourceName: string; versions: string[] }> {
-    // One search per configFile, stop at first hit to avoid redundant calls
+    // `dotnet package search` has no TFM: latest is feed-highest, not
+    // "restores on this project". `dotnet list --outdated` would be
+    // framework-aware; this CLI path does not call it.
     for (const cf of configFiles) {
       const args = [
         'package', 'search', packageId,
@@ -343,11 +345,12 @@ export class CliBackend implements INuGetBackend {
 
   // ── restoreProject ─────────────────────────────────────────────────────────
 
-  async restoreProject(projectOrSolutionPath: string): Promise<CliResult> {
+  async restoreProject(projectOrSolutionPath: string, signal?: AbortSignal): Promise<CliResult> {
     return this.runner.run({
       args: ['restore', projectOrSolutionPath],
       cwd: path.dirname(projectOrSolutionPath),
       timeoutMs: MUTATION_TIMEOUT_MS,
+      signal,
     });
   }
 

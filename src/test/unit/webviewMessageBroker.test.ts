@@ -3,6 +3,8 @@ import { Logger } from '../../logger';
 import * as vscode from 'vscode';
 import * as projectFiles from '../../projectFileSnapshot';
 import * as config from '../../config';
+import * as legacyPr from '../../legacyPackageReference';
+import * as projectStyle from '../../projectPackageStyle';
 import type { INuGetBackend } from '../../backend/INuGetBackend';
 import type { NuGetConfigChainResolver } from '../../nugetConfigChainResolver';
 import type { SolutionParser } from '../../solutionParser';
@@ -797,7 +799,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
   it('rolls back project files after a failed add when onFailedUpdate is rollback', async () => {
     const restoreSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
     const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
-      { path: '/sol/A/A.csproj', content: '<Project Version="1.0.0" />' },
+      { path: '/sol/A/A.csproj', content: '<Project Sdk="Microsoft.NET.Sdk"><PackageReference Include="EFCore.NamingConventions" Version="10.0.0" /></Project>' },
     ]);
 
     try {
@@ -902,6 +904,275 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     await new Promise((r) => setTimeout(r, 10));
 
     expect(posted.some((m) => m.type === 'OPERATION_TIMEOUT')).toBe(true);
+  });
+
+  it('edits PackageReference and restores on a legacy csproj instead of dotnet add', async () => {
+    const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+      path: '/p/Legacy.csproj',
+      content: `<Project ToolsVersion="4.0">
+  <ItemGroup>
+    <PackageReference Include="MongoDB.Driver" Version="3.4.0" />
+    <PackageReference Include="MongoDB.Driver" Version="3.11.0" />
+  </ItemGroup>
+</Project>`,
+    }]);
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.restoreProject.mockResolvedValue(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/Legacy.csproj',
+        packageId: 'MongoDB.Driver',
+        version: '3.11.0',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(backend.installPackage).not.toHaveBeenCalled();
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+      const written = writeSpy.mock.calls[0][1];
+      expect(written.match(/MongoDB\.Driver/g)).toHaveLength(1);
+      expect(written).toContain('Version="3.11.0"');
+      expect(backend.restoreProject).toHaveBeenCalledWith('/p/Legacy.csproj', undefined);
+      expect(posted.some((m) => m.type === 'OPERATION_SUCCESS')).toBe(true);
+    } finally {
+      writeSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
+
+  it('rolls back the legacy csproj snapshot when restore after XML edit fails', async () => {
+    const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+    const restoreSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+      path: '/p/Legacy.csproj',
+      content: `<Project ToolsVersion="4.0"><ItemGroup><PackageReference Include="Pkg" Version="1.0.0" /></ItemGroup></Project>`,
+    }]);
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.restoreProject.mockResolvedValue(makeCliResult({
+        exitCode: 1,
+        stdout: 'error: NU1202: Package is not compatible',
+      }));
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/Legacy.csproj',
+        packageId: 'Pkg',
+        version: '2.0.0',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(restoreSpy).toHaveBeenCalled();
+      const err = posted.find((m) => m.type === 'OPERATION_ERROR') as any;
+      expect(err?.rollbackApplied).toBe(true);
+    } finally {
+      writeSpy.mockRestore();
+      restoreSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
+
+  it('rolls back the legacy snapshot when restore times out after XML edit', async () => {
+    const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+    const restoreSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+      path: '/p/Legacy.csproj',
+      content: `<Project ToolsVersion="4.0"><ItemGroup><PackageReference Include="Pkg" Version="1.0.0" /></ItemGroup></Project>`,
+    }]);
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.restoreProject.mockResolvedValue(makeCliResult({ timedOut: true, exitCode: null }));
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/Legacy.csproj',
+        packageId: 'Pkg',
+        version: '2.0.0',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(writeSpy).toHaveBeenCalled();
+      expect(restoreSpy).toHaveBeenCalled();
+      const timeout = posted.find((m) => m.type === 'OPERATION_TIMEOUT') as { command?: string } | undefined;
+      expect(timeout?.command).toContain('dotnet restore');
+    } finally {
+      writeSpy.mockRestore();
+      restoreSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
+
+  it('keeps dotnet add for SDK-style net48', async () => {
+    const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+      path: '/p/App.csproj',
+      content: `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net48</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MongoDB.Driver" Version="3.4.0" />
+  </ItemGroup>
+</Project>`,
+    }]);
+    try {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackage.mockResolvedValue(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/App.csproj',
+        packageId: 'MongoDB.Driver',
+        version: '3.11.0',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(backend.installPackage).toHaveBeenCalledWith(
+        '/p/App.csproj', 'MongoDB.Driver', '3.11.0', undefined,
+      );
+      expect(writeSpy).not.toHaveBeenCalled();
+    } finally {
+      writeSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
+
+  it('skips packages.config projects without writing', async () => {
+    const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+    const cfgSpy = jest.spyOn(projectStyle, 'packagesConfigExists').mockResolvedValue(true);
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+      path: '/p/Old.csproj',
+      content: '<Project ToolsVersion="4.0"><PropertyGroup><TargetFrameworkVersion>v4.8</TargetFrameworkVersion></PropertyGroup></Project>',
+    }]);
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/Old.csproj',
+        packageId: 'Newtonsoft.Json',
+        version: '13.0.3',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(backend.installPackage).not.toHaveBeenCalled();
+      expect(backend.restoreProject).not.toHaveBeenCalled();
+      expect(writeSpy).not.toHaveBeenCalled();
+      const err = posted.find((m) => m.type === 'OPERATION_ERROR') as any;
+      expect(err?.failures[0].stderr).toContain('packages.config');
+    } finally {
+      writeSpy.mockRestore();
+      cfgSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
+
+  it('does not fail a Groups item when only a packages.config project is skipped', async () => {
+    const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+    const cfgSpy = jest.spyOn(projectStyle, 'packagesConfigExists').mockImplementation(async (projectPath) =>
+      projectPath.includes('/A/'),
+    );
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockImplementation(async (projectPath) => [{
+      path: projectPath,
+      content: projectPath.includes('/A/')
+        ? '<Project ToolsVersion="4.0"><PropertyGroup><TargetFrameworkVersion>v4.8</TargetFrameworkVersion></PropertyGroup></Project>'
+        : '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Pkg" Version="1.0.0" /></ItemGroup></Project>',
+    }]);
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+      const backend = makeBackend();
+      backend.installPackage.mockResolvedValue(makeCliResult());
+      backend.listAllForSolution.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: [{
+          packageId: 'Pkg',
+          fromVersion: '1.0.0',
+          toVersion: '2.0.0',
+          projects: ['/sol/A/A.csproj', '/sol/B/B.csproj'],
+        }],
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(writeSpy).not.toHaveBeenCalled();
+      expect(backend.installPackage).toHaveBeenCalledTimes(1);
+      expect(backend.installPackage).toHaveBeenCalledWith('/sol/B/B.csproj', 'Pkg', '2.0.0', expect.anything());
+      const finals = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status !== 'running' && (m as any).status !== 'pending') as any[];
+      expect(finals.map((m) => m.status)).toEqual(['ok']);
+      expect(finals[0].succeededProjects).toEqual(['/sol/B/B.csproj']);
+      expect(posted.some((m) => m.type === 'OPERATION_ERROR')).toBe(false);
+    } finally {
+      writeSpy.mockRestore();
+      cfgSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
+
+  it('uses XML edit on legacy and dotnet add on SDK in a mixed solution', async () => {
+    const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockImplementation(async (projectPath) => [{
+      path: projectPath,
+      content: projectPath.includes('/A/')
+        ? `<Project ToolsVersion="4.0"><ItemGroup><PackageReference Include="Pkg" Version="1.0.0" /></ItemGroup></Project>`
+        : `<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Pkg" Version="1.0.0" /></ItemGroup></Project>`,
+    }]);
+    try {
+      const { stub, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+      const backend = makeBackend();
+      backend.installPackage.mockResolvedValue(makeCliResult());
+      backend.restoreProject.mockResolvedValue(makeCliResult());
+      backend.listAllForSolution.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE_MULTI',
+        projects: ['/sol/A/A.csproj', '/sol/B/B.csproj'],
+        packageId: 'Pkg',
+        version: '2.0.0',
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+      expect(writeSpy.mock.calls[0][0]).toBe('/sol/A/A.csproj');
+      expect(backend.restoreProject).toHaveBeenCalledWith('/sol/A/A.csproj', undefined);
+      expect(backend.installPackage).toHaveBeenCalledTimes(1);
+      expect(backend.installPackage).toHaveBeenCalledWith('/sol/B/B.csproj', 'Pkg', '2.0.0', undefined);
+    } finally {
+      writeSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
   });
 
   // ── INSTALL_PACKAGE_MULTI (partial success) ────────────────────────────────
@@ -1306,7 +1577,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
   it('retries NU1301 once, then rolls back only after the second failure', async () => {
     const restoreSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
     const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
-      { path: '/p/App.csproj', content: '<Project />' },
+      { path: '/p/App.csproj', content: '<Project Sdk="Microsoft.NET.Sdk" />' },
     ]);
     try {
       const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);

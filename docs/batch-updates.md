@@ -69,7 +69,9 @@ History після запуску — під прев’ю. Одиночний u
 
 ### Changelogs і breaking changes (заплановано)
 
-З CLI (`dotnet package search` / `dotnet add`) **немає** release notes і diff між версіями. У вкладці заглушки немає.
+Цільова версія All / family / Other — feed latest з enrich (`package search`), не latest під TFM проєкту. Ліміт CLI: [backend](backend.md#межа-cli).
+
+З CLI також **немає** release notes і diff між версіями. У вкладці заглушки немає.
 
 Коли з’явиться HttpBackend (NuGet HTTP API v3):
 

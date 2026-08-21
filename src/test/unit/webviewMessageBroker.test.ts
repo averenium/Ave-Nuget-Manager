@@ -16,6 +16,14 @@ import type {
   CliResult,
 } from '../../types';
 
+jest.mock('../../cliRetry', () => {
+  const actual = jest.requireActual('../../cliRetry') as typeof import('../../cliRetry');
+  return {
+    ...actual,
+    delayInstallRetry: jest.fn().mockResolvedValue(undefined),
+  };
+});
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeCliResult(overrides?: Partial<CliResult>): CliResult {
@@ -1255,6 +1263,157 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     expect(finals[0].error).toContain('NU1605');
     expect(posted.some((m) => m.type === 'OPERATION_ERROR')).toBe(false);
     expect(backend.installPackage).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a timed-out group add once and succeeds without rollback', async () => {
+    const restoreSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([]);
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackage
+        .mockResolvedValueOnce(makeCliResult({ timedOut: true, exitCode: null, stderr: 'Operation timed out' }))
+        .mockResolvedValueOnce(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: [{
+          packageId: 'MongoDB.Driver',
+          fromVersion: '2.0.0',
+          toVersion: '3.0.0',
+          projects: ['/p/App.csproj'],
+        }],
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.installPackage).toHaveBeenCalledTimes(2);
+      expect(restoreSpy).not.toHaveBeenCalled();
+      expect(backend.restoreProject).not.toHaveBeenCalled();
+      const finals = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status !== 'running' && (m as any).status !== 'pending') as any[];
+      expect(finals.map((m) => [m.packageId, m.status])).toEqual([['MongoDB.Driver', 'ok']]);
+    } finally {
+      restoreSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
+
+  it('retries NU1301 once, then rolls back only after the second failure', async () => {
+    const restoreSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+      { path: '/p/App.csproj', content: '<Project />' },
+    ]);
+    try {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackage.mockResolvedValue(makeCliResult({
+        exitCode: 1,
+        stderr: 'error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json',
+      }));
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: [{
+          packageId: 'A',
+          fromVersion: '1.0.0',
+          toVersion: '2.0.0',
+          projects: ['/p/App.csproj'],
+        }],
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.installPackage).toHaveBeenCalledTimes(2);
+      expect(restoreSpy).toHaveBeenCalledTimes(1);
+      const finals = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status === 'error') as any[];
+      expect(finals).toHaveLength(1);
+      expect(finals[0].error).toContain('NU1301');
+    } finally {
+      restoreSpy.mockRestore();
+      snapSpy.mockRestore();
+    }
+  });
+
+  it('does not retry NU1605 during a group update', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.installPackage.mockResolvedValue(makeCliResult({
+      exitCode: 1,
+      stderr: 'error: NU1605 fail A',
+    }));
+    backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'UPDATE_PACKAGES_BATCH',
+      kind: 'all',
+      includePrerelease: false,
+      items: [{
+        packageId: 'A',
+        fromVersion: '1.0.0',
+        toVersion: '2.0.0',
+        projects: ['/p/App.csproj'],
+      }],
+    });
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(backend.installPackage).toHaveBeenCalledTimes(1);
+    expect(posted.some((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status === 'error')).toBe(true);
+  });
+
+  it('does not retry a cancelled group add', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+    const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([]);
+
+    backend.installPackage.mockImplementation((_project, _packageId, _version, signal) => {
+      return new Promise((resolve) => {
+        const finishCancelled = () => resolve(makeCliResult({
+          exitCode: null,
+          stderr: 'Cancelled',
+          cancelled: true,
+        }));
+        if (signal?.aborted) {
+          finishCancelled();
+          return;
+        }
+        signal?.addEventListener('abort', finishCancelled);
+      });
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'UPDATE_PACKAGES_BATCH',
+      kind: 'all',
+      includePrerelease: false,
+      items: [{
+        packageId: 'A',
+        fromVersion: '1.0.0',
+        toVersion: '2.0.0',
+        projects: ['/p/App.csproj'],
+      }],
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    simulateMessage({ type: 'CANCEL_BATCH_UPDATE' });
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(backend.installPackage).toHaveBeenCalledTimes(1);
+    snapSpy.mockRestore();
   });
 
   it('CANCEL_BATCH_UPDATE aborts the in-flight add and skips remaining packages', async () => {

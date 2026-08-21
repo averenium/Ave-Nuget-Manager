@@ -12,6 +12,7 @@ import type { WebviewMessage } from './messages';
 import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
 import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus } from './types';
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
+import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS, isRetryableCliFailure } from './cliRetry';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from './blockedPackages';
 import { pathsEqual } from './pathCompare';
 import { compareSemVer } from './semver';
@@ -644,6 +645,7 @@ export class WebviewMessageBroker {
     projects: string[],
     onProjectDone?: (projectPath: string, ok: boolean) => void,
     signal?: AbortSignal,
+    retryTransient = false,
   ): Promise<InstallAttempt[]> {
     const prepared = await Promise.all(
       projects.map(async (projectPath) => {
@@ -666,7 +668,7 @@ export class WebviewMessageBroker {
           onProjectDone?.(p.projectPath, false);
           return { ...p, result };
         }
-        const { result, skipped, mutated, skippedUnsupported } = await this._addOrUpdatePackage(
+        const { result: first, skipped, mutated, skippedUnsupported } = await this._addOrUpdatePackage(
           p.projectPath,
           p.snapshots,
           p.previousVersion,
@@ -674,12 +676,35 @@ export class WebviewMessageBroker {
           version,
           signal,
         );
+        let result = first;
         this.trace?.recordBroker('add', {
           project: path.basename(p.projectPath),
           packageId,
           version,
           ok: isCliOperationSuccess(result),
         });
+        for (
+          let extra = 0;
+          extra < INSTALL_RETRY_EXTRA_ATTEMPTS
+            && retryTransient
+            && !skipped
+            && !skippedUnsupported
+            && isRetryableCliFailure(result)
+            && !signal?.aborted;
+          extra++
+        ) {
+          await delayInstallRetry(signal);
+          if (signal?.aborted) break;
+          result = mutated
+            ? await this.backend.restoreProject(p.projectPath, signal)
+            : await this.backend.installPackage(p.projectPath, packageId, version, signal);
+          this.trace?.recordBroker('add-retry', {
+            project: path.basename(p.projectPath),
+            packageId,
+            version,
+            ok: isCliOperationSuccess(result),
+          });
+        }
         onProjectDone?.(p.projectPath, isCliOperationSuccess(result));
         return { ...p, result, skipped, mutated, skippedUnsupported };
       }),
@@ -843,6 +868,7 @@ export class WebviewMessageBroker {
             );
           },
           abort.signal,
+          true,
         );
         const outcome = await this._finishInstallAttempts(item.packageId, item.toVersion, attempts, {
           notify: false,

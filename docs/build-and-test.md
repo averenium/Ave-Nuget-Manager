@@ -36,12 +36,13 @@
 | `concurrency.test.ts` | `runWithConcurrency` / `createConcurrencyGate` |
 | `commandBuilder.test.ts` | Аргументи CLI, які будує `CliBackend` |
 | `commandRegistrar.test.ts` | Резолв URI / папки / QuickPick; Open Settings |
+| `cliRetry.test.ts` | Allowlist retry для group `dotnet add` (timeout, NU1301, HTTP у CLI vs NU1605) |
 | `agentSkillInstall.test.ts` | Detect/sort skill targets, atomic copy, frontmatter version |
 | `configChainResolver.test.ts` | Ланцюжок і парсинг XML |
 | `logger.test.ts` | Записи, subscribe, стійкість до помилок, `clear()` |
 | `traceSanitize.test.ts` / `traceSession.test.ts` / `tracePack.test.ts` / `zipStore.test.ts` | Знеособлення шляхів, сесія jsonl, snapshot проєктів, zip |
 | `solutionParser.test.ts` | `.sln` / `.slnx` |
-| `webviewMessageBroker.test.ts` | INIT, search, install/remove, NU1605, rollback/keep, patch |
+| `webviewMessageBroker.test.ts` | INIT, search, install/remove, NU1605, rollback/keep, patch, group retry |
 | `dotnetOutput.test.ts` | Summary NU1605 vs list JSON `problems` |
 | `projectFileSnapshot.test.ts` | Знімок / restore csproj, читання Version |
 | `legacyPackageReference.test.ts` | SDK vs legacy vs packages.config; зліплення дублікатів PackageReference |

@@ -15,6 +15,8 @@
 
 Changelogs і breaking changes після batch-оновлення теж потребують catalog API — план у [batch-updates](batch-updates.md).
 
+Retry 429/503 на catalog GET — у `HttpBackend`, не в `cliRetry` (той лише парсить вивід `dotnet add`).
+
 ## Граф транзитивних залежностей
 
 `ImplicitPackage.dependsOn` і `InstalledPackage.implicitVersions` є в типах. `CliBackend` їх не ставить: `dotnet list` не віддає parent. `InstalledList` групує implicit «за parent», тому підказка `(highestImplicit)` у `PackageRow` ніколи не з’являється.

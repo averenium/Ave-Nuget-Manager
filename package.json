@@ -49,6 +49,7 @@
     "onCommand:averenium.nugetManager.open",
     "onCommand:averenium.nugetManager.openInEditor",
     "onCommand:averenium.nugetManager.openInNewWindow",
+    "onCommand:averenium.nugetManager.openSettings",
     "onCommand:averenium.nugetManager.installAgentSkill",
     "onCommand:averenium.nugetManager.startTrace",
     "onCommand:averenium.nugetManager.stopTrace"
@@ -126,6 +127,12 @@
         "category": "NuGet"
       },
       {
+        "command": "averenium.nugetManager.openSettings",
+        "title": "Open Settings",
+        "icon": "$(gear)",
+        "category": "NuGet"
+      },
+      {
         "command": "averenium.nugetManager.installAgentSkill",
         "title": "SKILL -> Install Dependency Breaking Changes Review",
         "icon": "$(mortar-board)",
@@ -165,6 +172,10 @@
           "when": "averenium.nugetManager.hasDotnetWorkspace || averenium.nugetManager.editorOpen"
         },
         {
+          "command": "averenium.nugetManager.openSettings",
+          "title": "NuGet: Open Settings"
+        },
+        {
           "command": "averenium.nugetManager.installAgentSkill",
           "title": "NuGet: SKILL -> Install Dependency Breaking Changes Review"
         },
@@ -181,14 +192,24 @@
         {
           "command": "averenium.nugetManager.openInNewWindow",
           "when": "view == averenium.nugetManagerView",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "averenium.nugetManager.openSettings",
+          "when": "view == averenium.nugetManagerView",
+          "group": "navigation@2"
         }
       ],
       "editor/title": [
         {
           "command": "averenium.nugetManager.openInNewWindow",
           "when": "activeWebviewPanelId == averenium.nugetManager.editor",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "averenium.nugetManager.openSettings",
+          "when": "activeWebviewPanelId == averenium.nugetManager.editor",
+          "group": "navigation@2"
         }
       ]
     }

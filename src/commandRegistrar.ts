@@ -31,6 +31,12 @@ export class CommandRegistrar {
       vscode.commands.registerCommand('averenium.nugetManager.openInNewWindow', async () => {
         await this.viewProvider.openInEditor(true);
       }),
+      vscode.commands.registerCommand('averenium.nugetManager.openSettings', () => {
+        void vscode.commands.executeCommand(
+          'workbench.action.openSettings',
+          '@ext:averenium.averenium-nuget-manager',
+        );
+      }),
     );
   }
 

@@ -146,3 +146,24 @@ describe('CommandRegistrar.resolveTargetFromUri', () => {
     expect(result).toBeUndefined();
   });
 });
+
+describe('CommandRegistrar.openSettings', () => {
+  beforeEach(() => {
+    vscode.commands.registerCommand.mockClear();
+    vscode.commands.executeCommand.mockClear();
+  });
+
+  it('opens Settings UI filtered to this extension', () => {
+    const registrar = makeRegistrar();
+    registrar.register({ subscriptions: [] } as any);
+    const call = vscode.commands.registerCommand.mock.calls.find(
+      ([id]: [string]) => id === 'averenium.nugetManager.openSettings',
+    );
+    expect(call).toBeDefined();
+    call[1]();
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'workbench.action.openSettings',
+      '@ext:averenium.averenium-nuget-manager',
+    );
+  });
+});

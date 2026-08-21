@@ -37,7 +37,8 @@
 | Broker | `src/webviewMessageBroker.ts` | Маршрутизація, init, refresh, enrich-кеш, install/remove/rollback, batch update, vulns |
 | Vulnerabilities | `src/vulnerabilities.ts`, `src/vulnerabilityProvider.ts` | `dotnet list --vulnerable` + user script |
 | Batch | `src/batchUpdates.ts`, `src/packageFamily.ts` | Update all і родини `Microsoft.**.**` |
-| Snapshot | `src/projectFileSnapshot.ts` | Знімок csproj / Directory.Packages.props перед `dotnet add` |
+| Snapshot | `src/projectFileSnapshot.ts` | Знімок csproj / Directory.Packages.props перед зміною PackageReference |
+| Legacy csproj | `src/projectPackageStyle.ts`, `src/legacyPackageReference.ts` | Без `Sdk=`: XML upsert; `packages.config` skip лише без PackageReference |
 | CLI output | `src/dotnetOutput.ts` | Успіх add, summary NU1605, parse `problems` з list |
 | Backend | `src/backend/` | Усі NuGet-операції через абстракцію `INuGetBackend` |
 | CLI | `src/cliRunner.ts` | `spawn('dotnet')`, timeout, логування |

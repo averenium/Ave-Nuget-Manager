@@ -72,6 +72,18 @@ Snapshot робиться **до** будь-якого add, щоб спільн�
 
 Файли не чіпаються. `INSTALLED_PACKAGES_PATCH` для успішних **і** невдалих (у csproj уже нова версія). Кнопка **Rollback** у банері шле `ROLLBACK_FAILED_UPDATE` → ті самі знімки + restore.
 
+## Legacy csproj (без `Sdk=`)
+
+Баг не в `net48`, а в старому csproj (`ToolsVersion`, немає `Sdk=`). Там `dotnet add` **дописує** новий `PackageReference` замість оновити існуючий.
+
+| Стиль | Як міняємо версію |
+|---|---|
+| SDK (`<Project Sdk=…>`, зокрема SDK `net48`) | як раніше: snapshot → `dotnet add` → rollback/keep |
+| Legacy + PackageReference | snapshot → один `PackageReference` у XML (зайві вузли прибираються) → `dotnet restore` цього проєкту |
+| `packages.config` | skip, якщо в csproj **немає** PackageReference. Якщо вузли вже є (неповна міграція) — XML-шлях. У Packages — банер; у Groups — не error |
+
+Перший update також зліплює вже намножені дублікати. Rollback як і раніше відновлює знімок — зокрема після timeout `dotnet restore` (файл уже записаний до restore).
+
 ## Частковий успіх (2 проєкти, 1 впав)
 
 | Місце | Очікування |
@@ -105,6 +117,7 @@ Reducer на `INSTALLED_PACKAGES` / `INSTALLED_PACKAGES_PATCH` оновлює `d
 | Файл | Роль |
 |---|---|
 | `src/projectFileSnapshot.ts` | Знімок / restore XML, читання Version з PackageReference / PackageVersion |
+| `src/projectPackageStyle.ts` / `src/legacyPackageReference.ts` | SDK vs legacy vs packages.config; XML upsert/remove |
 | `src/dotnetOutput.ts` | Успіх add, summary NU1605, `problems[]` з list JSON |
 | `src/backend/cliBackend.ts` | `listAll*` повертає `error?`; `restoreProject` |
 | `src/webviewMessageBroker.ts` | Оркестрація snapshot → add → rollback/patch → refresh |

@@ -86,7 +86,7 @@ webview mount  →  WEBVIEW_READY
 
 ## Кеш enrich
 
-У broker: `Map<packageId, { latestVersion, sourceName, versions, fetchedAt }>`.
+У broker: `Map<packageId, { latestVersion, sourceName, versions, fetchedAt }>`. Ключ без TFM / проєкту — ліміт `package search`, див. [backend](backend.md#межа-cli).
 
 - TTL: `getConfig().cacheTtlMs` = 5 хвилин (не в settings).
 - Hit: одразу `PACKAGE_INFO_UPDATE`.

@@ -14,8 +14,8 @@
 | `getAllVersions` | `--exact-match`, merge, SemVer desc |
 | `getMetadata` | Обмежені поля з `dotnet package search` |
 | `enrichPackage` | Latest version + source + повний список версій |
-| `installPackage` | `dotnet add` |
-| `removePackage` | `dotnet remove` |
+| `installPackage` | `dotnet add` на SDK-style; broker на legacy csproj пише XML і кличе `restoreProject` |
+| `removePackage` | `dotnet remove` на SDK-style; broker на legacy стирає вузли й кличе `restoreProject` |
 | `restoreProject` | `dotnet restore` після rollback; також при відкритті scope (паралельно з list) |
 | `listVulnerable` | `dotnet list … --vulnerable --include-transitive` |
 
@@ -66,7 +66,7 @@ Timeout: list / search / `--version` / `--vulnerable` — **30 000 ms**. `add` /
 
 Після парсингу `stampListedDependencies` пише в `dependencies` id з restore-графа (`obj/project.assets.json`), досяжні серед installed + implicit — ⚠ на батьках implicit vulns і блок **Current Dependencies** у деталях. Див. [vulnerabilities](vulnerabilities.md), [webview](webview.md).
 
-Поля `sourceName` і `latestVersion` у list **немає** — їх додає enrich.
+Поля `sourceName` і `latestVersion` у list **немає** — їх додає enrich (`package search`, не `list --outdated`). Search не знає TFM проєкту: latest — найвища версія на feed, одна на package id. ↑ / Groups / селектор можуть цілити в версію, яка на `net48` не restore-иться, тоді як на `net8.0` у тій самій solution — так. `dotnet list --outdated` уже фільтрує під TFM, CLI-шлях його не використовує.
 
 `dotnet package search --format json` підтримує кілька форматів SDK:
 
@@ -93,7 +93,9 @@ Timeout: list / search / `--version` / `--vulnerable` — **30 000 ms**. `add` /
 
 Ліміт: `averenium.nugetManager.dotnetConcurrency` (1–16, default 4) — max parallel `dotnet` processes.
 
-## Metadata: межа CLI
+## Межа CLI
 
 `getMetadata` заповнює id, version, authors, description, tags, projectUrl, licenseUrl.  
-`dependencies` і `targetFrameworks` завжди `[]` — коментар у коді відкладає це на майбутній HttpBackend.
+`dependencies` і `targetFrameworks` завжди `[]`.
+
+`dotnet package search` не приймає TFM і не віддає граф сумісності. Enrich / `getAllVersions` тому не можуть відповісти «latest, який встає в цей `.csproj`». Це ліміт CLI, не баг запису PackageReference. Catalog API (майбутній HttpBackend) або `dotnet list --outdated` по проєкту — єдині шляхи відфільтрувати версії під `TargetFramework` / `TargetFrameworkVersion`.

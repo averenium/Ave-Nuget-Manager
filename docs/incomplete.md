@@ -8,7 +8,8 @@
 
 - `PackageMetadata.dependencies` завжди `[]`;
 - `targetFrameworks` завжди `[]`;
-- `published` не заповнюється.
+- `published` не заповнюється;
+- **latest / список версій не під TFM проєкту** — `dotnet package search` віддає feed latest, кеш enrich на package id. Mixed `net48` + `net8.0`: один ↑ на всі рядки. `dotnet list --outdated` TFM знає, CLI backend його не кличе.
 
 Розмітка для catalog Dependencies / TFM / published у `PackageDetailPanel` уже є. Restore-граф поточної версії показується окремо як **Current Dependencies**.
 
@@ -43,6 +44,7 @@ Changelogs і breaking changes після batch-оновлення теж пот
 - Немає рекурсивного пошуку проєктів у підпапках.
 - Лише `workspaceFolders[0]`.
 - Sources — read-only (немає CRUD джерел).
+- `packages.config` (nuget.exe) не оновлюється; legacy csproj з PackageReference — так.
 
 ## Інфра
 

@@ -81,6 +81,7 @@ export interface INuGetBackend {
    * Fetch latest version and source name for a single package in one CLI call.
    * CLI: `dotnet package search <id> --exact-match --prerelease --configfile <path> --format json`
    * Called once per configFile; results are merged across the chain.
+   * Latest is feed-highest (search has no TFM), not "compatible with this project".
    * Returns { latestVersion, sourceName } — used for enriching installed packages.
    */
   enrichPackage(
@@ -110,7 +111,7 @@ export interface INuGetBackend {
    * Restore a project or solution so assets match the project files.
    * CLI: `dotnet restore <projectOrSolutionPath>`
    */
-  restoreProject(projectPath: string): Promise<CliResult>;
+  restoreProject(projectPath: string, signal?: AbortSignal): Promise<CliResult>;
 
   /**
    * Known vulnerabilities for top-level and transitive packages.

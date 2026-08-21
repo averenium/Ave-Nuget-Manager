@@ -28,6 +28,17 @@ import {
   type FileSnapshot,
 } from './projectFileSnapshot';
 import {
+  detectProjectPackageStyle,
+  packagesConfigExists,
+  PACKAGES_CONFIG_SKIP,
+} from './projectPackageStyle';
+import {
+  countPackageReferences,
+  removePackageReferences,
+  upsertPackageReference,
+  writeProjectXml,
+} from './legacyPackageReference';
+import {
   collectVulnerabilityFindings,
   DotnetVulnerableProvider,
 } from './vulnerabilityProvider';
@@ -57,6 +68,10 @@ interface InstallAttempt {
   previousVersion: string | null;
   result: CliResult;
   skipped?: boolean;
+  /** False when the project file was not changed (e.g. packages.config skip). */
+  mutated?: boolean;
+  /** packages.config skip: not a failed update in Groups. */
+  skippedUnsupported?: boolean;
 }
 
 function skippedInstallResult(): CliResult {
@@ -651,11 +666,14 @@ export class WebviewMessageBroker {
           onProjectDone?.(p.projectPath, false);
           return { ...p, result };
         }
-        if (p.previousVersion && compareSemVer(p.previousVersion, version) === 0) {
-          onProjectDone?.(p.projectPath, true);
-          return { ...p, result: skippedInstallResult(), skipped: true };
-        }
-        const result = await this.backend.installPackage(p.projectPath, packageId, version, signal);
+        const { result, skipped, mutated, skippedUnsupported } = await this._addOrUpdatePackage(
+          p.projectPath,
+          p.snapshots,
+          p.previousVersion,
+          packageId,
+          version,
+          signal,
+        );
         this.trace?.recordBroker('add', {
           project: path.basename(p.projectPath),
           packageId,
@@ -663,10 +681,91 @@ export class WebviewMessageBroker {
           ok: isCliOperationSuccess(result),
         });
         onProjectDone?.(p.projectPath, isCliOperationSuccess(result));
-        return { ...p, result };
+        return { ...p, result, skipped, mutated, skippedUnsupported };
       }),
       getConfig().dotnetConcurrency,
     );
+  }
+
+  private async _addOrUpdatePackage(
+    projectPath: string,
+    snapshots: FileSnapshot[],
+    previousVersion: string | null,
+    packageId: string,
+    version: string,
+    signal?: AbortSignal,
+  ): Promise<{ result: CliResult; skipped?: boolean; mutated?: boolean; skippedUnsupported?: boolean }> {
+    const xml = snapshots.find((s) => pathsEqual(s.path, projectPath))?.content ?? '';
+    const style = detectProjectPackageStyle(xml, await packagesConfigExists(projectPath));
+
+    if (style === 'packages-config') {
+      return {
+        result: {
+          exitCode: 1, stdout: '', stderr: PACKAGES_CONFIG_SKIP, timedOut: false,
+        },
+        mutated: false,
+        skippedUnsupported: true,
+      };
+    }
+
+    const sameVersion = previousVersion !== null && compareSemVer(previousVersion, version) === 0;
+    const duplicateLegacy = style === 'legacy-packageref'
+      && countPackageReferences(xml, packageId) > 1;
+    if (sameVersion && !duplicateLegacy) {
+      return { result: skippedInstallResult(), skipped: true };
+    }
+
+    if (style === 'legacy-packageref') {
+      const next = upsertPackageReference(xml, packageId, version);
+      await writeProjectXml(projectPath, next);
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: 'edit PackageReference',
+        args: [projectPath, packageId, version],
+        stdout: `Set ${packageId} to ${version} (legacy csproj)`,
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      this.trace?.recordBroker('legacy-packageref', { project: path.basename(projectPath), packageId, version });
+      return {
+        result: await this.backend.restoreProject(projectPath, signal),
+        mutated: true,
+      };
+    }
+
+    return { result: await this.backend.installPackage(projectPath, packageId, version, signal) };
+  }
+
+  private async _removeFromProject(
+    projectPath: string,
+    packageId: string,
+  ): Promise<CliResult> {
+    const snapshots = await snapshotProjectFiles(projectPath);
+    const xml = snapshots.find((s) => pathsEqual(s.path, projectPath))?.content ?? '';
+    const style = detectProjectPackageStyle(xml, await packagesConfigExists(projectPath));
+
+    if (style === 'packages-config') {
+      return { exitCode: 1, stdout: '', stderr: PACKAGES_CONFIG_SKIP, timedOut: false };
+    }
+
+    if (style === 'legacy-packageref') {
+      await writeProjectXml(projectPath, removePackageReferences(xml, packageId));
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: 'edit PackageReference',
+        args: [projectPath, packageId],
+        stdout: `Removed ${packageId} (legacy csproj)`,
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      return this.backend.restoreProject(projectPath);
+    }
+
+    return this.backend.removePackage(projectPath, packageId);
   }
 
   private async _handleUpdateBatch(
@@ -824,23 +923,66 @@ export class WebviewMessageBroker {
 
     const timedOut = attempts.find((a) => a.result.timedOut);
     if (timedOut && attempts.length === 1) {
+      const mutatedTimedOut = attempts.filter((a) => a.result.timedOut && a.mutated === true);
+      let keepAttempts: InstallAttempt[] = [];
+      if (mutatedTimedOut.length > 0) {
+        const mode = getConfig().onFailedUpdate;
+        if (mode === 'rollback') {
+          await this._restoreAttempts(mutatedTimedOut);
+          if (notify) this._pendingRollback = null;
+        } else {
+          keepAttempts = mutatedTimedOut;
+          if (notify) this._pendingRollback = { packageId, attempts: mutatedTimedOut };
+          this._patchInstalledVersions(packageId, version, mutatedTimedOut);
+        }
+      }
       if (notify) {
         this.provider.postMessage({
           type: 'OPERATION_TIMEOUT',
-          command: `dotnet add ${timedOut.projectPath} package ${packageId} --version ${version}`,
+          command: mutatedTimedOut.length > 0
+            ? `dotnet restore ${timedOut.projectPath}`
+            : `dotnet add ${timedOut.projectPath} package ${packageId} --version ${version}`,
         });
       }
-      return { status: 'timeout', succeeded: [], error: 'Operation timed out', keepAttempts: [] };
+      if (refresh && mutatedTimedOut.length > 0) {
+        await this._refreshAfterMutation({ notifyListError: false });
+      }
+      return { status: 'timeout', succeeded: [], error: 'Operation timed out', keepAttempts };
     }
 
     const succeededAttempts = attempts.filter((a) => isCliOperationSuccess(a.result));
     const mutatedAttempts = succeededAttempts.filter((a) => !a.skipped);
-    const failed = attempts.filter((a) => !isCliOperationSuccess(a.result));
+    const failed = attempts.filter((a) =>
+      !isCliOperationSuccess(a.result) && !a.skippedUnsupported,
+    );
     const cancelledAttempts = failed.filter((a) => a.result.cancelled);
     const realFailed = failed.filter((a) => !a.result.cancelled);
+    const skippedUnsupported = attempts.filter((a) => a.skippedUnsupported);
     const succeeded = succeededAttempts.map((a) => a.projectPath);
 
     if (failed.length === 0) {
+      if (skippedUnsupported.length > 0 && succeededAttempts.length === 0) {
+        if (notify) {
+          this.provider.postMessage({
+            type: 'OPERATION_ERROR',
+            operation: 'install',
+            packageId,
+            failures: skippedUnsupported.map((a) => cliFailure(a.projectPath, a.result, {
+              previousVersion: a.previousVersion,
+              attemptedVersion: version,
+            })),
+            succeededProjects: [],
+            rollbackApplied: false,
+            canRollback: false,
+          });
+        }
+        return {
+          status: notify ? 'error' : 'ok',
+          succeeded: [],
+          error: notify ? PACKAGES_CONFIG_SKIP : undefined,
+          keepAttempts: [],
+        };
+      }
       if (notify) {
         this._pendingRollback = null;
         this.provider.postMessage({
@@ -870,20 +1012,25 @@ export class WebviewMessageBroker {
       return { status: 'cancelled', succeeded, error: 'Stopped', keepAttempts: [] };
     }
 
+    const mutatedFailed = realFailed.filter((a) => a.mutated !== false);
     const mode = getConfig().onFailedUpdate;
     let rollbackApplied = false;
     let keepAttempts: InstallAttempt[] = [];
     if (mode === 'rollback') {
-      await this._restoreAttempts(realFailed);
+      if (mutatedFailed.length > 0) {
+        await this._restoreAttempts(mutatedFailed);
+        rollbackApplied = true;
+      }
       if (notify) this._pendingRollback = null;
-      rollbackApplied = true;
       if (succeededAttempts.length > 0) {
         this._patchInstalledVersions(packageId, version, succeededAttempts);
       }
     } else {
-      keepAttempts = realFailed;
-      if (notify) this._pendingRollback = { packageId, attempts: realFailed };
-      this._patchInstalledVersions(packageId, version, [...succeededAttempts, ...realFailed]);
+      keepAttempts = mutatedFailed;
+      if (notify) this._pendingRollback = mutatedFailed.length > 0
+        ? { packageId, attempts: mutatedFailed }
+        : null;
+      this._patchInstalledVersions(packageId, version, [...succeededAttempts, ...mutatedFailed]);
     }
 
     const failures = realFailed.map((a) => cliFailure(a.projectPath, a.result, {
@@ -900,7 +1047,7 @@ export class WebviewMessageBroker {
         succeededProjects: succeeded,
         rollbackMode: mode,
         rollbackApplied,
-        canRollback: mode === 'keep',
+        canRollback: mode === 'keep' && mutatedFailed.length > 0,
       });
     }
 
@@ -966,7 +1113,7 @@ export class WebviewMessageBroker {
     projectPath: string,
     packageId: string,
   ): Promise<void> {
-    const result = await this.backend.removePackage(projectPath, packageId);
+    const result = await this._removeFromProject(projectPath, packageId);
     this.trace?.noteTouchedProject(projectPath);
     this.trace?.recordBroker('remove', {
       project: path.basename(projectPath),
@@ -1010,7 +1157,7 @@ export class WebviewMessageBroker {
         this.trace?.recordBroker('remove', { project: path.basename(p), packageId });
         return {
           projectPath: p,
-          result: await this.backend.removePackage(p, packageId),
+          result: await this._removeFromProject(p, packageId),
         };
       }),
       getConfig().dotnetConcurrency,

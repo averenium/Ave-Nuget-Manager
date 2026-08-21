@@ -44,6 +44,7 @@
 | `webviewMessageBroker.test.ts` | INIT, search, install/remove, NU1605, rollback/keep, patch |
 | `dotnetOutput.test.ts` | Summary NU1605 vs list JSON `problems` |
 | `projectFileSnapshot.test.ts` | Знімок / restore csproj, читання Version |
+| `legacyPackageReference.test.ts` | SDK vs legacy vs packages.config; зліплення дублікатів PackageReference |
 
 ### Property (`src/test/property/`, fast-check)
 

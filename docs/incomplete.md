@@ -19,6 +19,8 @@ Retry 429/503 на catalog GET — у `HttpBackend`, не в `cliRetry` (той 
 
 Таблиця «SDK band → CodeAnalysis version» не ведеться: cap береться з `csc -version` у поточному SDK (`roslynSdkProbe.ts`).
 
+Завантаження VDB з `data.nuget.org` у HTTP-клієнті — #27 / HttpBackend. Skip `list --vulnerable` без `<auditSources>` на не-nuget.org HTTP feeds; з audit CLI йде завжди. Кеш restore читається на skip.
+
 ## Граф транзитивних залежностей
 
 `ImplicitPackage.dependsOn` і `InstalledPackage.implicitVersions` є в типах. `CliBackend` їх не ставить: `dotnet list` не віддає parent. `InstalledList` групує implicit «за parent», тому підказка `(highestImplicit)` у `PackageRow` ніколи не з’являється.

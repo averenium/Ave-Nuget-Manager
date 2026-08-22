@@ -15,6 +15,7 @@ jest.config.ts
 .gitignore
 .gitattributes
 docs/**
+docker/**
 *.md
 !README.md
 !CHANGELOG.md

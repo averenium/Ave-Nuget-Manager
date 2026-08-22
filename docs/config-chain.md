@@ -27,6 +27,7 @@ UI: `src/webview/components/SourcesTab.tsx`.
 
 - Секція `<packageSources>` — `<add key="Name" value="url" />` → `PackageSource`.
 - Секція `<disabledPackageSources>` — `value="true"` вимикає джерело з тим самим `key`.
+- Секція `<auditSources>` — ті самі `<add>`; `<clear />` обрізає дальші файли. Ключ у `disabledPackageSources` вимикає audit source з тим самим ім’ям. Порожня секція показується як **none**.
 - Помилка читання/парсингу → `parseError`, `sources: []`.
 
 Не парсяться: credentials, package source mapping, fallback, `<clear/>` як семантика NuGet (файл просто додається в ланцюжок; дедуп імен робить broker/UI).
@@ -40,5 +41,6 @@ UI: `src/webview/components/SourcesTab.tsx`.
 - Список файлів ланцюжка.
 - Клік по шляху → `OPEN_CONFIG_FILE` → `workspace.openTextDocument`.
 - Бейдж ON/OFF, ім’я, URL.
+- Під кожним файлом — `auditSources` (або **none**). Якщо ⚠-скан пропущено через feed без VDB — один рядок-підказка з посиланням відкрити nuget.config.
 - **Немає** додавання/видалення/toggle джерел у UI — лише правкою XML.
 - Повідомлення `CONFIG_CHAIN_UPDATE` у протоколі є, host його не шле: зміна файлу на диску не оновлює вкладку, поки не буде нового init/refresh scope.

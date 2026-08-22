@@ -18,7 +18,7 @@ import type {
 } from '../../types';
 import type { SkillFamily, SkillInstallRow } from '../../agentSkillInstall';
 import type { ExtensionMessage } from '../../messages';
-import { sendMessage, onMessage } from '../vscodeApi';
+import { sendMessage, onMessage, getPersistedState, patchPersistedState } from '../vscodeApi';
 import type { RoslynCap } from '../../roslynSdkCap';
 
 /** Returns true only when latestVersion is strictly newer than installed version */
@@ -87,6 +87,13 @@ export interface AppState {
     isLoadingPackages: boolean;
     vulnerabilities: VulnerabilityFinding[];
     blockedPackages: string[];
+    vulnHint: {
+      show: boolean;
+      fingerprint: string;
+      message: string;
+      configFilePath?: string;
+    } | null;
+    vulnHintDismissedFingerprint: string | null;
   };
   sources: {
     configChain: NuGetConfigFile[];
@@ -138,6 +145,8 @@ const initialState: AppState = {
     isLoadingPackages: false,
     vulnerabilities: [],
     blockedPackages: [],
+    vulnHint: null,
+    vulnHintDismissedFingerprint: getPersistedState().vulnHintDismissedFingerprint ?? null,
   },
   sources: { configChain: [], allSources: [] },
   log: { entries: [] },
@@ -174,7 +183,8 @@ export type Action =
   | { type: 'SET_PROJECT_VERSION'; projectPath: string; version: string }
   | { type: 'SET_PROJECT_LOADING'; projectPath: string; loading: boolean }
   | { type: 'SET_PROJECT_ERROR'; projectPath: string; error: string | null }
-  | { type: 'DISMISS_GLOBAL_ERROR' };
+  | { type: 'DISMISS_GLOBAL_ERROR' }
+  | { type: 'DISMISS_VULN_HINT' };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -273,6 +283,18 @@ function reducer(state: AppState, action: Action): AppState {
     case 'DISMISS_GLOBAL_ERROR':
       return { ...state, globalError: null };
 
+    case 'DISMISS_VULN_HINT': {
+      const fp = state.packages.vulnHint?.fingerprint ?? state.packages.vulnHintDismissedFingerprint;
+      patchPersistedState({ vulnHintDismissedFingerprint: fp });
+      return {
+        ...state,
+        packages: {
+          ...state.packages,
+          vulnHintDismissedFingerprint: fp,
+        },
+      };
+    }
+
     case 'MSG':
       return applyExtensionMessage(state, action.msg);
 
@@ -302,6 +324,8 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           blockedPackages: msg.blockedPackages,
           selectedSources: msg.sources.filter((s) => s.enabled).map((s) => s.name),
           prerelease: msg.includePrerelease,
+          vulnHint: null,
+          vulnHintDismissedFingerprint: state.packages.vulnHintDismissedFingerprint,
         },
         updates: { ...state.updates, versionsByPackageId: {} },
         workspaceActivity: null,
@@ -360,6 +384,20 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       return {
         ...state,
         packages: { ...state.packages, vulnerabilities: msg.findings },
+      };
+
+    case 'VULN_SCAN_HINT':
+      return {
+        ...state,
+        packages: {
+          ...state.packages,
+          vulnHint: {
+            show: msg.show,
+            fingerprint: msg.fingerprint,
+            message: msg.message,
+            configFilePath: msg.configFilePath,
+          },
+        },
       };
 
     case 'BLOCKED_PACKAGES':

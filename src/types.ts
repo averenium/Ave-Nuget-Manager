@@ -119,6 +119,10 @@ export interface PackageSource {
 export interface NuGetConfigFile {
   filePath: string;
   sources: PackageSource[];
+  /** `<auditSources>` in this file (not inherited). */
+  auditSources?: PackageSource[];
+  /** `<clear />` in `<auditSources>` — farther files do not contribute audit sources. */
+  auditSourcesCleared?: boolean;
   /** Set when the file could not be read or parsed */
   parseError?: string;
 }

@@ -5,13 +5,18 @@ import { getConfig, setIncludePrerelease, getBlockedPackages, setPackageBlocked 
 import type { NugetManagerViewProvider } from './nugetManagerViewProvider';
 import type { INuGetBackend } from './backend/INuGetBackend';
 import type { SolutionParser } from './solutionParser';
-import type { NuGetConfigChainResolver } from './nugetConfigChainResolver';
+import {
+  uniqueEnabledAuditSources,
+  uniqueEnabledPackageSources,
+  type NuGetConfigChainResolver,
+} from './nugetConfigChainResolver';
 import type { Logger } from './logger';
 import type { TraceController } from './traceController';
 import type { WebviewMessage } from './messages';
 import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
 import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus } from './types';
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
+import { mergeFindings } from './vulnerabilities';
 import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS, isRetryableCliFailure } from './cliRetry';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from './blockedPackages';
 import { pathsEqual } from './pathCompare';
@@ -49,6 +54,12 @@ import {
   withoutOverRoslynCap,
   type RoslynCap,
 } from './roslynSdkCap';
+import {
+  AUDIT_SOURCES_HINT,
+  shouldRunDotnetListVulnerable,
+} from './vulnerabilityScanPolicy';
+import { findingsFromNuGetHttpCache, nugetHttpCacheDirs } from './nugetHttpCacheVdb';
+import { parseRestoreAuditWarnings } from './restoreAuditWarnings';
 
 function cliFailure(
   projectPath: string,
@@ -124,6 +135,9 @@ export class WebviewMessageBroker {
 
   /** Probe result for Groups. `undefined` = not probed (tests without a probe). */
   private _roslynCap: RoslynCap | null | undefined = undefined;
+  private _restoreInFlight?: Promise<CliResult>;
+  private _restoreGeneration = 0;
+  private _lastRestoreText = '';
 
   constructor(
     private readonly provider: NugetManagerViewProvider,
@@ -139,7 +153,11 @@ export class WebviewMessageBroker {
       install: (opts?: { updateExisting?: boolean }) => Promise<void>;
     },
     private readonly roslyn?: { probe: (cwd: string) => Promise<RoslynCap | null> },
-  ) {}
+    private readonly vulnScan?: {
+      httpCacheDir?: () => string;
+    },
+  ) {
+  }
 
   private async _skillFields(): Promise<SkillStatus> {
     if (!this.skill) return EMPTY_SKILL_STATUS;
@@ -493,6 +511,8 @@ export class WebviewMessageBroker {
   private async _initForScope(scope: WorkspaceScope): Promise<void> {
     this._cancelEnrich();
     this._cancelVulnScan();
+    this._restoreGeneration++;
+    this._lastRestoreText = '';
     this.trace?.recordBroker('init-scope', {
       kind: scope.kind,
       path: scope.kind === 'solution' ? path.basename(scope.solutionPath) : path.basename(scope.projectPath),
@@ -1361,14 +1381,16 @@ export class WebviewMessageBroker {
     opts?: RefreshOpts,
   ): Promise<void> {
     if (opts?.restore && opts.listAfterRestore) {
-      const restoreResult = await this.backend.restoreProject(solutionPath);
+      const restoreResult = await this._beginRestore(this.backend.restoreProject(solutionPath));
       const listed = await this.backend.listAllForSolution(solutionPath);
       await this._applyListedPackages(listed, opts);
       this._reportRestoreIfCurrent(solutionPath, restoreResult);
       return;
     }
 
-    const restoreP = opts?.restore ? this.backend.restoreProject(solutionPath) : undefined;
+    const restoreP = opts?.restore
+      ? this._beginRestore(this.backend.restoreProject(solutionPath))
+      : undefined;
     const listed = await this.backend.listAllForSolution(solutionPath);
     await this._applyListedPackages(listed, opts);
     if (restoreP) this._reportRestoreIfCurrent(solutionPath, await restoreP);
@@ -1381,13 +1403,15 @@ export class WebviewMessageBroker {
     if (projectPaths.length === 0) return;
 
     if (opts?.restore && opts.listAfterRestore) {
-      const restoreResult = await this.backend.restoreProject(projectPaths[0]);
+      const restoreResult = await this._beginRestore(this.backend.restoreProject(projectPaths[0]));
       await this._listProjectsThenApply(projectPaths, opts);
       this._reportRestoreIfCurrent(projectPaths[0], restoreResult);
       return;
     }
 
-    const restoreP = opts?.restore ? this.backend.restoreProject(projectPaths[0]) : undefined;
+    const restoreP = opts?.restore
+      ? this._beginRestore(this.backend.restoreProject(projectPaths[0]))
+      : undefined;
     await this._listProjectsThenApply(projectPaths, opts);
     if (restoreP) this._reportRestoreIfCurrent(projectPaths[0], await restoreP);
   }
@@ -1412,6 +1436,21 @@ export class WebviewMessageBroker {
       error: results.find((r) => r.error)?.error,
     };
     await this._applyListedPackages(listed, opts);
+  }
+
+  private _beginRestore(p: Promise<CliResult>): Promise<CliResult> {
+    const generation = this._restoreGeneration;
+    const tracked = p.then((result) => {
+      if (generation === this._restoreGeneration) {
+        this._lastRestoreText = `${result.stdout}\n${result.stderr}`;
+      }
+      return result;
+    });
+    this._restoreInFlight = tracked;
+    void tracked.finally(() => {
+      if (this._restoreInFlight === tracked) this._restoreInFlight = undefined;
+    });
+    return tracked;
   }
 
   private _reportRestoreIfCurrent(targetPath: string, result: CliResult): void {
@@ -1443,25 +1482,71 @@ export class WebviewMessageBroker {
       : undefined;
     if (!scope || !targetPath) return;
 
-    // Always invoke list --vulnerable so the Log tab records the attempt.
-    // A pre-check on `signal.aborted` skipped the CLI entirely (no log line).
-    this.trace?.recordBroker('vuln-scan', { target: path.basename(targetPath) });
-    const findings = await collectVulnerabilityFindings(
-      [
-        new DotnetVulnerableProvider(this.backend),
-        new UserScriptVulnerabilityProvider(this.logger),
-      ],
-      {
-        targetPath,
-        cwd: path.dirname(targetPath),
-        scope,
+    const startDir = path.dirname(targetPath);
+    const chain = await this.configResolver.resolve(startDir);
+    const packageSources = uniqueEnabledPackageSources(chain);
+    const auditSources = uniqueEnabledAuditSources(chain);
+    const runCli = shouldRunDotnetListVulnerable(packageSources, auditSources);
+    const fingerprint = [
+      ...chain.map((c) => c.filePath),
+      ...auditSources.map((s) => s.url),
+    ].join('\n');
+    const nearestConfig = chain[0]?.filePath;
+
+    this.trace?.recordBroker('vuln-scan', {
+      target: path.basename(targetPath),
+      runCli,
+    });
+
+    const providers: import('./vulnerabilityProvider').IVulnerabilityProvider[] = [];
+    if (runCli) {
+      providers.push(new DotnetVulnerableProvider(this.backend));
+    } else {
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: 'vulnerability scan skipped',
+        args: ['dotnet list --vulnerable not started: a package source has no VulnerabilityInfo'],
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      if (this._restoreInFlight) await this._restoreInFlight;
+      const cacheDir = this.vulnScan?.httpCacheDir
+        ? [this.vulnScan.httpCacheDir()]
+        : nugetHttpCacheDirs();
+      const cached = await findingsFromNuGetHttpCache(
+        cacheDir, listed.installed, listed.implicit,
+      );
+      const fromRestore = parseRestoreAuditWarnings(this._lastRestoreText, {
         installed: listed.installed,
         implicit: listed.implicit,
-        signal,
-      },
-    );
+      });
+      providers.push({
+        id: 'nuget-cache',
+        scan: async () => mergeFindings([cached, fromRestore]),
+      });
+    }
+    providers.push(new UserScriptVulnerabilityProvider(this.logger));
+
+    const findings = await collectVulnerabilityFindings(providers, {
+      targetPath,
+      cwd: startDir,
+      scope,
+      installed: listed.installed,
+      implicit: listed.implicit,
+      signal,
+    });
     if (signal.aborted) return;
     this.provider.postMessage({ type: 'VULNERABILITIES', findings });
+    this.provider.postMessage({
+      type: 'VULN_SCAN_HINT',
+      show: !runCli,
+      fingerprint,
+      message: AUDIT_SOURCES_HINT,
+      configFilePath: nearestConfig,
+    });
   }
 
   /** Fetches latestVersion + sourceName for each unique package id and pushes

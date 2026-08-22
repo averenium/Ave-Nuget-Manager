@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <!-- Typical corp: one group URL. Hosted wins over nuget.org proxy. -->
+    <add key="nexus-group" value="http://localhost:8081/repository/nuget-group/index.json" allowInsecureConnections="true" />
+    <!-- Split feeds for #27 ladders / hosted-only search. Leave disabled unless you need them. -->
+    <add key="nexus-proxy" value="http://localhost:8081/repository/nuget.org-proxy/index.json" allowInsecureConnections="true" />
+    <add key="nexus-hosted" value="http://localhost:8081/repository/nuget-hosted/index.json" allowInsecureConnections="true" />
+  </packageSources>
+  <disabledPackageSources>
+    <add key="nexus-proxy" value="true" />
+    <add key="nexus-hosted" value="true" />
+  </disabledPackageSources>
+  <packageSourceCredentials>
+    <nexus-group>
+      <add key="Username" value="nuget" />
+      <add key="ClearTextPassword" value="nuget" />
+    </nexus-group>
+    <nexus-hosted>
+      <add key="Username" value="nuget" />
+      <add key="ClearTextPassword" value="nuget" />
+    </nexus-hosted>
+    <nexus-proxy>
+      <add key="Username" value="nuget" />
+      <add key="ClearTextPassword" value="nuget" />
+    </nexus-proxy>
+  </packageSourceCredentials>
+  <!-- Uncomment one audit source so `dotnet list --vulnerable` uses VDB, not Nexus registration.
+       nuget.org or nexus-proxy both work (proxy follows @id to api.nuget.org). Group/hosted do not.
+  <auditSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </auditSources>
+  -->
+</configuration>

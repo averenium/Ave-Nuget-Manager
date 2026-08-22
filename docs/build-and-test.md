@@ -47,6 +47,7 @@
 | `projectFileSnapshot.test.ts` | Знімок / restore csproj, читання Version |
 | `legacyPackageReference.test.ts` | SDK vs legacy vs packages.config; зліплення дублікатів PackageReference |
 | `roslynSdkCap.test.ts` / `roslynSdkProbe.test.ts` | Cap `Microsoft.CodeAnalysis.*` версією `csc` з активного SDK |
+| `vulnerabilityScanPolicy.test.ts` / `nugetHttpCacheVdb.test.ts` / `restoreAuditWarnings.test.ts` | Skip `list --vulnerable` на Nexus; матч VDB з HTTP-кешу; NU190x |
 
 ### Property (`src/test/property/`, fast-check)
 
@@ -55,6 +56,10 @@
 - `solutionParser.property.ts`
 
 У `package.json` є `@testing-library/react`, `jsdom`, `vitest` — тестів webview немає.
+
+## Лабораторний Nexus
+
+`docker/nexus/` — Compose з Nexus OSS: proxy nuget.org, приватний hosted, group. Не в CI. Як підняти, URL і `Ave.Nexus.Private`: [docker/nexus/README.md](../docker/nexus/README.md).
 
 ## VSIX / Marketplace preview
 

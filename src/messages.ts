@@ -101,6 +101,14 @@ export type ExtensionMessage =
   | { type: 'PACKAGE_INFO_UPDATE'; packageId: string; latestVersion: string; sourceName: string; versions?: string[] }
   | { type: 'ENRICH_PROGRESS'; done: number; total: number }
   | { type: 'VULNERABILITIES'; findings: VulnerabilityFinding[] }
+  /** Quiet hint when `dotnet list --vulnerable` was skipped (Nexus / no VDB). */
+  | {
+      type: 'VULN_SCAN_HINT';
+      show: boolean;
+      fingerprint: string;
+      message: string;
+      configFilePath?: string;
+    }
   | { type: 'BLOCKED_PACKAGES'; packageIds: string[] }
   | { type: 'SEARCH_RESULTS'; query: string; packages: AvailablePackage[] }
   | { type: 'PACKAGE_METADATA'; metadata: PackageMetadata }

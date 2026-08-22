@@ -224,7 +224,7 @@ export function parseDotnetVulnerableJson(stdout: string): VulnerabilityFinding[
   return mergeFindings([findings]);
 }
 
-function advisoryIdFromUrl(url: string | undefined): string | undefined {
+export function advisoryIdFromUrl(url: string | undefined): string | undefined {
   if (!url) return undefined;
   const ghsa = url.match(/GHSA-[0-9a-z-]+/i);
   if (ghsa) return ghsa[0];

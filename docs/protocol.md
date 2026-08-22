@@ -64,6 +64,7 @@ webview mount  →  WEBVIEW_READY
 | `PACKAGE_INFO_UPDATE` | Enrich по id | `latestVersion` + `sourceName` + `versions[]`; сортування: спочатку з оновленням |
 | `ENRICH_PROGRESS` | `done/total` | Смужка Force refresh (`Refreshing latest n/m`); зникає коли `done >= total` |
 | `VULNERABILITIES` | Після list (паралельно з enrich) | Findings для ⚠ і деталей; див. [vulnerabilities](vulnerabilities.md) |
+| `VULN_SCAN_HINT` | Після скан (skip CLI) | Sources: завжди при skip. Packages: лише якщо ще немає ⚠; dismiss у `setState` |
 | `BLOCKED_PACKAGES` | Після `SET_PACKAGE_BLOCKED` або зміни Workspace settings | Ids з `blockedPackages` |
 | `SEARCH_RESULTS` | Пошук | Available-список |
 | `PACKAGE_METADATA` | Деталі | Права панель |

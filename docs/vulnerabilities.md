@@ -2,7 +2,16 @@
 
 Код: `src/vulnerabilities.ts`, `src/vulnerabilityProvider.ts`, `src/userScriptVulnerabilities.ts`, `CliBackend.listVulnerable`, вкладка Packages.
 
-Після `dotnet list` host паралельно з enrich збирає findings і шле `VULNERABILITIES`. Список пакетів показує **⚠** і піднімає вразливі id вгору (спочатку прямі, потім через залежності, потім оновлення). У деталях пакета — секція Vulnerabilities з посиланням на advisory.
+Після `dotnet list` host паралельно з enrich збирає findings і шле `VULNERABILITIES`.
+
+`dotnet list --vulnerable` без `<auditSources>` читає **registration кожного package source**. На nuget.org там є GHSA; на Nexus — немає, плюс GET на кожен пакет. CLI стартує коли:
+
+- усі HTTP package sources — nuget.org / `data.nuget.org`; або
+- є хоч один HTTP `<auditSources>` (CLI тоді йде в VDB і **не** чіпає package registration, навіть якщо audit порожній).
+
+Інакше skip: матч VDB з HTTP-кешу restore + `NU1901`–`NU1904` поточного restore (лише id зі списку) + скрипт. Не `globalError`.
+
+Список пакетів показує **⚠** і піднімає вразливі id вгору (спочатку прямі, потім через залежності, потім оновлення). У деталях пакета — секція Vulnerabilities з посиланням на advisory.
 
 Finding на **implicit** пакеті також позначає installed (і інші implicit), які тягнуть його в графі restore (`project.assets.json` → `dependencies`). Прямий ⚠ — колір error; лише через залежність — warning. Tooltip / деталі: `via Newtonsoft.Json · HIGH: GHSA-…`. Клік по `via …` у деталях відкриває той пакет.
 
@@ -12,7 +21,8 @@ Finding на **implicit** пакеті також позначає installed (і
 
 | id | Джерело |
 |---|---|
-| `dotnet` | `dotnet list <sln\|csproj> package --vulnerable --include-transitive --format json --no-restore` |
+| `dotnet` | `dotnet list … --vulnerable` (лише nuget.org-only HTTP feeds або робочий `<auditSources>`) |
+| `nuget-cache` | Сторінки VDB в HTTP-кеші restore, якщо CLI пропущено |
 | `script` | опційний файл з settings |
 
 Результати **мерджаться** (`packageId` + version + advisory id/url). Падіння одного провайдера не прибирає findings інших.
@@ -73,4 +83,17 @@ for (const pkg of [...input.installed, ...input.implicit]) {
 process.stdout.write(JSON.stringify(extra));
 ```
 
-Новий провайдер у коді — ще одна реалізація `IVulnerabilityProvider` у `collectVulnerabilityFindings` (OSV/GHSA HTTP пізніше).
+Новий провайдер у коді — ще одна реалізація `IVulnerabilityProvider` у `collectVulnerabilityFindings` (OSV/GHSA HTTP пізніше). Повний HTTP catalog VDB (#27 / HttpBackend) **не** качається в цьому шарі.
+
+## Коли CLI `--vulnerable` запускається
+
+| Package sources | Audit sources | CLI |
+|---|---|---|
+| Немає HTTP / лише локальні | будь-які | так |
+| Лише nuget.org | будь-які | так |
+| Є не-nuget.org HTTP | хоч один HTTP `<auditSources>` | так (VDB path; порожній audit → warning, не registration) |
+| Є не-nuget.org HTTP | немає | **ні** — кеш / NU190x |
+
+nuget.org + Nexus **без** audit → skip. Quiet hint на Sources при skip. Packages — короткий рядок лише якщо ще немає ⚠.
+
+HTTP-кеш: `%LOCALAPPDATA%\NuGet\v3-cache` (Windows); на Unix/macOS — `~/Library/Caches/NuGet/…`, `~/.cache/…`, `~/.local/share/NuGet/v3-cache`.

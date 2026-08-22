@@ -7,3 +7,6 @@ coverage/
 Thumbs.db
 /tmp/
 *.log
+*.nupkg
+docker/nexus/**/bin/
+docker/nexus/**/obj/

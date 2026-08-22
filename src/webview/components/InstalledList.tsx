@@ -44,7 +44,7 @@ function withUnionedDeps(entries: InstalledPackage[]): InstalledPackage {
 
 export function InstalledList() {
   const { state, dispatch } = useNugetManager();
-  const { installed, implicit, searchQuery, isLoadingPackages, vulnerabilities, blockedPackages } = state.packages;
+  const { installed, implicit, searchQuery, isLoadingPackages, vulnerabilities, blockedPackages, vulnHint, vulnHintDismissedFingerprint } = state.packages;
   const [menu, setMenu] = useState<{ packageId: string; blocked: boolean; x: number; y: number } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -81,6 +81,10 @@ export function InstalledList() {
     return direct.length + via.length > 0;
   }).length;
 
+  const showVulnHint = !!vulnHint?.show
+    && vulnerabilities.length === 0
+    && vulnHint.fingerprint !== vulnHintDismissedFingerprint;
+
   return (
     <section className="pkg-section" aria-label="Installed packages">
       <div className="pkg-section__header">
@@ -93,6 +97,20 @@ export function InstalledList() {
           </span>
         )}
       </div>
+
+      {showVulnHint && (
+        <div className="vuln-hint" role="status">
+          <span>CLI ⚠ skipped — add a working {'<auditSources>'} entry.</span>
+          <button
+            type="button"
+            className="vuln-hint__dismiss"
+            onClick={() => dispatch({ type: 'DISMISS_VULN_HINT' })}
+            aria-label="Dismiss vulnerability scan hint"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {isLoadingPackages ? (
         <PackagesSkeleton />

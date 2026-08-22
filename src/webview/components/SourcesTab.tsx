@@ -26,6 +26,27 @@ export function SourcesTab() {
         </div>
       )}
 
+      {state.packages.vulnHint?.show && (
+        <div className="config-file__hint">
+          {state.packages.vulnHint.message}
+          {state.packages.vulnHint.configFilePath && (
+            <>
+              {' '}
+              <button
+                type="button"
+                className="config-file__path-btn"
+                onClick={() => send({
+                  type: 'OPEN_CONFIG_FILE',
+                  filePath: state.packages.vulnHint!.configFilePath!,
+                })}
+              >
+                Open nuget.config
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {configChain.map((configFile) => {
         // Only show sources not already shown by a nearer config
         const uniqueSources = configFile.sources.filter((src) => {
@@ -79,6 +100,18 @@ export function SourcesTab() {
                 No sources defined in this file
               </div>
             )}
+
+            <div className="audit-sources">
+              <div className="audit-sources__label">auditSources</div>
+              {(configFile.auditSources ?? []).length === 0 ? (
+                <div className="audit-sources__none">none</div>
+              ) : (configFile.auditSources ?? []).map((src) => (
+                <div key={src.name} className="source-item">
+                  <strong style={{ fontSize: 12 }}>{src.name}</strong>
+                  <span className="source-item__url">{src.url}</span>
+                </div>
+              ))}
+            </div>
           </div>
         );
       })}

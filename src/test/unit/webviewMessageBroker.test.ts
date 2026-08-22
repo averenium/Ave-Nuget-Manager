@@ -2092,4 +2092,157 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     expect(posted.some((m) => m.type === 'ROSLYN_CAP')).toBe(true);
     expect(roslyn.probe).toHaveBeenCalled();
   });
+
+  it('does not run list --vulnerable for Nexus-only feeds without auditSources', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('SharpCompress', '/p/App.csproj')],
+      implicit: [],
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nexus',
+        url: 'https://nexus.example/repository/nuget/index.json',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const fs = await import('fs/promises');
+    const os = await import('os');
+    const path = await import('path');
+    const emptyCache = await fs.mkdtemp(path.join(os.tmpdir(), 'nuget-vdb-empty-'));
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), resolver, logger,
+      undefined, undefined, undefined, undefined,
+      {
+        httpCacheDir: () => emptyCache,
+      },
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(backend.listVulnerable).not.toHaveBeenCalled();
+    const vuln = posted.find((m) => m.type === 'VULNERABILITIES') as { findings?: unknown[] } | undefined;
+    expect(vuln?.findings).toEqual([]);
+    const hint = posted.find((m) => m.type === 'VULN_SCAN_HINT') as { show?: boolean } | undefined;
+    expect(hint?.show).toBe(true);
+    await fs.rm(emptyCache, { recursive: true, force: true });
+  });
+
+  it('runs list --vulnerable when Nexus packages have any auditSources', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('SharpCompress', '/p/App.csproj')],
+      implicit: [],
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nexus-group',
+        url: 'http://localhost:8081/repository/nuget-group/index.json',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+      auditSources: [{
+        name: 'nexus-proxy',
+        url: 'http://localhost:8081/repository/nuget.org-proxy/index.json',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), resolver, logger,
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(backend.listVulnerable).toHaveBeenCalled();
+  });
+
+  it('runs list --vulnerable when every HTTP source is nuget.org', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org/v3/index.json',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(backend.listVulnerable).toHaveBeenCalled();
+  });
+
+  it('matches the restore HTTP-cache VDB when CLI --vulnerable is skipped', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [{
+        id: 'SharpCompress',
+        requestedVersion: '0.30.1',
+        resolvedVersion: '0.30.1',
+        projectPath: '/p/App.csproj',
+      }],
+      implicit: [],
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nexus',
+        url: 'https://nexus.example/repository/nuget/index.json',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+    const fs = await import('fs/promises');
+    const os = await import('os');
+    const path = await import('path');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nuget-vdb-broker-'));
+    await fs.writeFile(path.join(dir, 'vulnerability.base.json'), JSON.stringify({
+      sharpcompress: [{
+        url: 'https://github.com/advisories/GHSA-6c8g-7p36-r338',
+        severity: 1,
+        versions: '(, 0.32.0)',
+      }],
+    }));
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), resolver, logger,
+      undefined, undefined, undefined, undefined,
+      {
+        httpCacheDir: () => dir,
+      },
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(backend.listVulnerable).not.toHaveBeenCalled();
+    const vuln = posted.find((m) => m.type === 'VULNERABILITIES') as { findings?: Array<{ packageId: string }> } | undefined;
+    expect(vuln?.findings?.some((f) => f.packageId === 'SharpCompress')).toBe(true);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 });

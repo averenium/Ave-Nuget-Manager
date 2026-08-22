@@ -108,13 +108,17 @@ export async function parseNuGetConfig(filePath: string): Promise<NuGetConfigFil
   try {
     content = await fs.readFile(filePath, 'utf-8');
   } catch (err) {
-    return { filePath, sources: [], parseError: String(err) };
+    return { filePath, sources: [], auditSources: [], parseError: String(err) };
   }
 
   try {
-    return { filePath, sources: extractSources(content, filePath) };
+    return {
+      filePath,
+      sources: extractSources(content, filePath),
+      ...extractAuditSources(content, filePath),
+    };
   } catch (err) {
-    return { filePath, sources: [], parseError: String(err) };
+    return { filePath, sources: [], auditSources: [], parseError: String(err) };
   }
 }
 
@@ -122,25 +126,25 @@ export async function parseNuGetConfig(filePath: string): Promise<NuGetConfigFil
  * Extract package sources from the XML content of a nuget.config file.
  * Uses regex-based parsing (no DOM dependency in the extension host).
  */
-export function extractSources(xml: string, filePath: string): PackageSource[] {
-  const sources: PackageSource[] = [];
-
-  // Collect disabled source keys
+function disabledPackageSourceKeys(xml: string): Set<string> {
   const disabledSet = new Set<string>();
   const disabledSection = extractSection(xml, 'disabledPackageSources');
   const addKeyValueRegex = /<add\s+key\s*=\s*"([^"]+)"\s+value\s*=\s*"([^"]*)"/gi;
-
   let m: RegExpExecArray | null;
   while ((m = addKeyValueRegex.exec(disabledSection)) !== null) {
     if (m[2].toLowerCase() === 'true') {
       disabledSet.add(m[1]);
     }
   }
+  return disabledSet;
+}
 
-  // Collect package sources
+export function extractSources(xml: string, filePath: string): PackageSource[] {
+  const sources: PackageSource[] = [];
+  const disabledSet = disabledPackageSourceKeys(xml);
+  const addKeyValueRegex = /<add\s+key\s*=\s*"([^"]+)"\s+value\s*=\s*"([^"]*)"/gi;
   const sourcesSection = extractSection(xml, 'packageSources');
-  addKeyValueRegex.lastIndex = 0;
-
+  let m: RegExpExecArray | null;
   while ((m = addKeyValueRegex.exec(sourcesSection)) !== null) {
     const name = m[1];
     const url = m[2];
@@ -151,8 +155,59 @@ export function extractSources(xml: string, filePath: string): PackageSource[] {
       configFilePath: filePath,
     });
   }
-
   return sources;
+}
+
+export function extractAuditSources(
+  xml: string,
+  filePath: string,
+): { auditSources: PackageSource[]; auditSourcesCleared: boolean } {
+  const section = extractSection(xml, 'auditSources');
+  const cleared = /<clear\s*\/>/i.test(section);
+  const disabledSet = disabledPackageSourceKeys(xml);
+  const sources: PackageSource[] = [];
+  const addKeyValueRegex = /<add\s+key\s*=\s*"([^"]+)"\s+value\s*=\s*"([^"]*)"/gi;
+  let m: RegExpExecArray | null;
+  while ((m = addKeyValueRegex.exec(section)) !== null) {
+    sources.push({
+      name: m[1],
+      url: m[2],
+      enabled: !disabledSet.has(m[1]),
+      configFilePath: filePath,
+    });
+  }
+  return { auditSources: sources, auditSourcesCleared: cleared };
+}
+
+/** Nearest-first unique enabled package sources (same rule as Sources tab). */
+export function uniqueEnabledPackageSources(chain: NuGetConfigFile[]): PackageSource[] {
+  const seen = new Set<string>();
+  const out: PackageSource[] = [];
+  for (const file of chain) {
+    for (const src of file.sources) {
+      const key = src.name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (src.enabled) out.push(src);
+    }
+  }
+  return out;
+}
+
+/** Nearest-first audit sources; `<clear />` stops walking farther files. */
+export function uniqueEnabledAuditSources(chain: NuGetConfigFile[]): PackageSource[] {
+  const seen = new Set<string>();
+  const out: PackageSource[] = [];
+  for (const file of chain) {
+    for (const src of file.auditSources ?? []) {
+      const key = src.name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (src.enabled) out.push(src);
+    }
+    if (file.auditSourcesCleared) break;
+  }
+  return out;
 }
 
 /**

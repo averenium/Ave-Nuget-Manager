@@ -41,3 +41,15 @@ export function getState<T>(): T | undefined {
 export function setState<T>(state: T): void {
   vscode.setState(state);
 }
+
+export type WebviewPersistedState = {
+  vulnHintDismissedFingerprint?: string | null;
+};
+
+export function getPersistedState(): WebviewPersistedState {
+  return getState<WebviewPersistedState>() ?? {};
+}
+
+export function patchPersistedState(patch: Partial<WebviewPersistedState>): void {
+  setState({ ...getPersistedState(), ...patch });
+}

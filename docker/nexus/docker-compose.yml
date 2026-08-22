@@ -1,0 +1,47 @@
+# Local Nexus for NuGet Manager (proxy nuget.org + private hosted + group).
+# Lab only: default passwords, anonymous read.
+#
+#   docker compose -f docker/nexus/docker-compose.yml up --build
+#   docker compose -f docker/nexus/docker-compose.yml logs -f nexus-init
+#
+# UI: http://localhost:8081  (admin / admin123 after init; see README if the wizard asks for admin.password)
+# Feeds: see README.md
+
+name: nuget-manager-nexus
+
+services:
+  nexus:
+    image: sonatype/nexus3:3.76.0
+    ports:
+      - "8081:8081"
+    environment:
+      # randompassword=false only on an empty volume. Existing data keeps the generated password.
+      INSTALL4J_ADD_VM_PARAMS: >-
+        -Xms768m -Xmx768m -XX:MaxDirectMemorySize=768m
+        -Djava.util.prefs.userRoot=/nexus-data/javaprefs
+        -Dnexus.security.randompassword=false
+    volumes:
+      - nexus-data:/nexus-data
+    mem_limit: 2g
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  nexus-init:
+    image: alpine:3.21
+    depends_on:
+      - nexus
+    environment:
+      NEXUS_URL: http://nexus:8081
+      NEXUS_ADMIN_PASSWORD: admin123
+      NUGET_USER: nuget
+      NUGET_PASSWORD: nuget
+    volumes:
+      - nexus-data:/nexus-data:ro
+      - ./provision.sh:/provision.sh:ro
+    entrypoint: ["/bin/sh", "/provision.sh"]
+    restart: "no"
+
+volumes:
+  nexus-data:

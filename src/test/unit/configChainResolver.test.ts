@@ -1,5 +1,5 @@
 import * as fs from 'fs/promises';
-import { NuGetConfigChainResolver, extractSources, parseNuGetConfig } from '../../nugetConfigChainResolver';
+import { NuGetConfigChainResolver, extractAuditSources, extractSources, parseNuGetConfig, uniqueEnabledAuditSources } from '../../nugetConfigChainResolver';
 
 jest.mock('fs/promises');
 const mockReaddir = fs.readdir as jest.MockedFunction<typeof fs.readdir>;
@@ -154,5 +154,53 @@ describe('extractSources', () => {
     );
     const sources = extractSources(xml, '/p/nuget.config');
     expect(sources[0].enabled).toBe(false);
+  });
+});
+
+describe('extractAuditSources', () => {
+  it('reads auditSources and clear', () => {
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <auditSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </auditSources>
+</configuration>`;
+    expect(extractAuditSources(xml, '/p/nuget.config')).toEqual({
+      auditSourcesCleared: true,
+      auditSources: [expect.objectContaining({
+        name: 'nuget.org',
+        url: 'https://api.nuget.org/v3/index.json',
+        enabled: true,
+      })],
+    });
+  });
+
+  it('honours disabledPackageSources for audit source keys', () => {
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <auditSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </auditSources>
+  <disabledPackageSources>
+    <add key="nuget.org" value="true" />
+  </disabledPackageSources>
+</configuration>`;
+    expect(extractAuditSources(xml, '/p/nuget.config').auditSources[0].enabled).toBe(false);
+  });
+
+  it('stops inheritance after a nearer clear', () => {
+    const nearer = {
+      filePath: '/p/nuget.config',
+      sources: [],
+      auditSources: [{ name: 'corp', url: 'https://data.nuget.org/v3/index.json', enabled: true, configFilePath: '/p/nuget.config' }],
+      auditSourcesCleared: true,
+    };
+    const farther = {
+      filePath: '/NuGet.Config',
+      sources: [],
+      auditSources: [{ name: 'old', url: 'https://old.example/index.json', enabled: true, configFilePath: '/NuGet.Config' }],
+    };
+    expect(uniqueEnabledAuditSources([nearer, farther]).map((s) => s.name)).toEqual(['corp']);
   });
 });

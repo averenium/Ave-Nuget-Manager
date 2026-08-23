@@ -8,24 +8,31 @@ import type { SolutionParser } from './solutionParser';
 import {
   uniqueEnabledAuditSources,
   uniqueEnabledPackageSources,
+  uniquePackageSources,
+  parseNuGetConfig,
+  parseNuGetConfigXml,
+  isGlobalNuGetConfigPath,
+  isMachineWideNuGetConfigPath,
   type NuGetConfigChainResolver,
 } from './nugetConfigChainResolver';
 import type { Logger } from './logger';
 import type { TraceController } from './traceController';
 import type { WebviewMessage } from './messages';
 import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
-import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus } from './types';
+import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile } from './types';
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
 import { mergeFindings } from './vulnerabilities';
 import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS, isRetryableCliFailure } from './cliRetry';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from './blockedPackages';
-import { pathsEqual } from './pathCompare';
+import { pathsEqual, normalizeFsPath } from './pathCompare';
 import { compareSemVer } from './semver';
 import {
   listWorkspaceDotnetFiles,
+  listWorkspaceNuGetConfigFiles,
   scopeFromDotnetFile,
   sortDotnetTargetPaths,
   isSolutionFile,
+  NUGET_CONFIG_GLOB,
 } from './dotnetWorkspace';
 import {
   snapshotProjectFiles,
@@ -60,6 +67,19 @@ import {
 } from './vulnerabilityScanPolicy';
 import { findingsFromNuGetHttpCache, nugetHttpCacheDirs } from './nugetHttpCacheVdb';
 import { parseRestoreAuditWarnings } from './restoreAuditWarnings';
+import { buildSourcesSnapshot, EMPTY_SOURCES_SNAPSHOT } from './sourcesSnapshot';
+import {
+  patchNuGetConfigFile,
+  replaceAuditSources,
+  removeAuditSource,
+  upsertAuditSource,
+  setPackageSourceConnectionFlags,
+  setPackageSourceDisabled,
+  findPackageSourceLine,
+} from './nugetConfigEdit';
+import { encryptNuGetConfigPassword, supportsEncryptedNuGetPasswords } from './nugetConfigDpapi';
+import { ensureNuGetConfigFile, ensureUserNuGetConfigFile, resolveUserNuGetConfigPath, writeSourceSecrets } from './nugetConfigSecretTarget';
+import { planEffectiveAuditToggle } from './auditSourceToggle';
 
 function cliFailure(
   projectPath: string,
@@ -139,6 +159,11 @@ export class WebviewMessageBroker {
   private _restoreGeneration = 0;
   private _lastRestoreText = '';
 
+  private _nugetConfigWatcher?: vscode.FileSystemWatcher;
+  private _nugetConfigWatchSubs: vscode.Disposable[] = [];
+  private _configChainTimer?: ReturnType<typeof setTimeout>;
+  private _lastSnapshotJson = '';
+
   constructor(
     private readonly provider: NugetManagerViewProvider,
     private readonly backend: INuGetBackend,
@@ -208,6 +233,8 @@ export class WebviewMessageBroker {
       this._postBlockedPackages();
     });
 
+    this._ensureNuGetConfigWatcher();
+
     // When the view is first resolved (or already is), nothing extra needed —
     // the webview will fire WEBVIEW_READY itself after React mounts.
     // But if setScope was called before the view resolved, we need to push
@@ -231,6 +258,7 @@ export class WebviewMessageBroker {
     this._logDisposable = undefined;
     this._configDisposable?.dispose();
     this._configDisposable = undefined;
+    this._disposeNuGetConfigWatcher();
   }
 
   /**
@@ -280,6 +308,15 @@ export class WebviewMessageBroker {
   // ─── Message router ────────────────────────────────────────────────────────
 
   private async _handle(msg: WebviewMessage): Promise<void> {
+    try {
+      await this._route(msg);
+    } catch (err) {
+      this.logger.error(`host handler ${msg.type} failed`, err);
+      this.logger.show();
+    }
+  }
+
+  private async _route(msg: WebviewMessage): Promise<void> {
     this.trace?.recordWebview(msg);
     switch (msg.type) {
       case 'WEBVIEW_READY':
@@ -350,7 +387,27 @@ export class WebviewMessageBroker {
         break;
 
       case 'OPEN_CONFIG_FILE':
-        await this._handleOpenConfigFile(msg.filePath);
+        await this._handleOpenConfigFile(msg.filePath, msg.sourceName);
+        break;
+
+      case 'COPY_TEXT':
+        await vscode.env.clipboard.writeText(msg.text);
+        break;
+
+      case 'OPEN_URL':
+        await this._handleOpenUrl(msg.url);
+        break;
+
+      case 'SET_SOURCE_ENABLED':
+        await this._handleSetSourceEnabled(msg);
+        break;
+
+      case 'SET_SOURCE_CONNECTION_FLAGS':
+        await this._handleSetSourceConnectionFlags(msg);
+        break;
+
+      case 'SET_SOURCE_SECRETS':
+        await this._handleSetSourceSecrets(msg);
         break;
 
       case 'GET_LOG_ENTRIES':
@@ -387,6 +444,14 @@ export class WebviewMessageBroker {
         await this.postSkillStatus();
         break;
 
+      case 'WEBVIEW_ERROR':
+        this.logger.error(
+          `webview ${msg.source}: ${msg.message}`,
+          msg.stack ?? msg.message,
+        );
+        this.logger.show();
+        break;
+
       default:
         break;
     }
@@ -419,10 +484,12 @@ export class WebviewMessageBroker {
           scope: { kind: 'project', projectPath: '' },
           sources: [],
           configChain: [],
+          snapshot: EMPTY_SOURCES_SNAPSHOT,
           includePrerelease: getConfig().includePrerelease,
           blockedPackages: getBlockedPackages(),
           traceRecording: this.trace?.isRecording() ?? false,
           roslynCap: this._roslynCap ?? null,
+          isWindows: process.platform === 'win32',
           ...(await this._skillFields()),
         });
       }
@@ -536,21 +603,12 @@ export class WebviewMessageBroker {
       durationMs: 0,
     });
 
-    const [configChain] = await Promise.all([
-      this.configResolver.resolve(startDir),
+    const [payload] = await Promise.all([
+      this._buildSourcesPayload(scope),
       this._refreshRoslynCap(false),
     ]);
-
-    // Deduplicate sources by name (case-insensitive), nearest config wins
-    const seenSourceNames = new Set<string>();
-    const sources = configChain
-      .flatMap((c) => c.sources)
-      .filter((s) => {
-        const key = s.name.toLowerCase();
-        if (seenSourceNames.has(key)) return false;
-        seenSourceNames.add(key);
-        return true;
-      });
+    const { configChain, sources, snapshot } = payload;
+    this._lastSnapshotJson = JSON.stringify(snapshot);
 
     // Log what we found
     this.logger.logCliOperation({
@@ -569,10 +627,12 @@ export class WebviewMessageBroker {
       scope,
       sources,
       configChain,
+      snapshot,
       includePrerelease: getConfig().includePrerelease,
       blockedPackages: getBlockedPackages(),
       traceRecording: this.trace?.isRecording() ?? false,
       roslynCap: this._roslynCap ?? null,
+      isWindows: process.platform === 'win32',
       ...(await this._skillFields()),
     });
 
@@ -1282,6 +1342,7 @@ export class WebviewMessageBroker {
     try {
       await Promise.all([
         this._refreshRoslynCap(true),
+        this._pushConfigChainUpdate(true),
         this._handleRefresh({
           restore: true,
           listAfterRestore: true,
@@ -1674,14 +1735,403 @@ export class WebviewMessageBroker {
     }
   }
 
-  private async _handleOpenConfigFile(filePath: string): Promise<void> {
+  private _scopeStartDir(scope: WorkspaceScope | null | undefined): string | undefined {
+    if (!scope) return undefined;
+    if (scope.kind === 'solution') return path.dirname(scope.solutionPath);
+    if (scope.projectPath) return path.dirname(scope.projectPath);
+    return undefined;
+  }
+
+  private _projectEntries(scope: WorkspaceScope): { name: string; dir: string }[] {
+    if (scope.kind === 'solution') {
+      return scope.projects.map((p) => ({
+        name: p.name,
+        dir: path.dirname(p.absolutePath),
+      }));
+    }
+    if (!scope.projectPath) return [];
+    return [{
+      name: path.basename(scope.projectPath, path.extname(scope.projectPath)),
+      dir: path.dirname(scope.projectPath),
+    }];
+  }
+
+  private async _buildSourcesPayload(scope: WorkspaceScope): Promise<{
+    configChain: NuGetConfigFile[];
+    sources: ReturnType<typeof uniquePackageSources>;
+    snapshot: ReturnType<typeof buildSourcesSnapshot>;
+  }> {
+    const startDir = this._scopeStartDir(scope);
+    const configChain = startDir ? await this.configResolver.resolve(startDir) : [];
+
+    const resolveCache = new Map<string, Promise<NuGetConfigFile[]>>();
+    const resolveDir = (dir: string): Promise<NuGetConfigFile[]> => {
+      const key = normalizeFsPath(dir);
+      let pending = resolveCache.get(key);
+      if (!pending) {
+        pending = this.configResolver.resolve(dir);
+        resolveCache.set(key, pending);
+      }
+      return pending;
+    };
+
+    const projectChains: { projectName: string; chain: NuGetConfigFile[] }[] = [];
+    for (const proj of this._projectEntries(scope)) {
+      projectChains.push({ projectName: proj.name, chain: await resolveDir(proj.dir) });
+    }
+
+    const parsedByPath = new Map<string, NuGetConfigFile>();
+    const remember = (file: NuGetConfigFile): void => {
+      parsedByPath.set(normalizeFsPath(file.filePath), file);
+    };
+    configChain.forEach(remember);
+    for (const project of projectChains) project.chain.forEach(remember);
+
+    const extraScan = await listWorkspaceNuGetConfigFiles();
+    const extraPaths = extraScan.uris
+      .map((u) => u.fsPath)
+      .filter((p) => path.basename(p).toLowerCase() === 'nuget.config');
+
+    const workspaceConfigs: NuGetConfigFile[] = [];
+    for (const fp of extraPaths) {
+      const existing = parsedByPath.get(normalizeFsPath(fp));
+      if (existing) {
+        workspaceConfigs.push(existing);
+        continue;
+      }
+      const parsed = await parseNuGetConfig(fp);
+      parsedByPath.set(normalizeFsPath(fp), parsed);
+      workspaceConfigs.push(parsed);
+    }
+
+    for (const [key, file] of [...parsedByPath.entries()]) {
+      parsedByPath.set(key, this._parseLiveNuGetConfig(file));
+    }
+    const overlay = (files: NuGetConfigFile[]): NuGetConfigFile[] =>
+      files.map((f) => parsedByPath.get(normalizeFsPath(f.filePath)) ?? f);
+    const liveChain = overlay(configChain);
+    const liveProjects = projectChains.map((p) => ({ ...p, chain: overlay(p.chain) }));
+    const liveWorkspace = overlay(workspaceConfigs);
+    const liveSources = uniquePackageSources(liveChain);
+
+    const snapshot = buildSourcesSnapshot({
+      scopeChain: liveChain,
+      projectChains: liveProjects,
+      workspaceConfigs: liveWorkspace,
+      relativePath: (abs) => vscode.workspace.asRelativePath(abs, true),
+      isGlobalPath: isGlobalNuGetConfigPath,
+      compareAuditToProjects: scope.kind === 'solution',
+      extraConfigsTruncated: extraScan.truncated,
+    });
+
+    return { configChain: liveChain, sources: liveSources, snapshot };
+  }
+
+  private _editorNuGetConfigXml(filePath: string): string | undefined {
+    const want = normalizeFsPath(filePath);
+    const doc = vscode.workspace.textDocuments.find(
+      (d) => !d.isClosed && path.basename(d.fileName).toLowerCase() === 'nuget.config'
+        && normalizeFsPath(d.fileName) === want,
+    );
+    return doc?.getText();
+  }
+
+  private _parseLiveNuGetConfig(file: NuGetConfigFile): NuGetConfigFile {
+    const xml = this._editorNuGetConfigXml(file.filePath);
+    if (xml === undefined) return file;
+    const parsed = parseNuGetConfigXml(file.filePath, xml);
+    parsed.isMachineWide = file.isMachineWide;
+    return parsed;
+  }
+
+  private _ensureNuGetConfigWatcher(): void {
+    if (this._nugetConfigWatcher) return;
+    const watcher = vscode.workspace.createFileSystemWatcher(NUGET_CONFIG_GLOB);
+    this._nugetConfigWatcher = watcher;
+    const bump = (): void => this._scheduleConfigChainRefresh();
+    this._nugetConfigWatchSubs = [
+      watcher.onDidCreate(bump),
+      watcher.onDidChange(bump),
+      watcher.onDidDelete(bump),
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        if (path.basename(e.document.fileName).toLowerCase() === 'nuget.config') bump();
+      }),
+      vscode.workspace.onDidSaveTextDocument((doc) => {
+        if (path.basename(doc.fileName).toLowerCase() === 'nuget.config') bump();
+      }),
+    ];
+  }
+
+  private _disposeNuGetConfigWatcher(): void {
+    if (this._configChainTimer) {
+      clearTimeout(this._configChainTimer);
+      this._configChainTimer = undefined;
+    }
+    this._nugetConfigWatchSubs.forEach((d) => d.dispose());
+    this._nugetConfigWatchSubs = [];
+    this._nugetConfigWatcher?.dispose();
+    this._nugetConfigWatcher = undefined;
+  }
+
+  private _scheduleConfigChainRefresh(): void {
+    if (this._configChainTimer) clearTimeout(this._configChainTimer);
+    this._configChainTimer = setTimeout(() => {
+      this._configChainTimer = undefined;
+      void this._pushConfigChainUpdate(false);
+    }, 200);
+  }
+
+  private async _pushConfigChainUpdate(force: boolean): Promise<void> {
+    const scope = this.provider.getCurrentScope();
+    const startDir = this._scopeStartDir(scope);
+    if (!scope || !startDir) return;
+    const payload = await this._buildSourcesPayload(scope);
+    const json = JSON.stringify({
+      snapshot: payload.snapshot,
+      urls: payload.sources.map((s) => `${s.name}\0${s.url}`),
+    });
+    if (!force && json === this._lastSnapshotJson) return;
+    this._lastSnapshotJson = json;
+    this.provider.postMessage({
+      type: 'CONFIG_CHAIN_UPDATE',
+      configChain: payload.configChain,
+      sources: payload.sources,
+      snapshot: payload.snapshot,
+    });
+    const packageSources = uniqueEnabledPackageSources(payload.configChain);
+    const auditSources = uniqueEnabledAuditSources(payload.configChain);
+    if (shouldRunDotnetListVulnerable(packageSources, auditSources)) {
+      this.provider.postMessage({
+        type: 'VULN_SCAN_HINT',
+        show: false,
+        fingerprint: [
+          ...payload.configChain.map((c) => c.filePath),
+          ...auditSources.map((s) => s.url),
+        ].join('\n'),
+        message: AUDIT_SOURCES_HINT,
+        configFilePath: payload.configChain[0]?.filePath,
+      });
+    }
+  }
+
+  private async _handleSetSourceEnabled(
+    msg: Extract<WebviewMessage, { type: 'SET_SOURCE_ENABLED' }>,
+  ): Promise<void> {
+    try {
+      if (msg.kind === 'audit') {
+        const wrote = await this._setAuditSourceEnabled(msg);
+        if (!wrote) return;
+      } else {
+        if (!this._isWritableNuGetConfig(msg.configFilePath)) {
+          await this._warnNuGetConfigNotWritable(msg.configFilePath);
+          return;
+        }
+        await patchNuGetConfigFile(msg.configFilePath, (xml) => setPackageSourceDisabled(xml, msg.name, !msg.enabled));
+      }
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: msg.kind === 'audit' ? 'nuget.config auditSources' : 'nuget.config source',
+        args: [msg.enabled ? 'enable' : 'disable', msg.name, msg.configFilePath],
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      await this._pushConfigChainUpdate(true);
+    } catch (err) {
+      await vscode.window.showErrorMessage(`Could not update source ${msg.name}: ${String(err)}`);
+    }
+  }
+
+  /**
+   * Audit on/off must not use `<disabledPackageSources>` — that key is shared with
+   * package sources, so toggling audit nuget.org would also disable package nuget.org.
+   * Effective view never copies the whole declared audit list into the nearest
+   * workspace file; inherited feeds go to user NuGet.Config.
+   */
+  private async _setAuditSourceEnabled(
+    msg: Extract<WebviewMessage, { type: 'SET_SOURCE_ENABLED' }>,
+  ): Promise<boolean> {
+    const scope = this.provider.getCurrentScope();
+    const startDir = this._scopeStartDir(scope);
+    const chain = startDir ? await this.configResolver.resolve(startDir) : [];
+    const nearest = chain[0]?.filePath;
+    const targetingNearest = !!nearest && pathsEqual(msg.configFilePath, nearest);
+
+    if (!targetingNearest) {
+      if (!this._isWritableNuGetConfig(msg.configFilePath)) {
+        await this._warnNuGetConfigNotWritable(msg.configFilePath);
+        return false;
+      }
+      if (msg.enabled) {
+        if (!msg.url) {
+          await vscode.window.showWarningMessage(`Could not enable audit source ${msg.name}: missing URL.`);
+          return false;
+        }
+        await patchNuGetConfigFile(msg.configFilePath, (xml) => upsertAuditSource(xml, msg.name, msg.url!));
+        return true;
+      }
+      await patchNuGetConfigFile(msg.configFilePath, (xml) => removeAuditSource(xml, msg.name));
+      return true;
+    }
+
+    const userConfigPath = await resolveUserNuGetConfigPath();
+    const edits = planEffectiveAuditToggle({
+      chain,
+      name: msg.name,
+      enabled: msg.enabled,
+      url: msg.url,
+      userConfigPath,
+    });
+    if (edits.length === 0) {
+      if (msg.enabled) {
+        await vscode.window.showWarningMessage(`Could not enable audit source ${msg.name}: missing URL.`);
+      }
+      return false;
+    }
+
+    const written: string[] = [];
+    for (const edit of edits) {
+      if (!this._isWritableNuGetConfig(edit.filePath)) {
+        await this._warnNuGetConfigNotWritable(edit.filePath);
+        continue;
+      }
+      if (isGlobalNuGetConfigPath(edit.filePath) || pathsEqual(edit.filePath, userConfigPath)) {
+        await ensureNuGetConfigFile(edit.filePath);
+      }
+      if (edit.op === 'replace') {
+        await patchNuGetConfigFile(edit.filePath, (xml) => replaceAuditSources(xml, edit.sources, true));
+      } else if (edit.op === 'upsert') {
+        await patchNuGetConfigFile(edit.filePath, (xml) => upsertAuditSource(xml, edit.name, edit.url));
+      } else {
+        await patchNuGetConfigFile(edit.filePath, (xml) => removeAuditSource(xml, edit.name));
+      }
+      written.push(edit.filePath);
+    }
+    return written.length > 0;
+  }
+
+  private async _handleSetSourceConnectionFlags(
+    msg: Extract<WebviewMessage, { type: 'SET_SOURCE_CONNECTION_FLAGS' }>,
+  ): Promise<void> {
+    if (!this._isWritableNuGetConfig(msg.configFilePath)) {
+      await this._warnNuGetConfigNotWritable(msg.configFilePath);
+      return;
+    }
+    try {
+      await patchNuGetConfigFile(msg.configFilePath, (xml) => setPackageSourceConnectionFlags(xml, msg.name, {
+        allowInsecureConnections: msg.allowInsecureConnections,
+        disableTlsCertificateValidation: msg.disableTlsCertificateValidation,
+      }));
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: 'nuget.config source flags',
+        args: [
+          msg.name,
+          `allowInsecureConnections=${msg.allowInsecureConnections}`,
+          `disableTLSCertificateValidation=${msg.disableTlsCertificateValidation}`,
+          msg.configFilePath,
+        ],
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      await this._pushConfigChainUpdate(true);
+    } catch (err) {
+      await vscode.window.showErrorMessage(`Could not update source ${msg.name}: ${String(err)}`);
+    }
+  }
+
+  private async _handleSetSourceSecrets(msg: Extract<WebviewMessage, { type: 'SET_SOURCE_SECRETS' }>): Promise<void> {
+    const machine = isMachineWideNuGetConfigPath(msg.configFilePath);
+    if (!machine && !this._isWritableNuGetConfig(msg.configFilePath)) {
+      await this._warnNuGetConfigNotWritable(msg.configFilePath);
+      return;
+    }
+    try {
+      let password = msg.password;
+      let passwordEncrypted = false;
+      if (password && supportsEncryptedNuGetPasswords()) {
+        password = await encryptNuGetConfigPassword(password);
+        passwordEncrypted = true;
+      }
+      const userConfigPath = await ensureUserNuGetConfigFile();
+      const result = await writeSourceSecrets({
+        declaredFilePath: msg.configFilePath,
+        userConfigPath,
+        sourceName: msg.name,
+        sourceUrl: msg.url,
+        username: msg.username,
+        password,
+        passwordEncrypted,
+        clearCredentials: msg.clearCredentials,
+        apiKey: msg.clearApiKey ? null : (msg.apiKey !== undefined && msg.apiKey !== '' ? msg.apiKey : undefined),
+      });
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: 'nuget.config secrets',
+        args: [
+          msg.clearCredentials || msg.clearApiKey ? 'clear' : 'update',
+          msg.name,
+          result.targetPath,
+          ...(result.strippedDeclared ? ['stripped', msg.configFilePath] : []),
+        ],
+        stdout: 'secrets omitted',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      await this._pushConfigChainUpdate(true);
+    } catch (err) {
+      await vscode.window.showErrorMessage(`Could not update credentials for ${msg.name}: ${String(err)}`);
+    }
+  }
+
+  private _isWritableNuGetConfig(filePath: string): boolean {
+    if (isMachineWideNuGetConfigPath(filePath)) return false;
+    return path.basename(filePath).toLowerCase() === 'nuget.config';
+  }
+
+  private async _warnNuGetConfigNotWritable(filePath: string): Promise<void> {
+    const reason = isMachineWideNuGetConfigPath(filePath)
+      ? 'Machine-wide NuGet config is read-only.'
+      : 'This file is not a writable nuget.config.';
+    await vscode.window.showWarningMessage(`${reason} (${filePath})`);
+  }
+
+  private async _handleOpenConfigFile(filePath: string, sourceName?: string): Promise<void> {
     try {
       const doc = await vscode.workspace.openTextDocument(filePath);
-      await vscode.window.showTextDocument(doc);
+      const editor = await vscode.window.showTextDocument(doc, { preview: false });
+      if (!sourceName) return;
+      const line = findPackageSourceLine(doc.getText(), sourceName);
+      if (line === undefined) return;
+      const start = new vscode.Position(line, 0);
+      const end = doc.lineAt(line).range.end;
+      editor.selection = new vscode.Selection(start, end);
+      editor.revealRange(new vscode.Range(start, end), vscode.TextEditorRevealType.InCenter);
     } catch (err) {
       this.provider.postMessage({
         type: 'ERROR',
         message: `Cannot open ${filePath}`,
+        details: String(err),
+      });
+    }
+  }
+
+  private async _handleOpenUrl(url: string): Promise<void> {
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed)) return;
+    try {
+      await vscode.env.openExternal(vscode.Uri.parse(trimmed));
+    } catch (err) {
+      this.provider.postMessage({
+        type: 'ERROR',
+        message: `Cannot open ${trimmed}`,
         details: String(err),
       });
     }

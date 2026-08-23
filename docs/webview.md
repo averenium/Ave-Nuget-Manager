@@ -13,7 +13,7 @@
 - `scope`, `activeTab` (`packages` | `updates` | `sources` | `log` | `agents`);
 - `packages` — installed / implicit / available, пошук, джерела, prerelease, enrich progress, loading, `blockedPackages`;
 - `updates` — історія batch-джобів (Update all / family);
-- `sources.configChain` / `allSources`;
+- `sources.configChain` / `allSources` / `snapshot` (effective feeds, chain diffs, conflicts);
 - `log.entries`;
 - `agents` — bundled version, `detected` families, `installs` (path + version + outdated);
 - `detail` — вибраний пакет, metadata, versions, per-project loading/errors;
@@ -88,7 +88,7 @@ Host відхиляє `INSTALL_PACKAGE` / `INSTALL_PACKAGE_MULTI` / `UPDATE_PACK
 
 ## Sources, Log і Agents
 
-Окремі документи: [config-chain](config-chain.md), [logging](logging.md), [agent-skill](agent-skill.md). `AgentsTab` — картка skill + **Install…** або split **Update | …** (`INSTALL_AGENT_SKILL`). **…** — QuickPick в інше місце. Update не відкриває QuickPick. Після copy host одразу шле `SKILL_STATUS` (тост не блокує). Вкладка не ховається, якщо `detected` порожній.
+Окремі документи: [config-chain](config-chain.md), [logging](logging.md), [agent-skill](agent-skill.md). Sources — `SplitPane` 35/65: зліва секції конфігів (Effective / Workspace / Global / Machine), справа репозиторії з бейджами; Edit розгортає форму в рядку. `AgentsTab` — картка skill + **Install…** або split **Update | …** (`INSTALL_AGENT_SKILL`). **…** — QuickPick в інше місце. Update не відкриває QuickPick. Після copy host одразу шле `SKILL_STATUS` (тост не блокує). Вкладка не ховається, якщо `detected` порожній.
 
 ## Стилі
 

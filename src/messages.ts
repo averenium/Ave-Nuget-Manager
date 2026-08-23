@@ -6,6 +6,7 @@ import type {
   PackageMetadata,
   PackageSource,
   NuGetConfigFile,
+  SourcesSnapshot,
   LogEntry,
   OperationFailure,
   BatchUpdateItem,
@@ -57,7 +58,30 @@ export type WebviewMessage =
   | { type: 'FORCE_REFRESH' }   // clears cache then refreshes
 
   // Sources tab
-  | { type: 'OPEN_CONFIG_FILE'; filePath: string }
+  | { type: 'OPEN_CONFIG_FILE'; filePath: string; sourceName?: string }
+  | { type: 'COPY_TEXT'; text: string }
+  | { type: 'OPEN_URL'; url: string }
+  | { type: 'SET_SOURCE_ENABLED'; name: string; configFilePath: string; enabled: boolean; kind?: 'package' | 'audit'; url?: string }
+  | {
+      type: 'SET_SOURCE_CONNECTION_FLAGS';
+      name: string;
+      configFilePath: string;
+      allowInsecureConnections: boolean;
+      disableTlsCertificateValidation: boolean;
+    }
+  | {
+      type: 'SET_SOURCE_SECRETS';
+      name: string;
+      configFilePath: string;
+      url: string;
+      username?: string;
+      /** Empty = keep existing password. */
+      password?: string;
+      /** Empty = keep existing API key. */
+      apiKey?: string;
+      clearCredentials?: boolean;
+      clearApiKey?: boolean;
+    }
 
   // Log tab
   | { type: 'GET_LOG_ENTRIES' }
@@ -71,7 +95,9 @@ export type WebviewMessage =
   /** Host `showInformationMessage` (toast). */
   | { type: 'SHOW_TOAST'; message: string }
   /** Agents tab — Install… (QuickPick) or Update in place when `updateExisting`. */
-  | { type: 'INSTALL_AGENT_SKILL'; updateExisting?: boolean };
+  | { type: 'INSTALL_AGENT_SKILL'; updateExisting?: boolean }
+  /** React / window crash in the webview — host writes Output Channel. */
+  | { type: 'WEBVIEW_ERROR'; source: string; message: string; stack?: string };
 
 // ─────────────────────────────────────────────
 // Extension Host → Webview
@@ -84,6 +110,7 @@ export type ExtensionMessage =
       scope: WorkspaceScope;
       sources: PackageSource[];
       configChain: NuGetConfigFile[];
+      snapshot: SourcesSnapshot;
       includePrerelease: boolean;
       blockedPackages: string[];
       traceRecording: boolean;
@@ -92,6 +119,8 @@ export type ExtensionMessage =
       installs: SkillInstallRow[];
       /** `null` when `csc -version` failed — Groups omit CodeAnalysis ids. */
       roslynCap: RoslynCap | null;
+      /** Host OS is Windows — `<apikeys>` DPAPI works; Copy / `<clearTextApiKeys>` UI is hidden. */
+      isWindows: boolean;
     }
 
   // Packages
@@ -103,7 +132,7 @@ export type ExtensionMessage =
   | { type: 'VULNERABILITIES'; findings: VulnerabilityFinding[] }
   /** Quiet hint when `dotnet list --vulnerable` was skipped (Nexus / no VDB). */
   | {
-      type: 'VULN_SCAN_HINT';
+      type: 'VULN_SCAN_HINT'; 
       show: boolean;
       fingerprint: string;
       message: string;
@@ -157,7 +186,12 @@ export type ExtensionMessage =
   | { type: 'REFRESH_FINISHED' }
 
   // Sources
-  | { type: 'CONFIG_CHAIN_UPDATE'; configChain: NuGetConfigFile[] }
+  | {
+      type: 'CONFIG_CHAIN_UPDATE';
+      configChain: NuGetConfigFile[];
+      sources: PackageSource[];
+      snapshot: SourcesSnapshot;
+    }
 
   // Log
   | { type: 'LOG_ENTRIES'; entries: LogEntry[] }

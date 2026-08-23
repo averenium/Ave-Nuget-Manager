@@ -30,7 +30,6 @@ Retry 429/503 на catalog GET — у `HttpBackend`, не в `cliRetry` (той 
 | Елемент | Стан |
 |---|---|
 | `DOTNET_NOT_FOUND` | Банер у `App.tsx` є; `activate()` лише логує відсутність SDK |
-| `CONFIG_CHAIN_UPDATE` | Reducer є, host не шле |
 | `REFRESH_PACKAGES` | Handler є, UI шле `RESTORE_PACKAGES` / `FORCE_REFRESH` |
 
 ## Settings
@@ -49,7 +48,7 @@ Retry 429/503 на catalog GET — у `HttpBackend`, не в `cliRetry` (той 
 - Лише `.csproj` / `.fsproj`, немає `.vbproj`.
 - Немає рекурсивного пошуку проєктів у підпапках.
 - Лише `workspaceFolders[0]`.
-- Sources — read-only (немає CRUD джерел).
+- Sources — можна змінити on/off, credentials і API key існуючого джерела; немає add/remove feeds.
 - `packages.config` (nuget.exe) не оновлюється; legacy csproj з PackageReference — так.
 
 ## Інфра

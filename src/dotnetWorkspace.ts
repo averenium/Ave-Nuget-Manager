@@ -3,6 +3,7 @@ import * as path from 'path';
 import { shouldShowContextMenu } from './solutionParser';
 import type { SolutionParser } from './solutionParser';
 import type { WorkspaceScope } from './types';
+import { trueCaseFilePath } from './nugetConfigChainResolver';
 
 /** Context key for the NuGet panel view `when` clause. Set during activate(). */
 export const HAS_DOTNET_WORKSPACE_CONTEXT = 'averenium.nugetManager.hasDotnetWorkspace';
@@ -17,6 +18,9 @@ export const DOTNET_PROJECT_GLOB = '**/*.{sln,slnx,csproj,fsproj}';
 
 /** Skip restore output, git metadata, and JS deps when probing the workspace. */
 export const DOTNET_PROJECT_EXCLUDE_GLOB = '{**/node_modules/**,**/bin/**,**/obj/**,**/.git/**}';
+
+/** Workspace nuget.config files (VS Code glob is case-insensitive on Windows). */
+export const NUGET_CONFIG_GLOB = '**/nuget.config';
 
 export const SOLUTION_EXTENSIONS = new Set(['.sln', '.slnx']);
 
@@ -49,6 +53,35 @@ export async function listWorkspaceDotnetFiles(): Promise<vscode.Uri[]> {
     return [];
   }
   return vscode.workspace.findFiles(DOTNET_PROJECT_GLOB, DOTNET_PROJECT_EXCLUDE_GLOB);
+}
+
+/** Cap for nuget.config workspace scans so a huge monorepo does not walk the tree unbounded. */
+export const NUGET_CONFIG_FIND_LIMIT = 200;
+
+export function capFoundUris<T>(found: readonly T[], limit = NUGET_CONFIG_FIND_LIMIT): {
+  items: T[];
+  truncated: boolean;
+} {
+  if (found.length > limit) return { items: found.slice(0, limit), truncated: true };
+  return { items: [...found], truncated: false };
+}
+
+export async function listWorkspaceNuGetConfigFiles(): Promise<{ uris: vscode.Uri[]; truncated: boolean }> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return { uris: [], truncated: false };
+  }
+  const found = await vscode.workspace.findFiles(
+    NUGET_CONFIG_GLOB,
+    DOTNET_PROJECT_EXCLUDE_GLOB,
+    NUGET_CONFIG_FIND_LIMIT + 1,
+  );
+  const capped = capFoundUris(found, NUGET_CONFIG_FIND_LIMIT);
+  const uris = await Promise.all(capped.items.map(async (uri) => {
+    const actual = await trueCaseFilePath(uri.fsPath);
+    return actual === uri.fsPath ? uri : vscode.Uri.file(actual);
+  }));
+  return { uris, truncated: capped.truncated };
 }
 
 export async function scopeFromDotnetFile(
@@ -88,8 +121,8 @@ export async function refreshDotnetWorkspaceContext(): Promise<boolean> {
  */
 export async function watchDotnetWorkspaceContext(
   context: vscode.ExtensionContext,
-): Promise<void> {
-  await refreshDotnetWorkspaceContext();
+): Promise<boolean> {
+  const has = await refreshDotnetWorkspaceContext();
 
   const run = (): void => {
     void refreshDotnetWorkspaceContext();
@@ -102,4 +135,5 @@ export async function watchDotnetWorkspaceContext(
     watcher.onDidDelete(run),
     vscode.workspace.onDidChangeWorkspaceFolders(run),
   );
+  return has;
 }

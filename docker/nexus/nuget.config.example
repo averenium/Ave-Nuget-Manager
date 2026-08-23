@@ -6,7 +6,7 @@
     <add key="nexus-group" value="http://localhost:8081/repository/nuget-group/index.json" allowInsecureConnections="true" />
     <!-- Split feeds for #27 ladders / hosted-only search. Leave disabled unless you need them. -->
     <add key="nexus-proxy" value="http://localhost:8081/repository/nuget.org-proxy/index.json" allowInsecureConnections="true" />
-    <add key="nexus-hosted" value="http://localhost:8081/repository/nuget-hosted/index.json" allowInsecureConnections="true" />
+    <add key="nexus-hosted" value="http://localhost:8081/repository/nuget-hosted/" allowInsecureConnections="true" />
   </packageSources>
   <disabledPackageSources>
     <add key="nexus-proxy" value="true" />

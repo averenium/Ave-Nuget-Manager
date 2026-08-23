@@ -7,5 +7,6 @@
     <Authors>nuget-manager-lab</Authors>
     <Description>Hosted-only package for the local Nexus lab. Not on nuget.org.</Description>
     <IsPackable>true</IsPackable>
+    <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 </Project>

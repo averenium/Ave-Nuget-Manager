@@ -1,6 +1,6 @@
 # Ланцюжок nuget.config
 
-Файл: `src/nugetConfigChainResolver.ts`.  
+Файли: `src/nugetConfigChainResolver.ts`, `src/sourcesSnapshot.ts`.  
 UI: `src/webview/components/SourcesTab.tsx`.
 
 ## Resolve
@@ -14,33 +14,56 @@ UI: `src/webview/components/SourcesTab.tsx`.
 
 Порядок: **найближчий = індекс 0**, глобальний — останній.
 
-### Глобальні шляхи
+Host також резолвить ланцюжок **кожного csproj/fsproj** у поточному scope і `findFiles('**/nuget.config')` з лімітом 200 (`extraConfigsTruncated` у знімку, Other показує примітку).
 
-| Платформа | Основний | Legacy |
-|---|---|---|
-| Windows | `%APPDATA%\NuGet` | — |
-| macOS / Linux | `~/.config/NuGet` | `~/.nuget/NuGet` |
+### Глобальні та machine-wide шляхи
+
+| Платформа | User | Legacy user | Computer (`*.config`) |
+|---|---|---|---|
+| Windows | `%APPDATA%\NuGet` | — | `%ProgramFiles(x86)%\NuGet\Config` |
+| macOS | `~/.config/NuGet` | `~/.nuget/NuGet` | `/Library/Application Support/NuGet/Config` |
+| Linux | `~/.config/NuGet` | `~/.nuget/NuGet` | `/etc/opt/NuGet/Config` |
+
+`NUGET_COMMON_APPLICATION_DATA/NuGet/Config` перебиває computer-шлях. Machine-wide файли — найдальші в ланцюжку (після user), у UI окрема секція **Machine** (як Installed / Implicit), read-only (без запису disabled/credentials). User config — секція **Global**. Solution/project — **Workspace**. Злитий вигляд — **Effective**.
 
 ## Парсинг XML
 
 Без DOM, regex:
 
-- Секція `<packageSources>` — `<add key="Name" value="url" />` → `PackageSource`.
-- Секція `<disabledPackageSources>` — `value="true"` вимикає джерело з тим самим `key`.
-- Секція `<auditSources>` — ті самі `<add>`; `<clear />` обрізає дальші файли. Ключ у `disabledPackageSources` вимикає audit source з тим самим ім’ям. Порожня секція показується як **none**.
+- Секція `<packageSources>` — `<add key="Name" value="url" />` → `PackageSource`. Читає `allowInsecureConnections` і `disableTLSCertificateValidation` (лише `true`). `protocolVersion` 2/3 — у рядку тихий бейдж **v2**, якщо явно 2 або URL не закінчується на `.json`. `<clear />` обрізає дальші файли (`packageSourcesCleared`).
+- Секція `<disabledPackageSources>` — merge farthest → nearest. `<clear />` стирає батьківський список; `value="true"` вимикає, `value="false"` знову вмикає. Effective `enabled` береться з цього merge, не лише з того самого файлу, що оголосив `<add>`. У NuGet цей список спільний за ключем: вимкнений package `nuget.org` також вимикає audit з тим самим ім’ям. Toggle Audit у UI **не** пише сюди — інакше вимкнути audit = вимкнути package.
+- Секція `<packageSourceMapping>` — merge farthest → nearest. `<clear />` стирає батьківські правила; той самий `key` повністю замінює список pattern. Порожній злитий список = mapping вимкнено.
+- Секція `<auditSources>` — ті самі `<add>`; `<clear />` обрізає дальші файли. Effective-рядки після nearer `<clear />` лишаються в UI як disabled (`uniqueAuditSourcesWithSuppressed`), щоб їх можна було знову ввімкнути без `<disabledPackageSources>`.
+- Секція `<packageSourceCredentials>` — лише **імена** ключів і **username** (`credentialKeys` / `credentialUsernames`). Імена елементів з `_xHHHH_` (пробіл → `_x0020_`) декодуються до ключа джерела. Паролі не читаються в webview. **Читання:** з усього ланцюжка (Effective і форма файлу показують наявність, якщо секрет є в user/global). **Запис:** не ближче за user/global `%APPDATA%\NuGet\NuGet.Config` (або `~/.config/NuGet`). Workspace `nuget.config` не отримує password / API key; якщо там уже був блок — його знімаємо, щоб він не перебивав user config. Windows — `Password` (DPAPI). macOS/Linux — `ClearTextPassword`. Порожній password на Save копіює наявний blob. `<clear />` у `<packageSourceCredentials>` репо все ще ховає батьківські credentials (NuGet); у цей файл секрети не пишемо.
+- Секція `<apikeys>` — лише URL-ключі (`apiKeyUrls`), значення не шлються. **Запис Windows:** той самий DPAPI blob, що й `Password` (`AQAA…` Base64). Сирий GUID у value ламає `FromBase64String`. **Запис не Windows:** секція `<clearTextApiKeys>` (plaintext, той самий URL-ключ) — NuGet CLI не вміє розшифрувати `<apikeys>` поза Windows; пізніше Push з розширення читатиме це поле. Кнопка **Copy** (`export NUGET_API_KEY=…`) лише не на Windows.
 - Помилка читання/парсингу → `parseError`, `sources: []`.
+- `%VAR%` у `value` розгортається для відображення, kind, copy URL, порівняння URL у конфліктах і гейта `dotnet list --vulnerable` (NuGet 3.4+, навіть на Unix). Сирий рядок лишається в XML і в `urlRaw`. `$HOME` не розгортається. Імена змінних матчаться case-insensitive (добріше за CLI: `%home%` ≠ `%HOME%` у NuGet на Linux).
 
-Не парсяться: credentials, package source mapping, fallback, `<clear/>` як семантика NuGet (файл просто додається в ланцюжок; дедуп імен робить broker/UI).
+Не парсяться: fallbackPackageFolders.
 
 ## Дедуплікація джерел
 
-У `_initForScope` і на вкладці Sources: перша зустріч імені (case-insensitive) виграє — тобто nearest config. Дальші файли з тим самим `key` показуються як «усі джерела вже визначені ближчим файлом».
+`uniquePackageSources` / `uniqueEnabledPackageSources` / `uniqueAuditSources`: перша зустріч імені (case-insensitive) виграє — nearest config. `<clear />` у відповідній секції зупиняє дальші файли. Після збору імен `enabled` накладається з merged `disabledPackageSources`. `uniqueDeclaredAuditSources` цей merge пропускає — щоб rewrite `<auditSources>` не викидав add лише тому, що package-ключ вимкнений.
+
+## Знімок Sources (`SourcesSnapshot`)
+
+`buildSourcesSnapshot` (чиста функція):
+
+1. **Effective** — unique package + audit джерела поточного scope: ON/OFF, kind (`nuget.org` / `data.nuget.org` / HTTP / local), «credentials set», copy URL. Якщо mapping увімкнено — `mappingPatterns` на рядку (порожній масив = unmapped).
+2. **Chain** — відносний шлях без префікса типу; у UI файли згруповані в секції **Workspace** / **Global** / **Machine**; **що змінив файл** (added / replaced / disabled / clear / overridden), не другий повний список. Disable імені, якого немає в `<packageSources>` цього файлу, теж показується як `disabled`. `auditSources` лише якщо цей файл їх задав або зробив `<clear />`.
+3. **Other nuget.config** — workspace-файли поза поточним ланцюжком: `applies` (діє на N проєктів) або `dead`. У знімку є `packageSources` / `auditSources` цього файлу (URL розгортає host), щоб клік по Other не шукав файл у `configChain` scope.
+4. **Conflicts** (#36) на панелі Sources (не `globalError`):
+   - той самий key → різні URL;
+   - той самий URL → різні key в effective-наборі (не попереджає nuget.org + Global з тим самим URL);
+   - `<clear />` прибирає батьківські **не-nuget.org** feeds (ізоляція від nuget.org / Global — не конфлікт);
+   - auditSources solution ≠ проєкт;
+   - файл поза ланцюжком, який усе ж застосовується до csproj.
+5. **Audit hint** (#7) — ⚠ на вкладці Sources і на Effective, лише якщо немає working HTTP `<auditSources>` для не-nuget.org feeds. Off-chain `applies` сам по собі вкладку не мітить.
 
 ## Вкладка Sources
 
-- Список файлів ланцюжка.
-- Клік по шляху → `OPEN_CONFIG_FILE` → `workspace.openTextDocument`.
-- Бейдж ON/OFF, ім’я, URL.
-- Під кожним файлом — `auditSources` (або **none**). Якщо ⚠-скан пропущено через feed без VDB — один рядок-підказка з посиланням відкрити nuget.config.
-- **Немає** додавання/видалення/toggle джерел у UI — лише правкою XML.
-- Повідомлення `CONFIG_CHAIN_UPDATE` у протоколі є, host його не шле: зміна файлу на диску не оновлює вкладку, поки не буде нового init/refresh scope.
+`SplitPane` 35/65: зліва конфіги секціями як пакети (Installed / Implicit) — **Effective**, **Workspace**, **Global**, **Machine**, порожні секції ховаються; Other — файли поза ланцюжком. Справа репозиторії цього вибору: рядок = ім’я + короткі позначки (`on`/`off`, `v2`, user, іконка API key, іконка HTTP, іконка skip-TLS, `unmapped`) + URL + patterns mapping. У **Effective** machine-wide package sources виносяться в секцію **Machine** після Audit (VS Offline тощо). Клік по Machine-файлу зліва показує його джерела як звичайний список; **Edit** на machine-wide ховається (запис у Program Files / `/etc` — no-op). **Edit** розгортає форму і підписує три цілі: Enable з Effective → `disabledPackageSources` у **найближчий** config; HTTP/TLS → файл `<add>` (`configFilePath`); credentials/API key → user `NuGet.Config` (**Save credentials** / Enter, не blur/unmount). Не Windows **Copy typed** копіює лише щойно введений ключ (збережений у панель не приходить). Ключ `<apikeys>` — `value` з XML (`urlRaw`), не розгорнутий URL. `%VAR%` розгортає host (`process.env`); webview env не чіпає. Якщо `nuget.config` відкритий (у т.ч. dirty), запис іде в буфер через `WorkspaceEdit` і save, не `writeFile` поверх диску. Toggle **package** з Effective пише `disabledPackageSources` у **найближчий** config (`value="true"` / `value="false"`), не в файл, що оголосив джерело. Toggle **audit** з Effective змінює один ключ: якщо він уже в workspace-файлі (або той файл має `<clear />`) — upsert/remove там; успадкований з user/machine — user `NuGet.Config` (за потреби `<clear />` + решта дальніх feeds). Не копіює весь audit-ланцюг у repo `nuget.config`. Вигляд файлу: upsert/remove. Не чіпає спільний disable-список. CLI все одно вимкне audit того ключа, якщо package вимкнений через `<disabledPackageSources>`. CRUD нових джерел і редактор mapping немає.
+
+## Живі оновлення
+
+Host дивиться `**/nuget.config` (debounce 200 мс) і шле `CONFIG_CHAIN_UPDATE` (`configChain`, `sources`, `snapshot`). Те саме після Restore / Force refresh / зміни scope. Без toast на кожен save.

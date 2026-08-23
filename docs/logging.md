@@ -8,6 +8,13 @@
 - in-memory масив `LogEntry[]` (хронологічний, без ліміту розміру);
 - pub/sub: `subscribe(listener)` → `Disposable`;
 - `clear()` — порожнить масив і Output Channel. **Не** зупиняє trace і не чіпає `globalStorage`.
+- `info` / `error` — діагностика host (активація, view). Лише Output Channel (+ `console.error` для `error`). У вкладку Log не потрапляють.
+
+`activate()` обгорнутий у try/catch: кроки в Output (`activate start` … `activate done`). Якщо кидок — `error` зі stack, канал показується, toast `AVE NuGet Manager failed to start`, виняток пробрасується далі в VS Code. `resolveWebviewView` так само ловить свої помилки.
+
+Падіння **webview** (білий екран): React Error Boundary показує stack у панелі й шле `WEBVIEW_ERROR`. Те саме для `window.onerror`, `unhandledrejection` і винятку в reducer. Host пише `[error] webview react|window|reducer: …` і відкриває цей канал.
+
+Куди дивитись, якщо панель не з’явилась: **Output → Averenium NuGet Manager**, не лог C# / restore.
 
 Кожен `CliRunner.run` і частина «несправжніх» операцій broker (резолв config chain) викликають `logCliOperation`.
 
@@ -33,6 +40,6 @@
 
 Повторний Start, поки сесія жива: запропонувати спочатку Stop. Hide panel (`retainContextWhenHidden`) **не** зупиняє запис. Після reload Extension Host, якщо лишилась папка сесії: **Stop & pack** / **Discard**.
 
-Поки запис увімкнено, додатково (лише у файли сесії, не у вкладку Log): webview `type` + урізаний payload; кроки broker (init, snapshot, add/remove, batch-item, enrich-retry, vuln); CLI `cwd` / duration / stdout / stderr.
+Поки запис увімкнено, додатково (лише у файли сесії, не у вкладку Log): webview `type` + урізаний payload (`password` / `apiKey` → `omitted`; `COPY_TEXT` з `export NUGET_API_KEY=` без значення); кроки broker (init, snapshot, add/remove, batch-item, enrich-retry, vuln); CLI `cwd` / duration / stdout / stderr.
 
 У zip після sanitizer (`src/traceSanitize.ts`, найдовший шлях першим): `trace.jsonl` (CLI stdout/stderr, webview, broker — без окремого `cli.log`), ланцюжок `nuget.config`, csproj/fsproj scope + `Directory.Packages.props` / `Directory.Build.props` / `global.json` / `packages.config` / `.sln`, `blocked-packages.json` (лише ids). Кожен проєкт/конфіг має **один** id (`projects/p01.csproj`, `nuget-config/c00.xml`) — той самий у `trace.jsonl`, у `ProjectReference` / `.sln` / `.slnx` (csproj/fsproj/vbproj) і в папках zip. У csproj маскуються **Container*** / **Docker*** / **Registry*** (реєстр образів, репозиторій, env, ключі Windows Registry); порти й `EnableSdkContainerSupport` лишаються. Елементи й атрибути, у назві яких є **password** / **apikey** (і `key`/`Include` з таким словом), теж `<redacted>`. Дефолтна назва архіву: `nuget-manager-trace-YYYY-MM-DD_HH-MM-SS.zip`. Без secrets, `.vscode/settings.json`, `.cs`, `appsettings`, `bin`/`obj`. Ліміт ~15 MB / 30 хв (oldest jsonl drop, `truncated=yes` у README). Більше 40 проєктів — touched + `projects-omitted.txt`.

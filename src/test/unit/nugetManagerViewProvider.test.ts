@@ -42,6 +42,7 @@ describe('NugetManagerViewProvider', () => {
     const first = fakeView();
     provider.resolveWebviewView(first as unknown as vscode.WebviewView, {} as never, {} as never);
     expect(first.webview.html).toContain('id="root"');
+    expect(first.webview.html).toContain('UI bundle missing');
 
     first.fireDispose();
 

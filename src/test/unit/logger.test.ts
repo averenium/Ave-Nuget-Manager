@@ -1,4 +1,4 @@
-import { Logger } from '../../logger';
+import { Logger, formatUnknownError } from '../../logger';
 import type { CliLogEntry } from '../../logger';
 import type { LogEntry } from '../../types';
 
@@ -180,5 +180,36 @@ describe('Logger', () => {
     expect(logger.getEntries()).toHaveLength(1);
     logger.clear();
     expect(logger.getEntries()).toHaveLength(0);
+  });
+
+  it('info writes to the Output Channel and does not create a LogEntry', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const vscode = require('vscode');
+    const channels: Array<{ name: string; lines: string[] }> = vscode.window._outputChannels;
+    const ch = channels.filter((c) => c.name === 'Averenium NuGet Manager').at(-1);
+    logger.info('activate start');
+    expect(logger.getEntries()).toHaveLength(0);
+    expect(ch?.lines.some((l) => l.includes('[info]') && l.includes('activate start'))).toBe(true);
+  });
+
+  it('error writes stack and does not throw', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const vscode = require('vscode');
+    const channels: Array<{ name: string; lines: string[] }> = vscode.window._outputChannels;
+    const ch = channels.filter((c) => c.name === 'Averenium NuGet Manager').at(-1);
+    expect(() => logger.error('activate failed', new Error('boom'))).not.toThrow();
+    expect(ch?.lines.some((l) => l.includes('[error]') && l.includes('activate failed'))).toBe(true);
+    expect(ch?.lines.some((l) => l.includes('boom'))).toBe(true);
+  });
+});
+
+describe('formatUnknownError', () => {
+  it('uses Error.stack when present', () => {
+    const err = new Error('nope');
+    expect(formatUnknownError(err)).toContain('nope');
+  });
+
+  it('stringifies non-Error values', () => {
+    expect(formatUnknownError('x')).toBe('x');
   });
 });

@@ -56,4 +56,35 @@ describe('TraceSession', () => {
       projects: ['Foo.csproj', 'Bar.csproj'],
     });
   });
+
+  it('omits password and apiKey from SET_SOURCE_SECRETS', () => {
+    const slim = summarizeWebviewMessage({
+      type: 'SET_SOURCE_SECRETS',
+      name: 'nexus',
+      configFilePath: '/p/nuget.config',
+      url: 'https://nexus.example/repository/nuget',
+      username: 'ci',
+      password: 'hunter2',
+      apiKey: 'oy2-short',
+    });
+    const json = JSON.stringify(slim);
+    expect(slim).toMatchObject({
+      type: 'SET_SOURCE_SECRETS',
+      name: 'nexus',
+      username: 'ci',
+      password: 'omitted',
+      apiKey: 'omitted',
+    });
+    expect(json).not.toContain('hunter2');
+    expect(json).not.toContain('oy2-short');
+  });
+
+  it('omits NUGET_API_KEY from COPY_TEXT', () => {
+    const slim = summarizeWebviewMessage({
+      type: 'COPY_TEXT',
+      text: "export NUGET_API_KEY='oy2-short'",
+    }) as { text?: string };
+    expect(slim.text).toBe('export NUGET_API_KEY=<omitted>');
+    expect(JSON.stringify(slim)).not.toContain('oy2-short');
+  });
 });

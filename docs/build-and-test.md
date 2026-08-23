@@ -38,8 +38,8 @@
 | `commandRegistrar.test.ts` | Резолв URI / папки / QuickPick; Open Settings |
 | `cliRetry.test.ts` | Allowlist retry для group `dotnet add` (timeout, NU1301, HTTP у CLI vs NU1605) |
 | `agentSkillInstall.test.ts` | Detect/sort skill targets, atomic copy, frontmatter version |
-| `configChainResolver.test.ts` | Ланцюжок і парсинг XML |
-| `logger.test.ts` | Записи, subscribe, стійкість до помилок, `clear()` |
+| `configChainResolver.test.ts` / `sourcesSnapshot.test.ts` / `nugetConfigEdit.test.ts` | Ланцюжок XML, effective feeds, conflicts, запис status/credentials |
+| `logger.test.ts` | Записи, subscribe, `info`/`error` активації, `clear()` |
 | `traceSanitize.test.ts` / `traceSession.test.ts` / `tracePack.test.ts` / `zipStore.test.ts` | Знеособлення шляхів, сесія jsonl, snapshot проєктів, zip |
 | `solutionParser.test.ts` | `.sln` / `.slnx` |
 | `webviewMessageBroker.test.ts` | INIT, search, install/remove, NU1605, rollback/keep, patch, group retry |

@@ -114,17 +114,141 @@ export interface PackageSource {
   enabled: boolean;
   /** Path to the nuget.config file that declared this source */
   configFilePath: string;
+  /** `allowInsecureConnections="true"` on this `<add>` (HTTP). */
+  allowInsecureConnections?: boolean;
+  /** `disableTLSCertificateValidation="true"` on this `<add>`. */
+  disableTlsCertificateValidation?: boolean;
+  /** Explicit `protocolVersion` on this `<add>`, if 2 or 3. */
+  protocolVersion?: '2' | '3';
 }
 
 export interface NuGetConfigFile {
   filePath: string;
   sources: PackageSource[];
+  /** `<clear />` in `<packageSources>` — farther files do not contribute package sources. */
+  packageSourcesCleared?: boolean;
   /** `<auditSources>` in this file (not inherited). */
   auditSources?: PackageSource[];
   /** `<clear />` in `<auditSources>` — farther files do not contribute audit sources. */
   auditSourcesCleared?: boolean;
+  /** Keys under `<packageSourceCredentials>` — names only, never passwords. */
+  credentialKeys?: string[];
+  /** Username per source key; passwords are never stored here. */
+  credentialUsernames?: Record<string, string>;
+  /** `<apikeys>` keys (feed URLs). Values are never stored. */
+  apiKeyUrls?: string[];
+  /**
+   * Entries from `<disabledPackageSources>`. `disabled: false` is an explicit
+   * re-enable (`value="false"`) that overrides a farther file.
+   */
+  disabledPackageSources?: Array<{ name: string; disabled: boolean }>;
+  /** `<clear />` in `<disabledPackageSources>` — ignore farther disable lists. */
+  disabledPackageSourcesCleared?: boolean;
+  /** `<packageSourceMapping>` for this file (not yet merged). */
+  packageSourceMapping?: PackageSourceMapping[];
+  /** `<clear />` in `<packageSourceMapping>` — ignore farther mappings. */
+  packageSourceMappingCleared?: boolean;
+  /** Computer-level file under Program Files / `/etc/opt/NuGet/Config`. */
+  isMachineWide?: boolean;
   /** Set when the file could not be read or parsed */
   parseError?: string;
+}
+
+export interface PackageSourceMapping {
+  sourceName: string;
+  patterns: string[];
+}
+
+export type FeedKind = 'nuget.org' | 'data.nuget.org' | 'http' | 'local';
+
+export interface EffectiveSourceRow {
+  name: string;
+  url: string;
+  enabled: boolean;
+  kind: FeedKind;
+  hasCredentials: boolean;
+  /** Username from config, if present. Password is never sent. */
+  username?: string;
+  hasApiKey: boolean;
+  allowInsecureConnections?: boolean;
+  disableTlsCertificateValidation?: boolean;
+  configFilePath: string;
+  /** Patterns from effective `<packageSourceMapping>` for this source. Empty when mapping is off or this source is unmapped. */
+  mappingPatterns?: string[];
+  /** Unexpanded `value` from XML when it contained `%VAR%`. */
+  urlRaw?: string;
+  /** Effective NuGet protocol for HTTP feeds. UI badges only `2`. */
+  protocolVersion?: '2' | '3';
+}
+
+export type ChainChangeKind =
+  | 'added'
+  | 'replaced'
+  | 'disabled'
+  | 'cleared-package'
+  | 'cleared-audit'
+  | 'overridden';
+
+export interface ChainChange {
+  kind: ChainChangeKind;
+  sourceKind?: 'package' | 'audit';
+  name?: string;
+  url?: string;
+  previousUrl?: string;
+  byFilePath?: string;
+}
+
+export interface ConfigChainFileView {
+  filePath: string;
+  displayPath: string;
+  isGlobal: boolean;
+  isMachineWide?: boolean;
+  parseError?: string;
+  packageChanges: ChainChange[];
+  auditChanges: ChainChange[];
+  /** Sources declared in this file (host-expanded URLs). */
+  packageSources: EffectiveSourceRow[];
+  auditSources: EffectiveSourceRow[];
+}
+
+export type ExtraConfigRole = 'on-chain' | 'applies' | 'dead';
+
+export interface ExtraConfigFileView {
+  filePath: string;
+  displayPath: string;
+  isGlobal: boolean;
+  isMachineWide?: boolean;
+  role: ExtraConfigRole;
+  appliesToProjectNames: string[];
+  parseError?: string;
+  /** Sources declared in this file (host-expanded URLs). Empty when the file is only a path stub. */
+  packageSources: EffectiveSourceRow[];
+  auditSources: EffectiveSourceRow[];
+}
+
+export type ConfigConflictKind =
+  | 'same-key-different-url'
+  | 'same-url-different-keys'
+  | 'clear-drops-parent'
+  | 'audit-mismatch'
+  | 'off-chain-applies';
+
+export interface ConfigConflict {
+  kind: ConfigConflictKind;
+  message: string;
+  filePaths: string[];
+}
+
+export interface SourcesSnapshot {
+  effectivePackageSources: EffectiveSourceRow[];
+  effectiveAuditSources: EffectiveSourceRow[];
+  chain: ConfigChainFileView[];
+  extraConfigs: ExtraConfigFileView[];
+  /** True when the workspace nuget.config scan hit the find-files cap. */
+  extraConfigsTruncated?: boolean;
+  conflicts: ConfigConflict[];
+  /** Merged `<packageSourceMapping>`. Empty means mapping is not in effect. */
+  packageSourceMapping: PackageSourceMapping[];
 }
 
 // ─────────────────────────────────────────────

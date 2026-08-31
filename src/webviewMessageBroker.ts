@@ -20,7 +20,7 @@ import type { TraceController } from './traceController';
 import type { WebviewMessage } from './messages';
 import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
 import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile } from './types';
-import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText } from './dotnetOutput';
+import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText, mergeCliResults } from './dotnetOutput';
 import { mergeFindings } from './vulnerabilities';
 import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS, isRetryableCliFailure } from './cliRetry';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from './blockedPackages';
@@ -30,10 +30,26 @@ import {
   listWorkspaceDotnetFiles,
   listWorkspaceNuGetConfigFiles,
   scopeFromDotnetFile,
+  scopeFromFolder,
+  findDotnetTargetsInFolder,
+  toProjectInfo,
   sortDotnetTargetPaths,
   isSolutionFile,
   NUGET_CONFIG_GLOB,
 } from './dotnetWorkspace';
+
+/** Absolute path uniquely identifying a scope — solution/folder path, or the single project. */
+function scopeIdentityPath(scope: WorkspaceScope): string {
+  if (scope.kind === 'solution') return scope.solutionPath;
+  if (scope.kind === 'folder') return scope.folderPath;
+  return scope.projectPath;
+}
+
+/** Absolute project paths covered by a scope — a project scope is a single-element list. */
+function scopeProjectPaths(scope: WorkspaceScope): string[] {
+  if (scope.kind === 'project') return scope.projectPath ? [scope.projectPath] : [];
+  return scope.projects.map((p) => p.absolutePath);
+}
 import {
   snapshotProjectFiles,
   restoreFileSnapshots,
@@ -200,9 +216,8 @@ export class WebviewMessageBroker {
 
   private _probeCwd(): string {
     const scope = this.provider.getCurrentScope();
-    if (scope?.kind === 'solution') return path.dirname(scope.solutionPath);
-    if (scope?.kind === 'project' && scope.projectPath) return path.dirname(scope.projectPath);
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    const startDir = scope ? this._scopeStartDir(scope) : undefined;
+    return startDir ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
   }
 
   private async _refreshRoslynCap(post: boolean): Promise<void> {
@@ -534,45 +549,39 @@ export class WebviewMessageBroker {
 
   private _currentScopePath(): string {
     const scope = this.provider.getCurrentScope();
-    if (!scope) return '';
-    if (scope.kind === 'solution') return scope.solutionPath;
-    return scope.projectPath;
+    return scope ? scopeIdentityPath(scope) : '';
   }
 
-  /** Scan workspace root for a .sln/.slnx/.csproj/.fsproj file. */
+  /**
+   * Scan the workspace root for a .sln/.slnx/.csproj/.fsproj file — direct
+   * children first, falling back recursively (see {@link findDotnetTargetsInFolder}).
+   * Multiple solutions are ambiguous and left to the manual "Select scope" picker.
+   */
   private async _detectWorkspaceScope(): Promise<import('./types').WorkspaceScope | null> {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) return null;
 
     const rootPath = folders[0].uri.fsPath;
-    let entries: string[];
-    try {
-      const fs = await import('fs/promises');
-      const dirents = await fs.readdir(rootPath, { withFileTypes: true });
-      entries = dirents.filter((d) => d.isFile()).map((d) => d.name);
-    } catch {
-      return null;
+    const matches = await findDotnetTargetsInFolder(rootPath);
+    if (matches.length === 0) return null;
+
+    const solutionFiles = matches.filter(isSolutionFile);
+    if (solutionFiles.length === 1) {
+      const projectList = await this.solutionParser.getProjects(solutionFiles[0]);
+      return { kind: 'solution', solutionPath: solutionFiles[0], projects: projectList };
+    }
+    if (solutionFiles.length > 1) return null;
+
+    const projectFiles = matches.filter((p) => !isSolutionFile(p));
+    if (projectFiles.length === 1) return { kind: 'project', projectPath: projectFiles[0] };
+    if (projectFiles.length > 1) {
+      const projects = projectFiles
+        .map((p) => toProjectInfo(rootPath, p))
+        .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+      return scopeFromFolder(rootPath, projects);
     }
 
-    const SOLUTION_EXTS = new Set(['.sln', '.slnx']);
-    const ALL_EXTS = new Set(['.sln', '.slnx', '.csproj', '.fsproj']);
-
-    // Prefer solution files over project files
-    const solutions = entries.filter((n) => SOLUTION_EXTS.has(path.extname(n).toLowerCase()));
-    const projects  = entries.filter((n) => ALL_EXTS.has(path.extname(n).toLowerCase()) && !SOLUTION_EXTS.has(path.extname(n).toLowerCase()));
-
-    const target = solutions[0] ?? projects[0];
-    if (!target) return null;
-
-    const targetPath = path.join(rootPath, target);
-    const ext = path.extname(target).toLowerCase();
-
-    if (SOLUTION_EXTS.has(ext)) {
-      const projectList = await this.solutionParser.getProjects(targetPath);
-      return { kind: 'solution', solutionPath: targetPath, projects: projectList };
-    }
-
-    return { kind: 'project', projectPath: targetPath };
+    return null;
   }
 
   private async _initForScope(scope: WorkspaceScope): Promise<void> {
@@ -582,13 +591,10 @@ export class WebviewMessageBroker {
     this._lastRestoreText = '';
     this.trace?.recordBroker('init-scope', {
       kind: scope.kind,
-      path: scope.kind === 'solution' ? path.basename(scope.solutionPath) : path.basename(scope.projectPath),
-      projects: scope.kind === 'solution' ? scope.projects.length : 1,
+      path: path.basename(scopeIdentityPath(scope)),
+      projects: scope.kind === 'solution' || scope.kind === 'folder' ? scope.projects.length : 1,
     });
-    const startDir =
-      scope.kind === 'solution'
-        ? path.dirname(scope.solutionPath)
-        : path.dirname(scope.projectPath);
+    const startDir = this._scopeStartDir(scope) ?? '';
 
     // Log the resolution attempt so it appears in the Log tab
     const chainStart = Date.now();
@@ -650,9 +656,7 @@ export class WebviewMessageBroker {
     const scope = this.provider.getCurrentScope();
     if (!scope) return;
 
-    const startDir = scope.kind === 'solution'
-      ? path.dirname(scope.solutionPath)
-      : path.dirname(scope.projectPath);
+    const startDir = this._scopeStartDir(scope) ?? '';
 
     const configChain = await this.configResolver.resolve(startDir);
     const configFiles = configChain.map((c) => c.filePath);
@@ -1361,6 +1365,8 @@ export class WebviewMessageBroker {
 
     if (scope.kind === 'solution') {
       await this._refreshForSolution(scope.solutionPath, opts);
+    } else if (scope.kind === 'folder') {
+      await this._refreshForFolder(scope.folderPath, scopeProjectPaths(scope), opts);
     } else if (scope.projectPath) {
       await this._refreshPackagesForProjects([scope.projectPath], opts);
     }
@@ -1499,6 +1505,49 @@ export class WebviewMessageBroker {
     await this._applyListedPackages(listed, opts);
   }
 
+  /**
+   * A folder scope has no `.sln` to hand `dotnet restore`/`dotnet list` in one
+   * call, so each discovered project is restored/listed independently (capped
+   * concurrency) and the results are merged as if they came from one solution.
+   */
+  private async _refreshForFolder(
+    folderPath: string,
+    projectPaths: string[],
+    opts?: RefreshOpts,
+  ): Promise<void> {
+    if (projectPaths.length === 0) {
+      await this._applyListedPackages({ installed: [], implicit: [] }, opts);
+      return;
+    }
+
+    if (opts?.restore && opts.listAfterRestore) {
+      const restoreResult = await this._beginRestore(this._restoreProjects(projectPaths));
+      await this._listProjectsThenApply(projectPaths, opts);
+      this._reportRestoreIfCurrent(folderPath, restoreResult);
+      return;
+    }
+
+    const restoreP = opts?.restore
+      ? this._beginRestore(this._restoreProjects(projectPaths))
+      : undefined;
+    await this._listProjectsThenApply(projectPaths, opts);
+    if (restoreP) this._reportRestoreIfCurrent(folderPath, await restoreP);
+  }
+
+  private async _restoreProjects(projectPaths: string[], signal?: AbortSignal): Promise<CliResult> {
+    const concurrency = getConfig().dotnetConcurrency;
+    const results: CliResult[] = new Array(projectPaths.length);
+
+    await runWithConcurrency(
+      projectPaths.map((p, i) => async () => {
+        results[i] = await this.backend.restoreProject(p, signal);
+      }),
+      concurrency,
+    );
+
+    return mergeCliResults(results);
+  }
+
   private _beginRestore(p: Promise<CliResult>): Promise<CliResult> {
     const generation = this._restoreGeneration;
     const tracked = p.then((result) => {
@@ -1517,7 +1566,7 @@ export class WebviewMessageBroker {
   private _reportRestoreIfCurrent(targetPath: string, result: CliResult): void {
     const scope = this.provider.getCurrentScope();
     if (!scope) return;
-    const current = scope.kind === 'solution' ? scope.solutionPath : scope.projectPath;
+    const current = scopeIdentityPath(scope);
     if (!current || !pathsEqual(current, targetPath)) return;
     if (isCliOperationSuccess(result)) return;
 
@@ -1538,12 +1587,10 @@ export class WebviewMessageBroker {
     signal: AbortSignal,
   ): Promise<void> {
     const scope = this.provider.getCurrentScope();
-    const targetPath = scope
-      ? (scope.kind === 'solution' ? scope.solutionPath : scope.projectPath)
-      : undefined;
+    const targetPath = scope ? scopeIdentityPath(scope) : undefined;
     if (!scope || !targetPath) return;
 
-    const startDir = path.dirname(targetPath);
+    const startDir = this._scopeStartDir(scope) ?? '';
     const chain = await this.configResolver.resolve(startDir);
     const packageSources = uniqueEnabledPackageSources(chain);
     const auditSources = uniqueEnabledAuditSources(chain);
@@ -1623,10 +1670,7 @@ export class WebviewMessageBroker {
     const scope = this.provider.getCurrentScope();
     if (!scope || signal.aborted) return;
 
-    const startDir = scope.kind === 'solution'
-      ? path.dirname(scope.solutionPath)
-      : path.dirname(scope.projectPath);
-
+    const startDir = this._scopeStartDir(scope) ?? '';
     const configChain = await this.configResolver.resolve(startDir);
     const configFiles = configChain.map((c) => c.filePath);
     if (configFiles.length === 0 || signal.aborted) return;
@@ -1738,12 +1782,13 @@ export class WebviewMessageBroker {
   private _scopeStartDir(scope: WorkspaceScope | null | undefined): string | undefined {
     if (!scope) return undefined;
     if (scope.kind === 'solution') return path.dirname(scope.solutionPath);
+    if (scope.kind === 'folder') return scope.folderPath;
     if (scope.projectPath) return path.dirname(scope.projectPath);
     return undefined;
   }
 
   private _projectEntries(scope: WorkspaceScope): { name: string; dir: string }[] {
-    if (scope.kind === 'solution') {
+    if (scope.kind === 'solution' || scope.kind === 'folder') {
       return scope.projects.map((p) => ({
         name: p.name,
         dir: path.dirname(p.absolutePath),
@@ -1820,7 +1865,7 @@ export class WebviewMessageBroker {
       workspaceConfigs: liveWorkspace,
       relativePath: (abs) => vscode.workspace.asRelativePath(abs, true),
       isGlobalPath: isGlobalNuGetConfigPath,
-      compareAuditToProjects: scope.kind === 'solution',
+      compareAuditToProjects: scope.kind === 'solution' || scope.kind === 'folder',
       extraConfigsTruncated: extraScan.truncated,
     });
 

@@ -2,14 +2,17 @@ import * as vscode from 'vscode';
 import {
   DOTNET_PROJECT_EXCLUDE_GLOB,
   DOTNET_PROJECT_GLOB,
+  FOLDER_PROJECT_GLOB,
   HAS_DOTNET_WORKSPACE_CONTEXT,
   hasDotnetWorkspaceFiles,
   capFoundUris,
+  findProjectsInFolder,
   listWorkspaceNuGetConfigFiles,
   NUGET_CONFIG_FIND_LIMIT,
   NUGET_CONFIG_GLOB,
   refreshDotnetWorkspaceContext,
   scopeFromDotnetFile,
+  scopeFromFolder,
   sortDotnetTargetPaths,
   watchDotnetWorkspaceContext,
   workspaceHasDotnetProject,
@@ -79,6 +82,50 @@ describe('scopeFromDotnetFile', () => {
       projectPath: '/s/A.csproj',
     });
     expect(parser.getProjects).not.toHaveBeenCalled();
+  });
+});
+
+describe('findProjectsInFolder', () => {
+  beforeEach(() => {
+    (vscode.workspace.findFiles as jest.Mock).mockReset();
+  });
+
+  it('scopes the search with a RelativePattern rooted at the folder', async () => {
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([]);
+    await findProjectsInFolder('/repo/tools');
+    const [pattern, exclude] = (vscode.workspace.findFiles as jest.Mock).mock.calls[0];
+    expect(pattern).toEqual(new vscode.RelativePattern('/repo/tools', FOLDER_PROJECT_GLOB));
+    expect(exclude).toBe(DOTNET_PROJECT_EXCLUDE_GLOB);
+  });
+
+  it('maps found files to ProjectInfo with folder-relative paths, sorted', async () => {
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+      vscode.Uri.file('/repo/tools/src/Tool.csproj'),
+      vscode.Uri.file('/repo/tools/Lib/Lib.fsproj'),
+    ]);
+    const result = await findProjectsInFolder('/repo/tools');
+    expect(result).toEqual([
+      { name: 'Lib', relativePath: 'Lib/Lib.fsproj', absolutePath: '/repo/tools/Lib/Lib.fsproj' },
+      { name: 'Tool', relativePath: 'src/Tool.csproj', absolutePath: '/repo/tools/src/Tool.csproj' },
+    ]);
+  });
+
+  it('returns an empty list when nothing matches', async () => {
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([]);
+    await expect(findProjectsInFolder('/empty')).resolves.toEqual([]);
+  });
+});
+
+describe('scopeFromFolder', () => {
+  it('builds a folder scope from the discovered projects', async () => {
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+      vscode.Uri.file('/repo/tools/Tool.csproj'),
+    ]);
+    await expect(scopeFromFolder('/repo/tools')).resolves.toEqual({
+      kind: 'folder',
+      folderPath: '/repo/tools',
+      projects: [{ name: 'Tool', relativePath: 'Tool.csproj', absolutePath: '/repo/tools/Tool.csproj' }],
+    });
   });
 });
 

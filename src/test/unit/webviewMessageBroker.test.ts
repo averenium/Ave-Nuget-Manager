@@ -6,6 +6,7 @@ import * as config from '../../config';
 import * as legacyPr from '../../legacyPackageReference';
 import * as projectStyle from '../../projectPackageStyle';
 import type { INuGetBackend } from '../../backend/INuGetBackend';
+import { DOTNET_PROJECT_EXCLUDE_GLOB } from '../../dotnetWorkspace';
 import type { NuGetConfigChainResolver } from '../../nugetConfigChainResolver';
 import type { SolutionParser } from '../../solutionParser';
 import type { ExtensionMessage } from '../../messages';
@@ -116,6 +117,14 @@ const SOLUTION_SCOPE: WorkspaceScope = {
     { name: 'B', relativePath: 'B/B.csproj', absolutePath: '/sol/B/B.csproj' },
   ],
 };
+const FOLDER_SCOPE: WorkspaceScope = {
+  kind: 'folder',
+  folderPath: '/tools',
+  projects: [
+    { name: 'A', relativePath: 'A/A.csproj', absolutePath: '/tools/A/A.csproj' },
+    { name: 'B', relativePath: 'B/B.csproj', absolutePath: '/tools/B/B.csproj' },
+  ],
+};
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -215,6 +224,118 @@ describe('WebviewMessageBroker', () => {
     expect(posted.some((m) => m.type === 'SKILL_STATUS')).toBe(true);
   });
 
+  // ── _detectWorkspaceScope auto-detect (no scope set yet) ───────────────────
+  // The common "one subfolder per project" layout has nothing directly at the
+  // workspace root, so auto-detect must fall back to a recursive scan too —
+  // otherwise opening the panel on such a workspace silently shows nothing.
+
+  describe('auto-detects a scope on the first WEBVIEW_READY', () => {
+    const fsPromises = jest.requireActual('fs/promises') as typeof import('fs/promises');
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+      (vscode.workspace as any).workspaceFolders = [];
+      (vscode.workspace.findFiles as jest.Mock).mockReset();
+    });
+
+    it('builds a folder scope when the root has no direct matches but several loose projects recursively', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      jest.spyOn(fsPromises, 'readdir').mockResolvedValue([] as any);
+      (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+        vscode.Uri.file('/root/ServiceA/A.csproj'),
+        vscode.Uri.file('/root/ServiceB/B.csproj'),
+      ]);
+
+      const { stub, posted, simulateMessage } = makeProvider(undefined);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 10));
+
+      const expected: WorkspaceScope = {
+        kind: 'folder',
+        folderPath: '/root',
+        projects: [
+          { name: 'A', relativePath: 'ServiceA/A.csproj', absolutePath: '/root/ServiceA/A.csproj' },
+          { name: 'B', relativePath: 'ServiceB/B.csproj', absolutePath: '/root/ServiceB/B.csproj' },
+        ],
+      };
+      expect(stub.setScope).toHaveBeenCalledWith(expected);
+      const initMsg = posted.find((m) => m.type === 'INIT_STATE') as any;
+      expect(initMsg?.scope).toEqual(expected);
+
+      // Must scope the scan to workspaceFolders[0], not the whole (possibly
+      // multi-root) workspace — a bare glob with no RelativePattern searches
+      // every root folder, which could pick up projects from an unrelated root.
+      const [pattern, exclude] = (vscode.workspace.findFiles as jest.Mock).mock.calls[0];
+      expect(pattern).toBeInstanceOf(vscode.RelativePattern);
+      expect(pattern.base).toBe('/root');
+      expect(exclude).toBe(DOTNET_PROJECT_EXCLUDE_GLOB);
+    });
+
+    it('builds a plain project scope when only one loose project is found recursively', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      jest.spyOn(fsPromises, 'readdir').mockResolvedValue([] as any);
+      (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+        vscode.Uri.file('/root/ServiceA/A.csproj'),
+      ]);
+
+      const { stub, simulateMessage } = makeProvider(undefined);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(stub.setScope).toHaveBeenCalledWith({ kind: 'project', projectPath: '/root/ServiceA/A.csproj' });
+    });
+
+    it('does not pick up a second workspace root\'s files (scan is scoped to root[0])', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+        { uri: vscode.Uri.file('/other-root'), name: 'other-root', index: 1 },
+      ];
+      jest.spyOn(fsPromises, 'readdir').mockResolvedValue([] as any);
+      // A real findFiles(RelativePattern('/root', …)) would only ever return
+      // URIs under /root; simulate that instead of a workspace-wide glob's result.
+      (vscode.workspace.findFiles as jest.Mock).mockImplementation((pattern: any) => {
+        const base = typeof pattern === 'string' ? undefined : pattern.base;
+        return Promise.resolve(base === '/root' ? [] : [vscode.Uri.file('/other-root/Other.csproj')]);
+      });
+
+      const { stub, simulateMessage } = makeProvider(undefined);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(stub.setScope).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the recursive scan also finds nothing', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      jest.spyOn(fsPromises, 'readdir').mockResolvedValue([] as any);
+      (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([]);
+
+      const { stub, simulateMessage } = makeProvider(undefined);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(stub.setScope).not.toHaveBeenCalled();
+    });
+  });
+
   it('runs onFirstWebviewReady once, then still inits on a later WEBVIEW_READY', async () => {
     const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
@@ -299,6 +420,52 @@ describe('WebviewMessageBroker', () => {
     expect(backend.restoreProject).toHaveBeenCalledTimes(1);
     expect(backend.restoreProject).toHaveBeenCalledWith('/sol/My.sln');
     expect(backend.restoreProject).not.toHaveBeenCalledWith('/sol/A/A.csproj');
+  });
+
+  it('restores and lists every project independently for a folder scope (no .sln to pass to dotnet)', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(FOLDER_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockImplementation(async (p: string) => ({
+      installed: [makeInstalledPkg('Newtonsoft.Json', p)],
+      implicit: [],
+    }));
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(backend.restoreProject).toHaveBeenCalledTimes(2);
+    expect(backend.restoreProject).toHaveBeenCalledWith('/tools/A/A.csproj', undefined);
+    expect(backend.restoreProject).toHaveBeenCalledWith('/tools/B/B.csproj', undefined);
+    expect(backend.listAllForProject).toHaveBeenCalledTimes(2);
+
+    const installed = posted.find((m) => m.type === 'INSTALLED_PACKAGES') as any;
+    expect(installed?.packages.map((p: InstalledPackage) => p.projectPath).sort()).toEqual([
+      '/tools/A/A.csproj',
+      '/tools/B/B.csproj',
+    ]);
+  });
+
+  it('reports a restore failure for the current folder scope even though only one project failed', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(FOLDER_SCOPE);
+    const backend = makeBackend();
+    backend.restoreProject.mockImplementation(async (p: string) =>
+      p === '/tools/B/B.csproj'
+        ? makeCliResult({ exitCode: 1, stdout: 'error: NU1605 in B', stderr: '' })
+        : makeCliResult(),
+    );
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const err = posted.find((m) => m.type === 'ERROR') as any;
+    expect(err?.message).toBe('Restore failed');
+    expect(err?.details).toContain('NU1605 in B');
   });
 
   it('does not restore again after a successful install refresh', async () => {

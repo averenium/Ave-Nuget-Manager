@@ -46,7 +46,7 @@ Retry 429/503 на catalog GET — у `HttpBackend`, не в `cliRetry` (той 
 ## Обмеження scope
 
 - Лише `.csproj` / `.fsproj`, немає `.vbproj`.
-- Немає рекурсивного пошуку проєктів у підпапках.
+- `CommandRegistrar` спершу дивиться на прямих дітей клікнутої папки; лише якщо там 0 збігів, падає у рекурсивний скан (`_recursiveMatches`, [folder-scope.md](folder-scope.md)) — тобто розкладка "кожен проєкт у своїй підпапці" підхоплюється одразу, ще до показу QuickPick, без потреби спершу кудись клікати. Так само авто-детект при відкритті панелі (`_detectWorkspaceScope` у `webviewMessageBroker.ts`) падає в рекурсивний скан, коли в корені воркспейсу нема прямих `.sln`/`.csproj`/`.fsproj`.
 - Лише `workspaceFolders[0]`.
 - Sources — можна змінити on/off, credentials і API key існуючого джерела; немає add/remove feeds.
 - `packages.config` (nuget.exe) не оновлюється; legacy csproj з PackageReference — так.

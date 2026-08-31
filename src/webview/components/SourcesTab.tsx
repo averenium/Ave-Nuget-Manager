@@ -142,9 +142,10 @@ function ConfigFilesSection({
   );
 }
 
-function scopeTitle(scope: { kind: string; solutionPath?: string; projectPath?: string } | null): string {
+function scopeTitle(scope: { kind: string; solutionPath?: string; projectPath?: string; folderPath?: string } | null): string {
   if (!scope) return 'current scope';
   if (scope.kind === 'solution' && scope.solutionPath) return fileName(scope.solutionPath);
+  if (scope.kind === 'folder' && scope.folderPath) return fileName(scope.folderPath);
   if (scope.projectPath) return fileName(scope.projectPath);
   return 'current scope';
 }

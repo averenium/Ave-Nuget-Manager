@@ -1,4 +1,4 @@
-import { extractJsonObject, summarizeDotnetFailure, summarizeListProblems, isCliOperationSuccess, cliOutputText } from '../../dotnetOutput';
+import { extractJsonObject, summarizeDotnetFailure, summarizeListProblems, isCliOperationSuccess, cliOutputText, mergeCliResults } from '../../dotnetOutput';
 
 const NU1605_ADD = `info : Adding PackageReference for package 'EFCore.NamingConventions' into project 'd:\\repo\\Data.csproj'.
 info : Restoring packages for d:\\repo\\Data.csproj...
@@ -73,5 +73,44 @@ describe('dotnetOutput', () => {
       stdout: 'warning NU1608: constraint\nerror NU1605: downgrade\n',
       stderr: '',
     })).toBe('warning NU1608: constraint\nerror NU1605: downgrade');
+  });
+
+  // ── mergeCliResults (folder-scope restore: N independent per-project results) ──
+
+  describe('mergeCliResults', () => {
+    it('returns a clean success result for an empty list', () => {
+      expect(mergeCliResults([])).toEqual({ exitCode: 0, stdout: '', stderr: '', timedOut: false });
+    });
+
+    it('succeeds when every project restores cleanly', () => {
+      const merged = mergeCliResults([
+        { exitCode: 0, stdout: 'A ok', stderr: '', timedOut: false },
+        { exitCode: 0, stdout: 'B ok', stderr: '', timedOut: false },
+      ]);
+      expect(merged.exitCode).toBe(0);
+      expect(merged.stdout).toBe('A ok\nB ok');
+      expect(merged.timedOut).toBe(false);
+    });
+
+    it('fails the whole operation when any one project fails', () => {
+      const merged = mergeCliResults([
+        { exitCode: 0, stdout: 'A ok', stderr: '', timedOut: false },
+        { exitCode: 1, stdout: '', stderr: 'B: NU1605', timedOut: false },
+      ]);
+      expect(merged.exitCode).toBe(1);
+      expect(merged.stderr).toBe('B: NU1605');
+    });
+
+    it('marks timedOut/cancelled when any project did', () => {
+      expect(mergeCliResults([
+        { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+        { exitCode: null, stdout: '', stderr: '', timedOut: true },
+      ]).timedOut).toBe(true);
+
+      expect(mergeCliResults([
+        { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+        { exitCode: null, stdout: '', stderr: '', timedOut: false, cancelled: true },
+      ]).cancelled).toBe(true);
+    });
   });
 });

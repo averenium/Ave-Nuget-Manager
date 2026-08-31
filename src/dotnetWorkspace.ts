@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs/promises';
 import { shouldShowContextMenu } from './solutionParser';
 import type { SolutionParser } from './solutionParser';
-import type { WorkspaceScope } from './types';
+import type { ProjectInfo, WorkspaceScope } from './types';
 import { trueCaseFilePath } from './nugetConfigChainResolver';
 
 /** Context key for the NuGet panel view `when` clause. Set during activate(). */
@@ -23,6 +24,9 @@ export const DOTNET_PROJECT_EXCLUDE_GLOB = '{**/node_modules/**,**/bin/**,**/obj
 export const NUGET_CONFIG_GLOB = '**/nuget.config';
 
 export const SOLUTION_EXTENSIONS = new Set(['.sln', '.slnx']);
+
+/** Any file kind CommandRegistrar/auto-detect care about. */
+export const DOTNET_TARGET_EXTENSIONS = new Set(['.sln', '.slnx', '.csproj', '.fsproj']);
 
 /**
  * True if any listed name is a .NET solution or project file.
@@ -93,6 +97,75 @@ export async function scopeFromDotnetFile(
     return { kind: 'solution', solutionPath: targetPath, projects };
   }
   return { kind: 'project', projectPath: targetPath };
+}
+
+/** Recursive project glob, rooted at a single folder rather than the whole workspace. */
+export const FOLDER_PROJECT_GLOB = '**/*.{csproj,fsproj}';
+
+/** Builds the `ProjectInfo` for one project file already known to live under `folderPath`. */
+export function toProjectInfo(folderPath: string, absolutePath: string): ProjectInfo {
+  const relativePath = path.relative(folderPath, absolutePath).split(path.sep).join('/');
+  const name = path.basename(absolutePath, path.extname(absolutePath));
+  return { name, relativePath, absolutePath };
+}
+
+/**
+ * Recursively finds all `.csproj`/`.fsproj` files under `folderPath` (skipping
+ * bin/obj/node_modules/.git), for folders that have no .sln/.slnx to enumerate
+ * their projects instead.
+ */
+export async function findProjectsInFolder(folderPath: string): Promise<ProjectInfo[]> {
+  const found = await vscode.workspace.findFiles(
+    new vscode.RelativePattern(folderPath, FOLDER_PROJECT_GLOB),
+    DOTNET_PROJECT_EXCLUDE_GLOB,
+  );
+  const projects = found.map((uri) => toProjectInfo(folderPath, uri.fsPath));
+  return projects.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+}
+
+/**
+ * `projects`, when given, is a pre-scanned list (e.g. from {@link findDotnetTargetsInFolder}
+ * via a caller that already paid for the scan) — pass it to skip re-scanning the folder.
+ */
+export async function scopeFromFolder(folderPath: string, projects?: ProjectInfo[]): Promise<WorkspaceScope> {
+  return { kind: 'folder', folderPath, projects: projects ?? await findProjectsInFolder(folderPath) };
+}
+
+/** Direct (non-recursive) .sln/.slnx/.csproj/.fsproj children of `folderPath`. */
+async function directDotnetChildFiles(folderPath: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    const dirents = await fs.readdir(folderPath, { withFileTypes: true });
+    entries = dirents.filter((d) => d.isFile()).map((d) => d.name);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((name) => DOTNET_TARGET_EXTENSIONS.has(path.extname(name).toLowerCase()))
+    .map((name) => path.join(folderPath, name));
+}
+
+/**
+ * Finds .sln/.slnx/.csproj/.fsproj files "in" `folderPath`: direct children
+ * first (the common one-project-per-folder layout, cheap); only when that
+ * finds nothing does it fall back to a recursive scan (the equally common
+ * "one subfolder per project" layout, e.g. `Root/ServiceA/A.csproj`).
+ *
+ * Shared by CommandRegistrar (folder click / "open" command) and the
+ * webview's scope auto-detect on first load — both need the exact same
+ * two-tier lookup, and having it in one place is what keeps them from
+ * silently diverging (see #39 review: the auto-detect side once forgot to
+ * scope its recursive scan to a single workspace root).
+ */
+export async function findDotnetTargetsInFolder(folderPath: string): Promise<string[]> {
+  const direct = await directDotnetChildFiles(folderPath);
+  if (direct.length > 0) return direct;
+
+  const found = await vscode.workspace.findFiles(
+    new vscode.RelativePattern(folderPath, DOTNET_PROJECT_GLOB),
+    DOTNET_PROJECT_EXCLUDE_GLOB,
+  );
+  return found.map((u) => u.fsPath);
 }
 
 export async function workspaceHasDotnetProject(): Promise<boolean> {

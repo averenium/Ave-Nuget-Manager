@@ -13,7 +13,9 @@ export interface ProjectInfo {
 
 export type WorkspaceScope =
   | { kind: 'solution'; solutionPath: string; projects: ProjectInfo[] }
-  | { kind: 'project'; projectPath: string };
+  | { kind: 'project'; projectPath: string }
+  /** A folder containing multiple projects with no .sln/.slnx to tie them together. */
+  | { kind: 'folder'; folderPath: string; projects: ProjectInfo[] };
 
 // ─────────────────────────────────────────────
 // Packages

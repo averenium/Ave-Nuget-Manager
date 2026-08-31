@@ -1,4 +1,5 @@
 import * as fs from 'fs/promises';
+import * as path from 'path';
 import type { Dirent } from 'fs';
 import { shouldShowContextMenu } from '../../solutionParser';
 
@@ -128,7 +129,7 @@ describe('CommandRegistrar.resolveTargetFromUri', () => {
     vscode.window.showQuickPick.mockResolvedValue({
       label: 'App.csproj',
       description: '/projects',
-      fsPath: '/projects/App.csproj',
+      target: '/projects/App.csproj',
     });
     const registrar = makeRegistrar();
     const uri = vscode.Uri.file('/projects');
@@ -144,6 +145,103 @@ describe('CommandRegistrar.resolveTargetFromUri', () => {
     const uri = vscode.Uri.file('/projects');
     const result = await registrar.resolveTargetFromUri(uri);
     expect(result).toBeUndefined();
+  });
+
+  it('offers a "manage all projects" option when multiple projects and no solution exist', async () => {
+    mockReaddir.mockResolvedValue(makeDirents(['App.csproj', 'Lib.csproj', 'Tools.csproj']) as any);
+    vscode.window.showQuickPick.mockImplementation((items: any[]) => Promise.resolve(items[0]));
+    const registrar = makeRegistrar();
+    const uri = vscode.Uri.file('/projects');
+    const result = await registrar.resolveTargetFromUri(uri);
+
+    const call = vscode.window.showQuickPick.mock.calls[0][0];
+    const expectedProjects = [
+      { name: 'App', relativePath: 'App.csproj', absolutePath: path.join('/projects', 'App.csproj') },
+      { name: 'Lib', relativePath: 'Lib.csproj', absolutePath: path.join('/projects', 'Lib.csproj') },
+      { name: 'Tools', relativePath: 'Tools.csproj', absolutePath: path.join('/projects', 'Tools.csproj') },
+    ];
+    expect(call[0]).toEqual({
+      label: '$(folder-library) Manage all 3 projects in this folder',
+      description: '/projects',
+      target: { kind: 'folder', folderPath: '/projects', projects: expectedProjects },
+    });
+    expect(result).toEqual({ kind: 'folder', folderPath: '/projects', projects: expectedProjects });
+  });
+
+  it('does not offer "manage all projects" when a single solution is also present', async () => {
+    mockReaddir.mockResolvedValue(
+      makeDirents(['App.csproj', 'Lib.csproj', 'My.sln']) as any,
+    );
+    const registrar = makeRegistrar();
+    const uri = vscode.Uri.file('/projects');
+    const result = await registrar.resolveTargetFromUri(uri);
+
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    expect(result).toBe('/projects/My.sln');
+  });
+
+  // ── Recursive fallback: nothing directly in the clicked folder ────────────
+  // The common "one subfolder per project" layout — e.g. Root/ServiceA/A.csproj,
+  // Root/ServiceB/B.csproj — has zero .csproj/.sln directly under Root.
+
+  it('falls back to a recursive scan when the folder has no direct matches', async () => {
+    mockReaddir.mockResolvedValue(makeDirents(['README.md']) as any);
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+      vscode.Uri.file('/root/ServiceA/A.csproj'),
+    ]);
+    const registrar = makeRegistrar();
+    const uri = vscode.Uri.file('/root');
+    const result = await registrar.resolveTargetFromUri(uri);
+
+    expect(result).toBe('/root/ServiceA/A.csproj');
+  });
+
+  it('offers "manage all projects" for a recursively-found set with no .sln', async () => {
+    mockReaddir.mockResolvedValue(makeDirents([]) as any);
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+      vscode.Uri.file('/root/ServiceA/A.csproj'),
+      vscode.Uri.file('/root/ServiceB/B.csproj'),
+    ]);
+    vscode.window.showQuickPick.mockImplementation((items: any[]) => Promise.resolve(items[0]));
+    const registrar = makeRegistrar();
+    const uri = vscode.Uri.file('/root');
+    const result = await registrar.resolveTargetFromUri(uri);
+
+    expect(result).toEqual({
+      kind: 'folder',
+      folderPath: '/root',
+      projects: [
+        { name: 'A', relativePath: 'ServiceA/A.csproj', absolutePath: '/root/ServiceA/A.csproj' },
+        { name: 'B', relativePath: 'ServiceB/B.csproj', absolutePath: '/root/ServiceB/B.csproj' },
+      ],
+    });
+  });
+
+  it('prefers a single recursively-found .sln over the loose projects beside it', async () => {
+    mockReaddir.mockResolvedValue(makeDirents([]) as any);
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+      vscode.Uri.file('/root/ServiceA/A.csproj'),
+      vscode.Uri.file('/root/nested/My.sln'),
+    ]);
+    const registrar = makeRegistrar();
+    const uri = vscode.Uri.file('/root');
+    const result = await registrar.resolveTargetFromUri(uri);
+
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    expect(result).toBe('/root/nested/My.sln');
+  });
+
+  it('warns when neither direct children nor a recursive scan find anything', async () => {
+    mockReaddir.mockResolvedValue(makeDirents(['README.md']) as any);
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([]);
+    const registrar = makeRegistrar();
+    const uri = vscode.Uri.file('/root');
+    const result = await registrar.resolveTargetFromUri(uri);
+
+    expect(result).toBeUndefined();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('No .sln, .slnx, .csproj, or .fsproj found in "root"'),
+    );
   });
 });
 

@@ -38,7 +38,7 @@ export async function findNearestFile(startDir: string, fileName: string): Promi
 
 function projectPathsFromScope(scope: WorkspaceScope | undefined): string[] {
   if (!scope) return [];
-  if (scope.kind === 'solution') return scope.projects.map((p) => p.absolutePath);
+  if (scope.kind === 'solution' || scope.kind === 'folder') return scope.projects.map((p) => p.absolutePath);
   return scope.projectPath ? [scope.projectPath] : [];
 }
 
@@ -135,9 +135,11 @@ export async function collectScopeSnapshotFiles(
   const start =
     scope?.kind === 'solution'
       ? path.dirname(scope.solutionPath)
-      : scope?.kind === 'project' && scope.projectPath
-        ? path.dirname(scope.projectPath)
-        : workspaceRoot;
+      : scope?.kind === 'folder'
+        ? scope.folderPath
+        : scope?.kind === 'project' && scope.projectPath
+          ? path.dirname(scope.projectPath)
+          : workspaceRoot;
   if (start) {
     const globalJson = await findNearestFile(start, 'global.json');
     if (globalJson) add(globalJson);

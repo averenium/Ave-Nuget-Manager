@@ -92,3 +92,20 @@ export function cliOutputText(result: Pick<CliResult, 'stdout' | 'stderr'>): str
     .replace(/\r\n/g, '\n')
     .trimEnd();
 }
+
+/**
+ * Combines N independent `dotnet restore <project>` results (folder scope has
+ * no single solution to restore in one call) into one CliResult: any failure
+ * fails the whole operation, output is concatenated in project order.
+ */
+export function mergeCliResults(results: CliResult[]): CliResult {
+  if (results.length === 0) return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+  const firstFailure = results.find((r) => r.exitCode !== 0);
+  return {
+    exitCode: firstFailure ? firstFailure.exitCode : 0,
+    stdout: results.map((r) => r.stdout).filter((s) => s.trim().length > 0).join('\n'),
+    stderr: results.map((r) => r.stderr).filter((s) => s.trim().length > 0).join('\n'),
+    timedOut: results.some((r) => r.timedOut),
+    cancelled: results.some((r) => r.cancelled),
+  };
+}

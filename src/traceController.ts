@@ -65,9 +65,11 @@ export async function buildSanitizedZip(opts: {
   const startDir =
     opts.scope?.kind === 'solution'
       ? path.dirname(opts.scope.solutionPath)
-      : opts.scope?.kind === 'project' && opts.scope.projectPath
-        ? path.dirname(opts.scope.projectPath)
-        : opts.workspaceRoot;
+      : opts.scope?.kind === 'folder'
+        ? opts.scope.folderPath
+        : opts.scope?.kind === 'project' && opts.scope.projectPath
+          ? path.dirname(opts.scope.projectPath)
+          : opts.workspaceRoot;
 
   const chain = startDir ? await opts.configResolver.resolve(startDir) : [];
   const snapshot = await collectScopeSnapshotFiles(

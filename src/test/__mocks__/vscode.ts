@@ -30,6 +30,18 @@ export class OutputChannel {
   replace(_value: string): void { /* no-op */ }
 }
 
+// ─── RelativePattern ────────────────────────────────────────────────────────────
+
+export class RelativePattern {
+  readonly base: string;
+  readonly pattern: string;
+
+  constructor(base: string | { fsPath: string }, pattern: string) {
+    this.base = typeof base === 'string' ? base : base.fsPath;
+    this.pattern = pattern;
+  }
+}
+
 // ─── Disposable ───────────────────────────────────────────────────────────────
 
 export class Disposable {

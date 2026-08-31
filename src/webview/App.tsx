@@ -20,8 +20,15 @@ const TABS = [
 function scopeLabel(scope: import('../../types').WorkspaceScope | null): string {
   if (!scope) return '';
   if (scope.kind === 'solution') return pathUtils.fileName(scope.solutionPath);
+  if (scope.kind === 'folder') return pathUtils.fileName(scope.folderPath);
   if (scope.kind === 'project' && scope.projectPath) return pathUtils.fileName(scope.projectPath);
   return '';
+}
+
+function scopeIcon(scope: import('../../types').WorkspaceScope | null): string {
+  if (scope?.kind === 'solution') return '📦';
+  if (scope?.kind === 'folder') return '🗂️';
+  return '📄';
 }
 
 function ErrorBanner() {
@@ -114,9 +121,11 @@ function Shell() {
   const scopeTitle =
     state.scope?.kind === 'solution'
       ? state.scope.solutionPath
-      : state.scope?.kind === 'project'
-        ? state.scope.projectPath
-        : 'Select a solution or project';
+      : state.scope?.kind === 'folder'
+        ? state.scope.folderPath
+        : state.scope?.kind === 'project'
+          ? state.scope.projectPath
+          : 'Select a solution or project';
 
   if (state.dotnetMissing) {
     return (
@@ -151,7 +160,7 @@ function Shell() {
           title={scopeTitle || 'Select a solution or project'}
           onClick={() => send({ type: 'SELECT_SCOPE' })}
         >
-          {state.scope?.kind === 'solution' ? '📦' : '📄'} {label || 'Select project…'}
+          {scopeIcon(state.scope)} {label || 'Select project…'}
         </button>
       </nav>
 

@@ -15,6 +15,8 @@ Requires the **.NET SDK** on `PATH`.
 
 The **NuGet** panel tab is shown when the workspace contains a `.sln`, `.slnx`, `.csproj`, or `.fsproj`. Opening the folder activates the extension enough to show the tab; `dotnet` runs only after you open NuGet.
 
+Three scopes are supported: a **solution**, a single **project**, or a **folder of projects with no solution** — pick **Manage all N projects in this folder** when the panel offers it, and every project inside is managed as one group.
+
 Drag the view **title bar** (or **View: Move View**) to the sidebar / secondary sidebar / panel. **Open in New Window** (title menu) hosts the same UI as an editor tab in a new window. The **gear** opens this extension’s Settings.
 
 - Command Palette: **NuGet: Management**
@@ -64,7 +66,7 @@ Gear on the **NuGet** title bar (or Command Palette **NuGet: Open Settings**) op
 
 - CLI backend only (no NuGet HTTP catalog yet): package metadata has no TFM / catalog dependency graph for a *selected* version. **↑** / Groups / the version list use feed latest from `dotnet package search`, not the latest that restores on this project’s TFM. The **Current Dependencies** tree is the restore graph of the *installed* version.
 - **Groups** will not target `Microsoft.CodeAnalysis.*` above the Roslyn version bundled with the active .NET SDK (`csc -version`). **Packages** still lists nuget.org latest and asks before an over-cap upgrade.
-- Scope: `.csproj` / `.fsproj` in the first workspace folder (or the opened solution).
+- Scope: `.csproj` / `.fsproj` in the first workspace folder — a solution, a project, or a folder of loose projects.
 - `packages.config` projects are skipped (legacy csproj with `PackageReference` is updated in the XML, then `dotnet restore`).
 - Package sources are read-only.
 

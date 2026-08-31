@@ -36,7 +36,8 @@ export function PackageDetailPanel() {
   }
 
   const scope = state.scope;
-  const isSolution = scope?.kind === 'solution';
+  /** Solution/folder scopes list multiple projects and need the project-picker popup. */
+  const isMultiProject = scope?.kind === 'solution' || scope?.kind === 'folder';
   const isInstalled = state.packages.installed.some((p) => packageIdsEqual(p.id, selectedPackageId));
   const updatesBlocked = isInstalled && isPackageBlocked(selectedPackageId, state.packages.blockedPackages);
 
@@ -48,7 +49,7 @@ export function PackageDetailPanel() {
 
   const proceedInstall = () => {
     if (!effectiveVersion || updatesBlocked) return;
-    if (isSolution) {
+    if (isMultiProject) {
       setShowPopup('install');
     } else if (scope?.kind === 'project') {
       send({ type: 'INSTALL_PACKAGE', projectPath: scope.projectPath, packageId: selectedPackageId, version: effectiveVersion });
@@ -70,7 +71,7 @@ export function PackageDetailPanel() {
   };
 
   const handleRemove = () => {
-    if (isSolution) {
+    if (isMultiProject) {
       setShowPopup('remove');
     } else if (scope?.kind === 'project') {
       send({ type: 'REMOVE_PACKAGE', projectPath: scope.projectPath, packageId: selectedPackageId });
@@ -79,7 +80,7 @@ export function PackageDetailPanel() {
 
   const currentVersions = (() => {
     const map: Record<string, string> = {};
-    if (!isSolution || scope?.kind !== 'solution') return map;
+    if (!scope || (scope.kind !== 'solution' && scope.kind !== 'folder')) return map;
     for (const p of scope.projects) {
       const inst = state.packages.installed.find((i) =>
         packageIdsEqual(i.id, selectedPackageId) && pathsEqual(i.projectPath, p.absolutePath),
@@ -276,8 +277,8 @@ export function PackageDetailPanel() {
         </div>
       )}
 
-      {/* ── Section 3: Projects (solution scope only) ── */}
-      {isSolution && scope?.kind === 'solution' && (
+      {/* ── Section 3: Projects (solution/folder scope only) ── */}
+      {isMultiProject && scope && (scope.kind === 'solution' || scope.kind === 'folder') && (
         <div className="detail-section">
           <div className="detail-section__title">Projects</div>
           <ProjectListSection
@@ -305,7 +306,7 @@ export function PackageDetailPanel() {
           onCancel={() => setShowRoslynWarning(false)}
         />
       )}
-      {showPopup && scope?.kind === 'solution' && (
+      {showPopup && scope && (scope.kind === 'solution' || scope.kind === 'folder') && (
         <ProjectSelectionPopup
           title={showPopup === 'install'
             ? `${isInstalled ? 'Update' : 'Install'} ${selectedPackageId} ${effectiveVersion}`

@@ -355,6 +355,8 @@ const DROP_XML_BLOCKS = [
   /<packageSourceCredentials\b[^>]*\/>/gi,
   /<apikeys\b[^>]*>[\s\S]*?<\/apikeys>/gi,
   /<apikeys\b[^>]*\/>/gi,
+  /<clearTextApiKeys\b[^>]*>[\s\S]*?<\/clearTextApiKeys>/gi,
+  /<clearTextApiKeys\b[^>]*\/>/gi,
 ];
 
 /** Keep structure (ports, OS, tags) — mask registry hosts, image names, env values, registry keys. */

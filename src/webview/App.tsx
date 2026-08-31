@@ -6,6 +6,8 @@ import { UpdatesTab } from './components/UpdatesTab';
 import { LogTab } from './components/LogTab';
 import { AgentsTab } from './components/AgentsTab';
 import * as pathUtils from './utils/pathUtils';
+import { snapshotNeedsSourcesWarn } from '../vulnerabilityScanPolicy';
+import type { SourcesSnapshot } from '../types';
 
 const TABS = [
   { id: 'packages', label: 'Packages' },
@@ -97,9 +99,18 @@ function ErrorBanner() {
   );
 }
 
+function sourcesTabNeedsWarn(snapshot: SourcesSnapshot | null): boolean {
+  try {
+    return snapshotNeedsSourcesWarn(snapshot);
+  } catch {
+    return false;
+  }
+}
+
 function Shell() {
   const { state, dispatch, send } = useNugetManager();
   const label = scopeLabel(state.scope);
+  const sourcesWarn = sourcesTabNeedsWarn(state.sources.snapshot);
   const scopeTitle =
     state.scope?.kind === 'solution'
       ? state.scope.solutionPath
@@ -128,6 +139,9 @@ function Shell() {
             onClick={() => dispatch({ type: 'SET_TAB', tab: tab.id })}
           >
             {tab.label}
+            {tab.id === 'sources' && sourcesWarn ? (
+              <span className="tab-btn__warn" title="Effective config has no working audit source">⚠</span>
+            ) : null}
           </button>
         ))}
 

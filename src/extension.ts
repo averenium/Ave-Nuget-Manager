@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { Logger } from './logger';
+import { Logger, formatUnknownError } from './logger';
 import { CliRunner } from './cliRunner';
 import { CliBackend } from './backend/cliBackend';
 import { SolutionParser } from './solutionParser';
@@ -20,29 +20,49 @@ import { RoslynSdkProbe } from './roslynSdkProbe';
 let logger: Logger | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  logger = new Logger();
+  try {
+    logger = new Logger();
+    await activateCore(context, logger);
+  } catch (err) {
+    const text = formatUnknownError(err);
+    try {
+      console.error('[AVE NuGet Manager] activate failed', err);
+    } catch { /* ignore */ }
+    logger?.error('activate failed', err);
+    logger?.show();
+    void vscode.window.showErrorMessage(
+      `AVE NuGet Manager failed to start: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    throw err;
+  }
+}
 
-  // Show/hide the panel tab. Cheap: findFiles(max=1), no dotnet.
-  // Runs because workspaceContains activated us, or the user invoked a command.
-  await watchDotnetWorkspaceContext(context);
+async function activateCore(context: vscode.ExtensionContext, log: Logger): Promise<void> {
+  const version = readExtensionVersion(context.extensionPath);
+  const folders = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
+  log.info(`activate start v${version} ${vscode.env.appName} ${vscode.version} ${os.platform()}/${os.arch()}`);
+  log.info(`folders: ${folders.length ? folders.join(' | ') : '(none)'}`);
+
+  const hasDotnet = await watchDotnetWorkspaceContext(context);
+  log.info(`workspace context hasDotnetProject=${hasDotnet}`);
 
   const configResolver = new NuGetConfigChainResolver();
-
-  const viewProvider = new NugetManagerViewProvider(context.extensionUri);
+  const viewProvider = new NugetManagerViewProvider(context.extensionUri, log);
 
   const storageRoot = context.globalStorageUri.fsPath;
   fs.mkdirSync(storageRoot, { recursive: true });
+  log.info(`globalStorage: ${storageRoot}`);
 
   let runner!: CliRunner;
   const trace = new TraceController(
     storageRoot,
-    logger,
+    log,
     viewProvider,
     configResolver,
     () => viewProvider.getCurrentScope() ?? undefined,
     () => runner.checkDotnetAvailable(),
     {
-      extensionVersion: readExtensionVersion(context.extensionPath),
+      extensionVersion: version,
       appName: vscode.env.appName,
       vscodeVersion: vscode.version,
       os: `${os.platform()} ${os.release()}`,
@@ -50,7 +70,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   );
   runner = new CliRunner(
-    logger,
+    log,
     createConcurrencyGate(() => getConfig().dotnetConcurrency),
     trace,
   );
@@ -63,18 +83,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     viewProvider,
     { webviewOptions: { retainContextWhenHidden: true } },
   );
+  log.info(`registered view ${NugetManagerViewProvider.viewId}`);
 
   const broker = new WebviewMessageBroker(
     viewProvider,
     backend,
     solutionParser,
     configResolver,
-    logger,
+    log,
     async () => {
       try {
         await runner.checkDotnetAvailable();
       } catch {
-        logger?.logCliOperation({
+        log.logCliOperation({
           timestamp: new Date(),
           command: 'dotnet --version',
           args: ['--version'],
@@ -99,15 +120,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     roslynProbe,
   );
   broker.attach();
+  log.info('broker attached');
 
-  // Reload webview when Vite rebuilds the bundle (watch mode).
-  // fs.watch: vscode FileSystemWatcher often skips gitignored dist/
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleReload = () => {
     if (reloadTimer) clearTimeout(reloadTimer);
     reloadTimer = setTimeout(() => viewProvider.reloadHtml(), 200);
   };
   const webviewDir = path.join(context.extensionPath, 'dist', 'webview');
+  const bundleJs = path.join(webviewDir, 'bundle.js');
+  log.info(`webview bundle ${fs.existsSync(bundleJs) ? 'ok' : 'MISSING'}: ${bundleJs}`);
   let bundleWatcher: fs.FSWatcher | undefined;
   try {
     fs.mkdirSync(webviewDir, { recursive: true });
@@ -116,7 +138,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const name = filename.toString();
       if (name === 'bundle.js' || name === 'bundle.css') scheduleReload();
     });
-  } catch {
+  } catch (err) {
+    log.error('webview bundle watcher failed', err);
     bundleWatcher = undefined;
   }
 
@@ -125,6 +148,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registerAgentSkillCommand(context, () => broker.postSkillStatus());
   trace.register(context);
   void trace.recoverOrphan();
+  log.info('commands registered');
 
   context.subscriptions.push(
     viewProviderDisposable,
@@ -133,9 +157,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     { dispose: () => broker.detach() },
     { dispose: () => logger?.dispose() },
   );
+  log.info('activate done');
 }
 
 export function deactivate(): void {
+  logger?.info('deactivate');
   logger?.dispose();
   logger = undefined;
 }

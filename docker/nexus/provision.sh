@@ -133,18 +133,35 @@ create_if_missing "nuget-group" "group" '{
   "group": { "memberNames": ["nuget-hosted", "nuget.org-proxy"] }
 }'
 
+code=$(api PUT "/service/rest/v1/security/realms/active" --data \
+  '["NexusAuthenticatingRealm","NexusAuthorizingRealm","NuGetApiKey"]')
+echo "realms HTTP ${code}"
+
 anon=$(curl -sS -u "${AUTH}" "${NEXUS_URL}/service/rest/v1/security/anonymous")
 echo "${anon}" | jq '.enabled = true' >/tmp/anon.json
 code=$(api PUT "/service/rest/v1/security/anonymous" --data @/tmp/anon.json)
 echo "anonymous HTTP ${code}"
 
-users=$(curl -sS -u "${AUTH}" "${NEXUS_URL}/service/rest/v1/security/users?userId=${NUGET_USER}")
-if echo "${users}" | jq -e --arg id "${NUGET_USER}" 'any(.[]; .userId == $id)' >/dev/null 2>&1; then
-  echo "user ${NUGET_USER} already exists"
-else
-  code=$(api POST "/service/rest/v1/security/users" --data "$(jq -n \
+user_login_ok() {
+  curl -sf -u "${NUGET_USER}:${1}" "${NEXUS_URL}/service/rest/v1/repositories" >/dev/null
+}
+
+user_exists() {
+  users=$(curl -sS -u "${AUTH}" "${NEXUS_URL}/service/rest/v1/security/users?userId=${NUGET_USER}")
+  echo "${users}" | jq -e --arg id "${NUGET_USER}" 'any(.[]; .userId == $id)' >/dev/null 2>&1
+}
+
+set_user_password() {
+  curl -sS -o /tmp/pw.out -w "%{http_code}" -u "${AUTH}" \
+    -X PUT "${NEXUS_URL}/service/rest/v1/security/users/${NUGET_USER}/change-password" \
+    -H "Content-Type: text/plain" \
+    --data-binary "${1}"
+}
+
+create_user() {
+  api POST "/service/rest/v1/security/users" --data "$(jq -n \
     --arg id "${NUGET_USER}" \
-    --arg pw "${NUGET_PASSWORD}" \
+    --arg pw "${1}" \
     '{
       userId: $id,
       firstName: "NuGet",
@@ -152,21 +169,48 @@ else
       emailAddress: "nuget@localhost",
       password: $pw,
       status: "active",
+      source: "default",
       roles: ["nx-admin"]
-    }')")
-  echo "create user ${NUGET_USER} HTTP ${code}"
-fi
+    }')"
+}
 
-code=$(api PUT "/service/rest/v1/security/realms/active" --data \
-  '["NexusAuthenticatingRealm","NexusAuthorizingRealm","NuGetApiKey"]')
-echo "realms HTTP ${code}"
+ensure_user() {
+  pw="$1"
+  if user_exists; then
+    echo "user ${NUGET_USER} already exists"
+    if user_login_ok "${pw}"; then
+      return 0
+    fi
+    code=$(set_user_password "${pw}")
+    echo "reset ${NUGET_USER} password HTTP ${code} $(cat /tmp/pw.out)"
+  else
+    code=$(create_user "${pw}")
+    echo "create user ${NUGET_USER} HTTP ${code} $(cat /tmp/api.out)"
+    case "${code}" in
+      201|204) ;;
+      *) return 1 ;;
+    esac
+  fi
+  user_login_ok "${pw}"
+}
+
+if ensure_user "${NUGET_PASSWORD}"; then
+  echo "user ${NUGET_USER} can log in"
+elif [ "${NUGET_PASSWORD}" != "${ADMIN_NEW}" ] && ensure_user "${ADMIN_NEW}"; then
+  NUGET_PASSWORD="${ADMIN_NEW}"
+  echo "password '${NUGET_USER}' rejected by Nexus policy; ${NUGET_USER} / ${NUGET_PASSWORD} works"
+else
+  echo "failed to create a working ${NUGET_USER} login" >&2
+  exit 1
+fi
 
 cat <<EOF
 
 Nexus NuGet lab is ready.
 
   UI:              ${NEXUS_URL}   (admin / ${ADMIN_NEW})
-  nuget user:      ${NUGET_USER} / ${NUGET_PASSWORD}   (API key: ${NUGET_USER}:${NUGET_PASSWORD})
+  nuget user:      ${NUGET_USER} / ${NUGET_PASSWORD}
+  push:            username/password in nuget.config — no API key
 
   proxy:           http://localhost:8081/repository/nuget.org-proxy/index.json
   hosted (private):http://localhost:8081/repository/nuget-hosted/index.json

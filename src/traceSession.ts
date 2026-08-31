@@ -36,12 +36,27 @@ interface SessionMeta {
 }
 
 const PAYLOAD_MAX = 1500;
+/** Same idea as CLI log stdout `secrets omitted` — never copy the value into jsonl. */
+const OMIT_TRACE_FIELDS = new Set(['password', 'apiKey']);
 
-/** Truncate webview JSON so csproj bodies never land in jsonl. */
+/** Truncate webview JSON so csproj bodies and secrets never land in jsonl. */
 export function summarizeWebviewMessage(msg: WebviewMessage): unknown {
   const { type, ...rest } = msg as WebviewMessage & Record<string, unknown>;
   const slim: Record<string, unknown> = { type };
   for (const [key, value] of Object.entries(rest)) {
+    if (OMIT_TRACE_FIELDS.has(key)) {
+      slim[key] = 'omitted';
+      continue;
+    }
+    if (
+      type === 'COPY_TEXT'
+      && key === 'text'
+      && typeof value === 'string'
+      && /^\s*export\s+NUGET_API_KEY=/i.test(value)
+    ) {
+      slim[key] = 'export NUGET_API_KEY=<omitted>';
+      continue;
+    }
     if (key === 'items' && Array.isArray(value)) {
       slim.items = value.length;
       continue;

@@ -126,6 +126,9 @@ export const window = {
   showSaveDialog: jest.fn((_options?: any): Promise<any> =>
     Promise.resolve(undefined)
   ),
+  showTextDocument: jest.fn((_doc: any, _options?: any): Promise<any> =>
+    Promise.resolve({ selection: undefined, revealRange: jest.fn() })
+  ),
   registerWebviewViewProvider: jest.fn((_viewId: string, _provider: any, _options?: any): Disposable =>
     new Disposable(() => { /* no-op */ })
   ),
@@ -183,6 +186,14 @@ export const workspace = {
     onDidChange: jest.fn(() => new Disposable(() => { /* no-op */ })),
     dispose: jest.fn(),
   })),
+  textDocuments: [] as any[],
+  applyEdit: jest.fn((_edit: unknown): Promise<boolean> => Promise.resolve(true)),
+  onDidChangeTextDocument: jest.fn((_listener: (...args: any[]) => any): Disposable =>
+    new Disposable(() => { /* no-op */ })
+  ),
+  onDidSaveTextDocument: jest.fn((_listener: (...args: any[]) => any): Disposable =>
+    new Disposable(() => { /* no-op */ })
+  ),
   onDidChangeWorkspaceFolders: jest.fn((_listener: (...args: any[]) => any): Disposable =>
     new Disposable(() => { /* no-op */ })
   ),
@@ -212,6 +223,10 @@ export const version = '1.85.0';
 
 export const env = {
   appName: 'Cursor',
+  clipboard: {
+    writeText: jest.fn((_text: string): Promise<void> => Promise.resolve()),
+  },
+  openExternal: jest.fn((_uri: Uri): Promise<boolean> => Promise.resolve(true)),
 };
 
 // ─── ExtensionContext ─────────────────────────────────────────────────────────
@@ -237,6 +252,34 @@ export enum ViewColumn {
   One = 1,
   Two = 2,
   Three = 3,
+}
+
+export enum TextEditorRevealType {
+  Default = 0,
+  InCenter = 1,
+  InCenterIfOutsideViewport = 2,
+  AtTop = 3,
+}
+
+export class Position {
+  constructor(public line: number, public character: number) {}
+}
+
+export class Range {
+  constructor(public start: Position, public end: Position) {}
+}
+
+export class WorkspaceEdit {
+  readonly replacements: Array<{ uri: Uri; range: Range; newText: string }> = [];
+  replace(uri: Uri, range: Range, newText: string): void {
+    this.replacements.push({ uri, range, newText });
+  }
+}
+
+export class Selection extends Range {
+  constructor(anchor: Position, active: Position) {
+    super(anchor, active);
+  }
 }
 
 // ─── FileType ─────────────────────────────────────────────────────────────────

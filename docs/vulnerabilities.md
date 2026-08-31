@@ -4,7 +4,7 @@
 
 Після `dotnet list` host паралельно з enrich збирає findings і шле `VULNERABILITIES`.
 
-`dotnet list --vulnerable` без `<auditSources>` читає **registration кожного package source**. На nuget.org там є GHSA; на Nexus — немає, плюс GET на кожен пакет. CLI стартує коли:
+`dotnet list --vulnerable` без `<auditSources>` читає **registration кожного package source**. На nuget.org там є GHSA; на Nexus — немає, плюс GET на кожен пакет. Перед гейтом URL з XML проходить `expandNuGetConfigValue` (`%VAR%`), той самий рядок що й ⚠ на вкладці. CLI стартує коли:
 
 - усі HTTP package sources — nuget.org / `data.nuget.org`; або
 - є хоч один HTTP `<auditSources>` (CLI тоді йде в VDB і **не** чіпає package registration, навіть якщо audit порожній).

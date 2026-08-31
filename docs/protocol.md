@@ -15,7 +15,7 @@ webview mount  →  WEBVIEW_READY
                    └─ є scope
                         ├─ activateScope уже зробив init → пропуск (антидубль)
                         └─ інакше _initForScope
-                             → INIT_STATE (scope, sources, configChain, includePrerelease, blockedPackages, traceRecording, bundledVersion, detected, installs, roslynCap)
+                             → INIT_STATE (scope, sources, configChain, snapshot, includePrerelease, blockedPackages, traceRecording, bundledVersion, detected, installs, roslynCap, isWindows)
                              → INSTALLED_PACKAGES + IMPLICIT_PACKAGES (`dotnet list --no-restore`)
                              → паралельно `dotnet restore` → ERROR «Restore failed» якщо впав
                              → фоновий enrich → PACKAGE_INFO_UPDATE / ENRICH_PROGRESS
@@ -29,6 +29,7 @@ webview mount  →  WEBVIEW_READY
 | `type` | Коли UI шле | Що робить host |
 |---|---|---|
 | `WEBVIEW_READY` | Після `root.render` у `index.tsx` | `dotnet --version` (один раз), потім init |
+| `WEBVIEW_ERROR` | Error Boundary / `window.onerror` / reducer | Output Channel `[error] webview …` + stack; канал показується |
 | `SEARCH_PACKAGES` | Пошук ≥2 символи | `searchPackages`; config files беруться з поточного scope, не з payload |
 | `SET_PRERELEASE_SETTING` | Чекбокс Pre-release | Пише Global settings, чистить кеш, refresh |
 | `GET_PACKAGE_METADATA` | `VersionSelector` | `getMetadata` |
@@ -43,6 +44,11 @@ webview mount  →  WEBVIEW_READY
 | `RESTORE_PACKAGES` | Іконка пакета (Restore) | Restore → list → vuln; смужка Restoring… до `REFRESH_FINISHED`; кеш latest лишається |
 | `FORCE_REFRESH` | Кругова стрілка (Force refresh) | Те саме з очищенням кешу; смужка далі показує enrich latest |
 | `OPEN_CONFIG_FILE` | Вкладка Sources | `openTextDocument` |
+| `COPY_TEXT` | Copy URL на Sources (клік / ПКМ Copy) | `env.clipboard.writeText` |
+| `OPEN_URL` | ПКМ на URL → Open in browser | `env.openExternal` (лише http/https) |
+| `SET_SOURCE_ENABLED` | Toggle on/off | `kind: package` (за замовчуванням) → `<disabledPackageSources>`. `kind: audit` → лише `<auditSources>`. Effective: не копіює весь audit-ланцюг у nearest repo файл — один ключ у файлі, де він уже є / `<clear />`, інакше user `NuGet.Config` (`<clear />` + решта, якщо треба перебити machine). Файл: upsert/remove. Якщо файл не writable — warning toast, не тихий no-op. Не пише спільний disable-список. Потім `CONFIG_CHAIN_UPDATE` |
+| `SET_SOURCE_CONNECTION_FLAGS` | Edit: HTTP / TLS checkboxes | Пише `allowInsecureConnections` / `disableTLSCertificateValidation` на `<add>`. Якщо файл не writable — warning toast, не тихий no-op. |
+| `SET_SOURCE_SECRETS` | **Save credentials** / Enter на username/password/API key, × щоб зняти; не Windows: **Copy typed** копіює щойно введене як `export NUGET_API_KEY=…` (збережений ключ у webview не приходить) | Секрети пишуться в user/global `NuGet.Config`, не в repo. Не пише на blur/unmount. `url` — сирий `value` з XML (`%VAR%` не розгортати): NuGet шукає `<apikeys>` за цим рядком. Блок у workspace-файлі знімається. Windows `<apikeys>` DPAPI; не Windows `<clearTextApiKeys>`. Якщо declared path не writable і не machine — warning toast, не тихий no-op |
 | `GET_LOG_ENTRIES` | Відкриття Log | Повний масив Logger |
 | `START_TRACE` | ● Trace | Confirm, потім сесія в `globalStorage` |
 | `STOP_TRACE` | ■ Stop & save zip | Sanitize → zip → Save dialog |
@@ -56,7 +62,7 @@ webview mount  →  WEBVIEW_READY
 
 | `type` | Коли шлеться | Обробка в reducer |
 |---|---|---|
-| `INIT_STATE` | Початок scope | Scope, sources, loading, `blockedPackages`, `traceRecording`, skill status (`detected` може бути `[]`), `roslynCap` (`null` якщо `csc -version` не вдався) |
+| `INIT_STATE` | Початок scope | Scope, sources, `configChain`, `snapshot` (effective / chain diffs / extra / conflicts), loading, `blockedPackages`, `traceRecording`, skill status (`detected` може бути `[]`), `roslynCap` (`null` якщо `csc -version` не вдався), `isWindows` (на Windows ховається Copy / tooltip для `<clearTextApiKeys>`) |
 | `SKILL_STATUS` | Після Install… / Palette skill | `bundledVersion`, `detected`, `installs` |
 | `INSTALLED_PACKAGES` | Після успішного `dotnet list` | Список + `isLoadingPackages: false`; оновлює `detail.projectVersions` для вибраного пакета |
 | `IMPLICIT_PACKAGES` | Після `dotnet list` | Транзитивні |
@@ -64,7 +70,7 @@ webview mount  →  WEBVIEW_READY
 | `PACKAGE_INFO_UPDATE` | Enrich по id | `latestVersion` + `sourceName` + `versions[]`; сортування: спочатку з оновленням |
 | `ENRICH_PROGRESS` | `done/total` | Смужка Force refresh (`Refreshing latest n/m`); зникає коли `done >= total` |
 | `VULNERABILITIES` | Після list (паралельно з enrich) | Findings для ⚠ і деталей; див. [vulnerabilities](vulnerabilities.md) |
-| `VULN_SCAN_HINT` | Після скан (skip CLI) | Sources: завжди при skip. Packages: лише якщо ще немає ⚠; dismiss у `setState` |
+| `VULN_SCAN_HINT` | Після скан (skip CLI); `show: false` після config update, якщо audit уже є | Sources / Audit: якщо skip і немає enabled `<auditSources>`. На вкладці Packages не показується |
 | `BLOCKED_PACKAGES` | Після `SET_PACKAGE_BLOCKED` або зміни Workspace settings | Ids з `blockedPackages` |
 | `SEARCH_RESULTS` | Пошук | Available-список |
 | `PACKAGE_METADATA` | Деталі | Права панель |
@@ -83,7 +89,7 @@ webview mount  →  WEBVIEW_READY
 | `LOG_CLEARED` | Clear log | Порожній список |
 | `TRACE_STATE` | Start/Stop trace | `recording` для беджа |
 | `ERROR` | Пошук / metadata / list refresh / restore | Metadata → `detail.error`; list refresh / restore → `globalError` (restore не затирає `pendingRollback`) |
-| `CONFIG_CHAIN_UPDATE` | **Ніколи не шлеться** | Handler у reducer є |
+| `CONFIG_CHAIN_UPDATE` | Watcher nuget.config, Restore / Force refresh | `configChain` + `sources` + `snapshot`; без toast |
 | `DOTNET_NOT_FOUND` | **Ніколи не шлеться** | Банер `dotnetMissing` у `App.tsx` |
 
 ## Кеш enrich

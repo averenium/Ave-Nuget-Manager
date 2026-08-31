@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { randomUUID } from 'crypto';
 import type { WorkspaceScope } from './types';
 import type { ExtensionMessage } from './messages';
+import type { Logger } from './logger';
 
 /** Hides the panel WebviewView while the editor/new-window panel is the live UI. */
 export const EDITOR_OPEN_CONTEXT = 'averenium.nugetManager.editorOpen';
@@ -37,7 +40,10 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
   private readonly _outboundQueue: ExtensionMessage[] = [];
   private _htmlBuilt = false;
 
-  constructor(private readonly _extensionUri: vscode.Uri) {}
+  constructor(
+    private readonly _extensionUri: vscode.Uri,
+    private readonly _log?: Pick<Logger, 'info' | 'error'>,
+  ) {}
 
   /** Called once the first surface (panel view or editor) exists — e.g. start file watch. */
   setOnSurface(cb: () => void): void {
@@ -66,39 +72,47 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
     _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken,
   ): void {
-    this._view = webviewView;
-    this._notifySurface();
+    try {
+      this._log?.info('resolveWebviewView');
+      this._view = webviewView;
+      this._notifySurface();
 
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [
-        vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview'),
-      ],
-    };
+      webviewView.webview.options = {
+        enableScripts: true,
+        localResourceRoots: [
+          vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview'),
+        ],
+      };
 
-    // Every resolve is a new view instance (first open, or after move / editor close).
-    // Hide/show with retainContextWhenHidden does not re-resolve.
-    if (!this._editor) {
-      this._clientReady = false;
-      this._outboundQueue.length = 0;
-      webviewView.webview.html = this._buildHtml(webviewView.webview);
-      this._htmlBuilt = true;
-    }
-
-    this._bindHandlers(webviewView.webview);
-
-    this._viewDisposeSub?.dispose();
-    this._viewDisposeSub = webviewView.onDidDispose(() => {
-      this._view = undefined;
-      this._viewDisposeSub = undefined;
-      if (this._editor) {
-        this._bindHandlers(this._editor.webview);
-        return;
+      // Every resolve is a new view instance (first open, or after move / editor close).
+      // Hide/show with retainContextWhenHidden does not re-resolve.
+      if (!this._editor) {
+        this._clientReady = false;
+        this._outboundQueue.length = 0;
+        webviewView.webview.html = this._buildHtml(webviewView.webview);
+        this._htmlBuilt = true;
       }
-      this._resetSurface();
-    });
 
-    this._onViewReady?.();
+      this._bindHandlers(webviewView.webview);
+
+      this._viewDisposeSub?.dispose();
+      this._viewDisposeSub = webviewView.onDidDispose(() => {
+        this._view = undefined;
+        this._viewDisposeSub = undefined;
+        if (this._editor) {
+          this._bindHandlers(this._editor.webview);
+          return;
+        }
+        this._resetSurface();
+      });
+
+      this._onViewReady?.();
+    } catch (err) {
+      this._log?.error('resolveWebviewView failed', err);
+      void vscode.window.showErrorMessage(
+        `AVE NuGet Manager view failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**
@@ -193,12 +207,16 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
   }
 
   reloadHtml(): void {
-    const webview = this._activeWebview();
-    if (!webview) return;
-    this._clientReady = false;
-    this._outboundQueue.length = 0;
-    webview.html = this._buildHtml(webview);
-    this._htmlBuilt = true;
+    try {
+      const webview = this._activeWebview();
+      if (!webview) return;
+      this._clientReady = false;
+      this._outboundQueue.length = 0;
+      webview.html = this._buildHtml(webview);
+      this._htmlBuilt = true;
+    } catch (err) {
+      this._log?.error('reloadHtml failed', err);
+    }
   }
 
   postMessage(message: ExtensionMessage): void {
@@ -258,6 +276,14 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
   private _buildHtml(webview: vscode.Webview): string {
     const nonce = randomUUID().replace(/-/g, '');
     const cacheBust = Date.now().toString();
+    const bundleFs = path.join(this._extensionUri.fsPath, 'dist', 'webview', 'bundle.js');
+    const bundleOk = fs.existsSync(bundleFs);
+    if (!bundleOk) {
+      this._log?.error(`webview bundle missing: ${bundleFs}`);
+    }
+    const rootText = bundleOk
+      ? 'Loading NuGet…'
+      : 'UI bundle missing. Run npm run build:webview, then Reload Window.';
 
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview', 'bundle.js'),
@@ -284,8 +310,27 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
   <title>NuGet Manager</title>
 </head>
 <body>
-  <div id="root"></div>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
+  <div id="root">${rootText}</div>
+  <script nonce="${nonce}">
+    (function () {
+      var bundle = document.currentScript && document.currentScript.nextElementSibling;
+      if (!bundle) return;
+      bundle.addEventListener('error', function () {
+        var el = document.getElementById('root');
+        if (el) el.textContent = 'Failed to load UI bundle (dist/webview/bundle.js). Rebuild with npm run build:webview, then Reload Window.';
+        try {
+          var api = window.__nugetVsCodeApi || acquireVsCodeApi();
+          window.__nugetVsCodeApi = api;
+          api.postMessage({
+            type: 'WEBVIEW_ERROR',
+            source: 'bundle',
+            message: 'Failed to load bundle.js',
+          });
+        } catch (e) {}
+      });
+    })();
+  </script>
+  <script nonce="${nonce}" id="nuget-bundle" src="${scriptUri}"></script>
 </body>
 </html>`;
   }

@@ -14,7 +14,7 @@
 | [Вразливості](vulnerabilities.md) | `dotnet list --vulnerable`, користувацький скрипт, ⚠ у Packages |
 | [Backend і CLI](backend.md) | `INuGetBackend`, `cliBackend.ts`, `cliRunner.ts`, `concurrency.ts` |
 | [Парсер solution](solution.md) | `solutionParser.ts` |
-| [Ланцюжок nuget.config](config-chain.md) | `nugetConfigChainResolver.ts`, вкладка Sources |
+| [Ланцюжок nuget.config](config-chain.md) | `nugetConfigChainResolver.ts`, `sourcesSnapshot.ts`, вкладка Sources |
 | [Webview UI](webview.md) | `src/webview/**` |
 | [Логування](logging.md) | `logger.ts`, вкладка Log, trace zip |
 | [Збірка і тести](build-and-test.md) | npm-скрипти, Jest, launch; лабораторний Nexus |

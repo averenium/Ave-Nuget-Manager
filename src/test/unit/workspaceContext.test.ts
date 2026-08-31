@@ -4,6 +4,10 @@ import {
   DOTNET_PROJECT_GLOB,
   HAS_DOTNET_WORKSPACE_CONTEXT,
   hasDotnetWorkspaceFiles,
+  capFoundUris,
+  listWorkspaceNuGetConfigFiles,
+  NUGET_CONFIG_FIND_LIMIT,
+  NUGET_CONFIG_GLOB,
   refreshDotnetWorkspaceContext,
   scopeFromDotnetFile,
   sortDotnetTargetPaths,
@@ -208,5 +212,34 @@ describe('watchDotnetWorkspaceContext', () => {
     await flush();
 
     expect(vscode.workspace.findFiles).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('capFoundUris / listWorkspaceNuGetConfigFiles', () => {
+  beforeEach(() => {
+    setWorkspaceFolders([]);
+    (vscode.workspace.findFiles as jest.Mock).mockReset();
+  });
+
+  it('marks truncation when the list is over the limit', () => {
+    expect(capFoundUris([1, 2, 3], 2)).toEqual({ items: [1, 2], truncated: true });
+    expect(capFoundUris([1, 2], 2)).toEqual({ items: [1, 2], truncated: false });
+  });
+
+  it('passes maxResults to findFiles and reports truncated', async () => {
+    setWorkspaceFolders([folder('/repo')]);
+    const uris = Array.from({ length: NUGET_CONFIG_FIND_LIMIT + 1 }, (_, i) =>
+      vscode.Uri.file(`/repo/p${i}/nuget.config`),
+    );
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue(uris);
+    await expect(listWorkspaceNuGetConfigFiles()).resolves.toEqual({
+      uris: uris.slice(0, NUGET_CONFIG_FIND_LIMIT),
+      truncated: true,
+    });
+    expect(vscode.workspace.findFiles).toHaveBeenCalledWith(
+      NUGET_CONFIG_GLOB,
+      DOTNET_PROJECT_EXCLUDE_GLOB,
+      NUGET_CONFIG_FIND_LIMIT + 1,
+    );
   });
 });

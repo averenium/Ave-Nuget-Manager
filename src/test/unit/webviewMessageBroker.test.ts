@@ -146,8 +146,10 @@ describe('WebviewMessageBroker', () => {
     expect(initMsg).toBeDefined();
     expect(initMsg.scope).toEqual(PROJECT_SCOPE);
     expect(initMsg.sources).toHaveLength(1);
+    expect(initMsg.snapshot.effectivePackageSources).toHaveLength(1);
     expect(initMsg.blockedPackages).toEqual([]);
     expect(initMsg.roslynCap).toBeNull();
+    expect(initMsg.isWindows).toBe(process.platform === 'win32');
   });
 
   it('includes skill fields on INIT_STATE when detection is empty', async () => {
@@ -1444,6 +1446,92 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     await new Promise((r) => setTimeout(r, 10));
 
     expect(vscode.workspace.openTextDocument).toHaveBeenCalledWith('/p/nuget.config');
+  });
+
+  it('reveals the source add line for OPEN_CONFIG_FILE with sourceName', async () => {
+    const vscode = require('vscode');
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+</configuration>`;
+    const editor = { selection: undefined as unknown, revealRange: jest.fn() };
+    vscode.workspace.openTextDocument.mockResolvedValueOnce({
+      getText: () => xml,
+      lineAt: (n: number) => ({ range: { end: { line: n, character: 10 } } }),
+    });
+    vscode.window.showTextDocument.mockResolvedValueOnce(editor);
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'OPEN_CONFIG_FILE', filePath: '/p/nuget.config', sourceName: 'nexus' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(editor.revealRange).toHaveBeenCalled();
+    expect(editor.selection).toBeDefined();
+  });
+
+  it('writes clipboard for COPY_TEXT', async () => {
+    const vscode = require('vscode');
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'COPY_TEXT', text: 'https://api.nuget.org/v3/index.json' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith('https://api.nuget.org/v3/index.json');
+  });
+
+  it('opens http URLs in the browser for OPEN_URL', async () => {
+    const vscode = require('vscode');
+    vscode.env.openExternal.mockClear();
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'OPEN_URL', url: 'https://api.nuget.org/v3/index.json' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(vscode.env.openExternal).toHaveBeenCalled();
+    const uri = vscode.env.openExternal.mock.calls[0][0];
+    expect(uri.scheme).toBe('https');
+  });
+
+  it('ignores non-http OPEN_URL', async () => {
+    const vscode = require('vscode');
+    vscode.env.openExternal.mockClear();
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'OPEN_URL', url: 'D:\\\\packages' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(vscode.env.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('warns on SET_SOURCE_SECRETS when the path is not a writable nuget.config', async () => {
+    const vscode = require('vscode');
+    vscode.window.showWarningMessage.mockClear();
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'SET_SOURCE_SECRETS',
+      name: 'nexus',
+      configFilePath: '/p/Directory.Build.props',
+      url: 'https://nexus.example/index.json',
+      username: 'ci',
+      password: 'hunter2',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage.mock.calls[0][0]).toMatch(/writable nuget\.config/i);
   });
 
   // ── UPDATE_PACKAGES_BATCH ──────────────────────────────────────────────────

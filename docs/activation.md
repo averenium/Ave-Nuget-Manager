@@ -11,9 +11,10 @@
 
 `activate()` у `src/extension.ts`:
 
-1. `Logger`
-2. `watchDotnetWorkspaceContext()` — `setContext('averenium.nugetManager.hasDotnetWorkspace')` + watcher
-3. Сервіси, реєстрація view provider і команд. **Не** викликає `dotnet --version`.
+1. `Logger` — одразу `info activate start` (версія, VS Code, папки).
+2. `watchDotnetWorkspaceContext()` — `setContext('averenium.nugetManager.hasDotnetWorkspace')` + watcher; лог `hasDotnetProject=`.
+3. Сервіси, реєстрація view provider і команд; лог наявності `dist/webview/bundle.js`. **Не** викликає `dotnet --version`.
+4. `info activate done`. Кидок → Output + toast, див. [logging](logging.md).
 
 | Коли | Що |
 |---|---|

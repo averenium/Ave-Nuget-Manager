@@ -15,6 +15,13 @@ export interface CliLogEntry {
 
 export type LogListener = (entry: LogEntry) => void;
 
+export function formatUnknownError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.stack ?? `${err.name}: ${err.message}`;
+  }
+  return String(err);
+}
+
 export class Logger {
   private readonly channel: vscode.OutputChannel;
   private readonly entries: LogEntry[] = [];
@@ -22,6 +29,22 @@ export class Logger {
 
   constructor() {
     this.channel = vscode.window.createOutputChannel('Averenium NuGet Manager');
+  }
+
+  /** Startup / host diagnostics. Output Channel only — not the Log tab. */
+  info(message: string): void {
+    this._writePlain('info', message);
+  }
+
+  /** Startup / host failures. Output Channel + Extension Host console. */
+  error(message: string, err?: unknown): void {
+    const detail = err !== undefined ? formatUnknownError(err) : '';
+    this._writePlain('error', detail ? `${message}\n${detail}` : message);
+    try {
+      console.error(`[AVE NuGet Manager] ${message}`, err ?? '');
+    } catch {
+      /* console must never break activate */
+    }
   }
 
   /**
@@ -85,6 +108,17 @@ export class Logger {
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
+
+  private _writePlain(level: 'info' | 'error', message: string): void {
+    try {
+      const ts = new Date().toISOString();
+      for (const line of message.split('\n')) {
+        this.channel.appendLine(`[${ts}] [${level}] ${line}`);
+      }
+    } catch {
+      // Output channel errors must never propagate
+    }
+  }
 
   private _writeToChannel(entry: LogEntry): void {
     try {

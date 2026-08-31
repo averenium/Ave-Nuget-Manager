@@ -11,6 +11,7 @@ import type {
   PackageMetadata,
   PackageSource,
   NuGetConfigFile,
+  SourcesSnapshot,
   LogEntry,
   OperationFailure,
   BatchUpdateJob,
@@ -18,7 +19,7 @@ import type {
 } from '../../types';
 import type { SkillFamily, SkillInstallRow } from '../../agentSkillInstall';
 import type { ExtensionMessage } from '../../messages';
-import { sendMessage, onMessage, getPersistedState, patchPersistedState } from '../vscodeApi';
+import { sendMessage, onMessage, reportWebviewError } from '../vscodeApi';
 import type { RoslynCap } from '../../roslynSdkCap';
 
 /** Returns true only when latestVersion is strictly newer than installed version */
@@ -93,11 +94,11 @@ export interface AppState {
       message: string;
       configFilePath?: string;
     } | null;
-    vulnHintDismissedFingerprint: string | null;
   };
   sources: {
     configChain: NuGetConfigFile[];
     allSources: PackageSource[];
+    snapshot: SourcesSnapshot | null;
   };
   log: {
     entries: LogEntry[];
@@ -128,6 +129,7 @@ export interface AppState {
   workspaceActivity: { kind: 'restore' | 'refresh'; phase: 'work' | 'enrich' } | null;
   traceRecording: boolean;
   roslynCap: RoslynCap | null;
+  isWindows: boolean;
 }
 
 const initialState: AppState = {
@@ -146,9 +148,8 @@ const initialState: AppState = {
     vulnerabilities: [],
     blockedPackages: [],
     vulnHint: null,
-    vulnHintDismissedFingerprint: getPersistedState().vulnHintDismissedFingerprint ?? null,
   },
-  sources: { configChain: [], allSources: [] },
+  sources: { configChain: [], allSources: [], snapshot: null },
   log: { entries: [] },
   agents: { bundledVersion: '?', detected: [], installs: [] },
   updates: { jobs: [], activeJobId: null, versionsByPackageId: {} },
@@ -168,6 +169,7 @@ const initialState: AppState = {
   workspaceActivity: null,
   traceRecording: false,
   roslynCap: null,
+  isWindows: true,
 };
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -183,10 +185,19 @@ export type Action =
   | { type: 'SET_PROJECT_VERSION'; projectPath: string; version: string }
   | { type: 'SET_PROJECT_LOADING'; projectPath: string; loading: boolean }
   | { type: 'SET_PROJECT_ERROR'; projectPath: string; error: string | null }
-  | { type: 'DISMISS_GLOBAL_ERROR' }
-  | { type: 'DISMISS_VULN_HINT' };
+  | { type: 'DISMISS_GLOBAL_ERROR' };
 
 function reducer(state: AppState, action: Action): AppState {
+  try {
+    return reduceAppState(state, action);
+  } catch (err) {
+    reportWebviewError('reducer', err, `action=${'type' in action ? action.type : '?'}`);
+    const text = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    return { ...state, globalError: `UI reducer crashed:\n${text}` };
+  }
+}
+
+function reduceAppState(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_TAB':
       return { ...state, activeTab: action.tab };
@@ -283,18 +294,6 @@ function reducer(state: AppState, action: Action): AppState {
     case 'DISMISS_GLOBAL_ERROR':
       return { ...state, globalError: null };
 
-    case 'DISMISS_VULN_HINT': {
-      const fp = state.packages.vulnHint?.fingerprint ?? state.packages.vulnHintDismissedFingerprint;
-      patchPersistedState({ vulnHintDismissedFingerprint: fp });
-      return {
-        ...state,
-        packages: {
-          ...state.packages,
-          vulnHintDismissedFingerprint: fp,
-        },
-      };
-    }
-
     case 'MSG':
       return applyExtensionMessage(state, action.msg);
 
@@ -311,7 +310,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         scope: msg.scope,
         globalError: null,
         pendingRollback: false,
-        sources: { configChain: msg.configChain, allSources: msg.sources },
+        sources: { configChain: msg.configChain, allSources: msg.sources, snapshot: msg.snapshot },
         packages: {
           ...state.packages,
           // Clear lists and set loading while new scope initialises
@@ -325,7 +324,6 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           selectedSources: msg.sources.filter((s) => s.enabled).map((s) => s.name),
           prerelease: msg.includePrerelease,
           vulnHint: null,
-          vulnHintDismissedFingerprint: state.packages.vulnHintDismissedFingerprint,
         },
         updates: { ...state.updates, versionsByPackageId: {} },
         workspaceActivity: null,
@@ -336,6 +334,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           installs: msg.installs,
         },
         roslynCap: msg.roslynCap,
+        isWindows: msg.isWindows,
       };
 
     case 'INSTALLED_PACKAGES': {
@@ -520,7 +519,11 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
     case 'CONFIG_CHAIN_UPDATE':
       return {
         ...state,
-        sources: { ...state.sources, configChain: msg.configChain },
+        sources: {
+          configChain: msg.configChain,
+          allSources: msg.sources,
+          snapshot: msg.snapshot,
+        },
       };
 
     case 'DOTNET_NOT_FOUND':

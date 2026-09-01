@@ -3,6 +3,8 @@
  * Edges come from `project.assets.json` (restore), not from id heuristics.
  */
 
+import { compareSemVer } from './semver';
+
 /** Split `PackageId/1.2.3` library keys used in assets `targets`. */
 export function assetsLibraryId(libKey: string): string | null {
   const slash = libKey.lastIndexOf('/');
@@ -32,6 +34,41 @@ export function parseAssetsDependencies(json: unknown): Map<string, string[]> {
       if (deps.length === 0) continue;
       const key = id.toLowerCase();
       result.set(key, [...new Set([...(result.get(key) ?? []), ...deps])]);
+    }
+  }
+  return result;
+}
+
+/**
+ * Version floors imposed by `ProjectReference`s: for every `type: "project"`
+ * entry (skipped entirely by {@link parseAssetsDependencies}), its own
+ * `dependencies` map records what version *that referenced project* needs of
+ * each package — NuGet already unifies this into the referencing project's
+ * restore graph, so a `PackageReference` here pinned below it is a genuine,
+ * pre-existing inconsistency (see #38: a sibling project was updated
+ * independently and the referencing project hasn't caught up yet). Highest
+ * requirement wins when TFMs disagree.
+ */
+export function parseAssetsFloors(json: unknown): Map<string, string> {
+  const result = new Map<string, string>();
+  if (!json || typeof json !== 'object') return result;
+  const targets = (json as { targets?: Record<string, Record<string, unknown>> }).targets;
+  if (!targets || typeof targets !== 'object') return result;
+
+  for (const tfm of Object.values(targets)) {
+    if (!tfm || typeof tfm !== 'object') continue;
+    for (const lib of Object.values(tfm)) {
+      if (!lib || typeof lib !== 'object') continue;
+      const rec = lib as { type?: string; dependencies?: Record<string, string> };
+      if (rec.type !== 'project') continue;
+      for (const [depId, depVersion] of Object.entries(rec.dependencies ?? {})) {
+        if (!depVersion) continue;
+        const key = depId.toLowerCase();
+        const existing = result.get(key);
+        if (!existing || compareSemVer(depVersion, existing) > 0) {
+          result.set(key, depVersion);
+        }
+      }
     }
   }
   return result;

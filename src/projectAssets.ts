@@ -1,18 +1,50 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import { parseAssetsDependencies, reachableAmong } from './packageGraph';
+import { parseAssetsDependencies, parseAssetsFloors, reachableAmong } from './packageGraph';
 import type { ImplicitPackage, InstalledPackage } from './types';
+
+function assetsPathFor(projectPath: string): string {
+  return path.join(path.dirname(projectPath), 'obj', 'project.assets.json');
+}
+
+/** Reads + parses `project.assets.json` once; `null` when missing or invalid. */
+async function readAssetsJson(projectPath: string): Promise<unknown | null> {
+  try {
+    const raw = await fs.readFile(assetsPathFor(projectPath), 'utf8');
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
 
 export async function readProjectPackageDependencies(
   projectPath: string,
 ): Promise<Map<string, string[]>> {
-  const assetsPath = path.join(path.dirname(projectPath), 'obj', 'project.assets.json');
-  try {
-    const raw = await fs.readFile(assetsPath, 'utf8');
-    return parseAssetsDependencies(JSON.parse(raw) as unknown);
-  } catch {
-    return new Map();
-  }
+  const json = await readAssetsJson(projectPath);
+  return json ? parseAssetsDependencies(json) : new Map();
+}
+
+/** Version floors a `ProjectReference` imposes on this project — see {@link parseAssetsFloors}. */
+export async function readProjectFloors(projectPath: string): Promise<Map<string, string>> {
+  const json = await readAssetsJson(projectPath);
+  return json ? parseAssetsFloors(json) : new Map();
+}
+
+export interface ProjectAssetsGraphs {
+  dependencies: Map<string, string[]>;
+  floors: Map<string, string>;
+}
+
+/**
+ * Both {@link readProjectPackageDependencies} and {@link readProjectFloors} in
+ * one read + parse of `project.assets.json`, for callers that need both (the
+ * #38 entangled-cluster check does) and would otherwise pay for the file
+ * twice.
+ */
+export async function readProjectAssets(projectPath: string): Promise<ProjectAssetsGraphs> {
+  const json = await readAssetsJson(projectPath);
+  if (!json) return { dependencies: new Map(), floors: new Map() };
+  return { dependencies: parseAssetsDependencies(json), floors: parseAssetsFloors(json) };
 }
 
 type GraphStamped<T extends { id: string; projectPath: string }> = T & { dependencies?: string[] };

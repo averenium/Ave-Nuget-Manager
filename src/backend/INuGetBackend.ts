@@ -102,6 +102,19 @@ export interface INuGetBackend {
   ): Promise<CliResult>;
 
   /**
+   * Same as {@link installPackage}, without the implicit restore.
+   * CLI: `dotnet add <projectPath> package <packageId> --version <version> --no-restore`
+   * Used to apply an entangled cluster of updates (#38) before a single
+   * `restoreProject` validates the whole set together.
+   */
+  installPackageNoRestore(
+    projectPath: string,
+    packageId: string,
+    version: string,
+    signal?: AbortSignal,
+  ): Promise<CliResult>;
+
+  /**
    * Remove a package from a project.
    * CLI: `dotnet remove <projectPath> package <packageId>`
    */

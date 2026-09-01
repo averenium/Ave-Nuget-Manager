@@ -32,7 +32,7 @@ The panel does not review whether a bump is safe. The **Agents** tab (after Log)
 | Tab | What it does |
 |---|---|
 | **Packages** | Installed, implicit, catalog search. Details, install / update / remove. Vulnerability marks from `dotnet list --vulnerable`. |
-| **Groups** | Update **All**, package **families** (`Microsoft.Extensions.*`, …), or **Other**. |
+| **Groups** | Update **All**, package **families** (`Microsoft.Extensions.*`, …), or **Other**. Packages that would fail one-at-a-time only because a sibling `ProjectReference` needs them bumped together are added with `--no-restore` and validated with a single restore at the end, instead of restoring after every individual package. |
 | **Sources** | Read-only `nuget.config` chain. |
 | **Log** | `dotnet` commands this extension ran. **● Trace** records a sanitised zip for a GitHub issue; **Clear log** wipes the list. |
 | **Agents** | Install or **Update** the dependency-review skill (files only; the panel does not run the agent). |

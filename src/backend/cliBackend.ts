@@ -333,6 +333,22 @@ export class CliBackend implements INuGetBackend {
     });
   }
 
+  // ── installPackageNoRestore ──────────────────────────────────────────────────
+
+  async installPackageNoRestore(
+    projectPath: string,
+    packageId: string,
+    version: string,
+    signal?: AbortSignal,
+  ): Promise<CliResult> {
+    return this.runner.run({
+      args: ['add', projectPath, 'package', packageId, '--version', version, '--no-restore'],
+      cwd: path.dirname(projectPath),
+      timeoutMs: MUTATION_TIMEOUT_MS,
+      signal,
+    });
+  }
+
   // ── removePackage ─────────────────────────────────────────────────────────
 
   async removePackage(projectPath: string, packageId: string): Promise<CliResult> {

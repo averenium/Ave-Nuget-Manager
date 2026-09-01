@@ -106,6 +106,85 @@ describe('sanitizeText', () => {
   });
 });
 
+describe('sanitizeXml — proxy user / no_proxy (#38 review)', () => {
+  it('redacts a proxy .user value that sits next to its .password sibling', () => {
+    const xml = `
+<configuration>
+  <config>
+    <add key="http_proxy" value="http://proxy.internal:8080" />
+    <add key="http_proxy.user" value="realusername" />
+    <add key="http_proxy.password" value="hunter2" />
+  </config>
+</configuration>`;
+    const out = sanitizeXml(xml, ctx);
+    expect(out).not.toContain('realusername');
+    expect(out).not.toContain('hunter2');
+    expect(out).toContain('http_proxy.user');
+    expect(out).toContain('<redacted>');
+  });
+
+  it('does not redact an unrelated key that merely contains "user" with no .password sibling', () => {
+    const xml = `
+<configuration>
+  <packageSources>
+    <add key="internal-user-feed" value="https://feed.example/v3/index.json" />
+  </packageSources>
+</configuration>`;
+    const out = sanitizeXml(xml, ctx);
+    expect(out).toContain('internal-user-feed');
+  });
+
+  it('redacts the whole no_proxy value, not just an exact hostname match', () => {
+    const xml = `
+<configuration>
+  <config>
+    <add key="no_proxy" value="10.0.0.1,*.internal-tld-a,*.internal-tld-b,localhost" />
+  </config>
+</configuration>`;
+    const out = sanitizeXml(xml, ctx);
+    expect(out).not.toContain('internal-tld-a');
+    expect(out).not.toContain('internal-tld-b');
+    expect(out).not.toContain('10.0.0.1');
+    expect(out).toContain('no_proxy');
+    expect(out).toContain('<redacted>');
+  });
+});
+
+describe('buildPathReplacements — dirname of an alias (#38 review)', () => {
+  it('redacts a bare containing-directory path (e.g. a cli trace event\'s cwd)', () => {
+    const aliased = {
+      ...ctx,
+      aliases: [{
+        absPath: 'C:\\Users\\lesov\\repo\\Solution\\Area\\Contoso.Internal.SomeApp\\Contoso.Internal.SomeApp.csproj',
+        dest: 'projects/p01.csproj',
+      }],
+    };
+    const out = sanitizeText(
+      'cwd: C:\\Users\\lesov\\repo\\Solution\\Area\\Contoso.Internal.SomeApp',
+      aliased,
+    );
+    expect(out).not.toContain('Contoso');
+    expect(out).not.toContain('Solution');
+    expect(out).not.toContain('Area');
+  });
+
+  it('still rewrites the full file path to the dest id, not just its directory', () => {
+    const aliased = {
+      ...ctx,
+      aliases: [{
+        absPath: 'C:\\Users\\lesov\\repo\\Solution\\Area\\Contoso.Internal.SomeApp\\Contoso.Internal.SomeApp.csproj',
+        dest: 'projects/p01.csproj',
+      }],
+    };
+    const out = sanitizeText(
+      'dotnet add C:\\Users\\lesov\\repo\\Solution\\Area\\Contoso.Internal.SomeApp\\Contoso.Internal.SomeApp.csproj package X',
+      aliased,
+    );
+    expect(out).toContain('projects/p01.csproj');
+    expect(out).not.toContain('Contoso');
+  });
+});
+
 describe('defaultTraceZipName', () => {
   it('includes local date and time', () => {
     const name = defaultTraceZipName(new Date(2026, 7, 21, 0, 31, 12));

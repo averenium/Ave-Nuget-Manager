@@ -1782,6 +1782,138 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     });
   });
 
+  // ── ADD_PACKAGE_SOURCE / REMOVE_PACKAGE_SOURCE (#48) ────────────────────────
+
+  describe('ADD_PACKAGE_SOURCE', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('warns and does not touch disk when the path is not a writable nuget.config', async () => {
+      const vscode = require('vscode');
+      vscode.window.showWarningMessage.mockClear();
+      const writeSpy = jest.spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'ADD_PACKAGE_SOURCE',
+        configFilePath: '/p/Directory.Build.props',
+        name: 'contoso',
+        url: 'https://contoso.example/index.json',
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+      expect(vscode.window.showWarningMessage.mock.calls[0][0]).toMatch(/writable nuget\.config/i);
+      expect(writeSpy).not.toHaveBeenCalled();
+    });
+
+    it('adds the source to a writable nuget.config and broadcasts CONFIG_CHAIN_UPDATE', async () => {
+      const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+</configuration>`;
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(xml as never);
+      const writeSpy = jest.spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'ADD_PACKAGE_SOURCE',
+        configFilePath: '/p/nuget.config',
+        name: 'contoso',
+        url: 'https://contoso.example/index.json',
+        protocolVersion: '2',
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+      const written = writeSpy.mock.calls[0][1] as string;
+      expect(written).toContain('key="contoso"');
+      expect(written).toContain('value="https://contoso.example/index.json"');
+      expect(written).toContain('protocolVersion="2"');
+      expect(posted.some((m) => m.type === 'CONFIG_CHAIN_UPDATE')).toBe(true);
+    });
+  });
+
+  describe('REMOVE_PACKAGE_SOURCE', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('warns and does not touch disk when the path is not a writable nuget.config', async () => {
+      const vscode = require('vscode');
+      vscode.window.showWarningMessage.mockClear();
+      const writeSpy = jest.spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'REMOVE_PACKAGE_SOURCE',
+        configFilePath: '/p/Directory.Build.props',
+        name: 'nexus',
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+      expect(vscode.window.showWarningMessage.mock.calls[0][0]).toMatch(/writable nuget\.config/i);
+      expect(writeSpy).not.toHaveBeenCalled();
+    });
+
+    it('removes the source from a writable nuget.config and broadcasts CONFIG_CHAIN_UPDATE', async () => {
+      const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+</configuration>`;
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(xml as never);
+      const writeSpy = jest.spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'REMOVE_PACKAGE_SOURCE',
+        configFilePath: '/p/nuget.config',
+        name: 'nexus',
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+      const written = writeSpy.mock.calls[0][1] as string;
+      expect(written).not.toContain('nexus');
+      expect(written).toContain('key="nuget.org"');
+      expect(posted.some((m) => m.type === 'CONFIG_CHAIN_UPDATE')).toBe(true);
+    });
+
+    it('shows an error and does not broadcast when the write fails', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockRejectedValue(new Error('EACCES'));
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'REMOVE_PACKAGE_SOURCE',
+        configFilePath: '/p/nuget.config',
+        name: 'nexus',
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+      expect(posted.some((m) => m.type === 'CONFIG_CHAIN_UPDATE')).toBe(false);
+    });
+  });
+
   // ── UPDATE_PACKAGES_BATCH ──────────────────────────────────────────────────
 
   it('updates packages sequentially and reports BATCH_UPDATE progress', async () => {

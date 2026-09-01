@@ -94,6 +94,8 @@ import {
   setPackageSourceConnectionFlags,
   setPackageSourceDisabled,
   setPackageSourceMappingPatterns,
+  addPackageSource,
+  removePackageSourceEntry,
   findPackageSourceLine,
 } from './nugetConfigEdit';
 import { encryptNuGetConfigPassword, supportsEncryptedNuGetPasswords } from './nugetConfigDpapi';
@@ -450,6 +452,14 @@ export class WebviewMessageBroker {
 
       case 'SET_SOURCE_MAPPING':
         await this._handleSetSourceMapping(msg);
+        break;
+
+      case 'ADD_PACKAGE_SOURCE':
+        await this._handleAddPackageSource(msg);
+        break;
+
+      case 'REMOVE_PACKAGE_SOURCE':
+        await this._handleRemovePackageSource(msg);
         break;
 
       case 'SET_SOURCE_SECRETS':
@@ -2338,6 +2348,57 @@ export class WebviewMessageBroker {
       await this._pushConfigChainUpdate(true);
     } catch (err) {
       await vscode.window.showErrorMessage(`Could not update source mapping for ${msg.name}: ${String(err)}`);
+    }
+  }
+
+  private async _handleAddPackageSource(
+    msg: Extract<WebviewMessage, { type: 'ADD_PACKAGE_SOURCE' }>,
+  ): Promise<void> {
+    if (!this._isWritableNuGetConfig(msg.configFilePath)) {
+      await this._warnNuGetConfigNotWritable(msg.configFilePath);
+      return;
+    }
+    try {
+      await patchNuGetConfigFile(msg.configFilePath, (xml) =>
+        addPackageSource(xml, msg.name, msg.url, { protocolVersion: msg.protocolVersion }));
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: 'nuget.config add source',
+        args: [msg.name, msg.url, msg.configFilePath],
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      await this._pushConfigChainUpdate(true);
+    } catch (err) {
+      await vscode.window.showErrorMessage(`Could not add source ${msg.name}: ${String(err)}`);
+    }
+  }
+
+  private async _handleRemovePackageSource(
+    msg: Extract<WebviewMessage, { type: 'REMOVE_PACKAGE_SOURCE' }>,
+  ): Promise<void> {
+    if (!this._isWritableNuGetConfig(msg.configFilePath)) {
+      await this._warnNuGetConfigNotWritable(msg.configFilePath);
+      return;
+    }
+    try {
+      await patchNuGetConfigFile(msg.configFilePath, (xml) => removePackageSourceEntry(xml, msg.name));
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: 'nuget.config remove source',
+        args: [msg.name, msg.configFilePath],
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      await this._pushConfigChainUpdate(true);
+    } catch (err) {
+      await vscode.window.showErrorMessage(`Could not remove source ${msg.name}: ${String(err)}`);
     }
   }
 

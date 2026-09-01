@@ -48,7 +48,7 @@ Retry 429/503 на catalog GET — у `HttpBackend`, не в `cliRetry` (той 
 - Лише `.csproj` / `.fsproj`, немає `.vbproj`.
 - `CommandRegistrar` спершу дивиться на прямих дітей клікнутої папки; лише якщо там 0 збігів, падає у рекурсивний скан (`_recursiveMatches`, [folder-scope.md](folder-scope.md)) — тобто розкладка "кожен проєкт у своїй підпапці" підхоплюється одразу, ще до показу QuickPick, без потреби спершу кудись клікати. Так само авто-детект при відкритті панелі (`_detectWorkspaceScope` у `webviewMessageBroker.ts`) падає в рекурсивний скан, коли в корені воркспейсу нема прямих `.sln`/`.csproj`/`.fsproj`.
 - Лише `workspaceFolders[0]`.
-- Sources — можна змінити on/off, credentials і API key існуючого джерела; немає add/remove feeds.
+- Sources — можна змінити on/off, credentials, API key, mapping-патерни існуючого джерела, додати нове package/audit джерело (#48) і видалити package-джерело. Немає видалення audit-джерела окремою кнопкою (disable вже прибирає запис повністю) і немає очищення orphaned mapping/credentials/disabled-записів при видаленні джерела.
 - `packages.config` (nuget.exe) не оновлюється; legacy csproj з PackageReference — так.
 
 ## Інфра

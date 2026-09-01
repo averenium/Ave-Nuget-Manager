@@ -86,10 +86,6 @@ function upsertAdd(section: string, key: string, value: string): string {
   return `${trimmed}${trimmed && !trimmed.endsWith('\n') ? '\n' : ''}${line}`;
 }
 
-function removeAdd(section: string, key: string): string {
-  return removeAddByKey(section, key);
-}
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -119,13 +115,22 @@ export function setPackageSourceDisabled(xml: string, sourceName: string, disabl
   return replaceSection(xml, 'disabledPackageSources', section.endsWith('\n') ? section : `${section}\n`);
 }
 
-function removeAddByKey(section: string, key: string): string {
+/**
+ * Removes the `<add>` (`<add ... />` or `<add ...></add>`) whose `key` decodes
+ * (parsed + `unescapeXml`ed, like {@link upsertAdd} already does) to `key`.
+ * Compares the *decoded* value instead of baking the raw key into a regex
+ * against already-escaped XML text — a name like `Contoso & Co` (stored as
+ * `key="Contoso &amp; Co"`) never matches the latter.
+ */
+function removeAddByDecodedKey(section: string, key: string): string {
+  const want = key.toLowerCase();
   return section.replace(
-    new RegExp(
-      `\\s*<add\\b[^>]*\\bkey\\s*=\\s*"${escapeRegExp(key)}"(?:[^>]*/>|[^>]*>\\s*</add\\s*>)`,
-      'gi',
-    ),
-    '',
+    /\s*<add\b([^>]*?)(?:\/>|>\s*<\/add\s*>)/gi,
+    (full, attrInner: string) => {
+      const attrs = parseAddAttrList(attrInner);
+      const k = attrs[attrIndex(attrs, 'key')]?.value;
+      return k !== undefined && k.toLowerCase() === want ? '' : full;
+    },
   );
 }
 
@@ -146,7 +151,7 @@ export function replaceAuditSources(
 export function removeAuditSource(xml: string, sourceName: string): string {
   const section = extractSection(xml, 'auditSources');
   if (!section) return xml;
-  const next = removeAddByKey(section, sourceName);
+  const next = removeAddByDecodedKey(section, sourceName);
   if (!/<add\s/i.test(next) && !/<clear\s*\/>/i.test(next)) return removeSection(xml, 'auditSources');
   return replaceSection(xml, 'auditSources', next.endsWith('\n') ? next : `${next}\n`);
 }
@@ -230,6 +235,44 @@ export function setPackageSourceConnectionFlags(
   let next = rewriteSourceAddsInSection(xml, 'packageSources', sourceName, patch);
   next = rewriteSourceAddsInSection(next, 'auditSources', sourceName, patch);
   return next;
+}
+
+/**
+ * Declare a new `<packageSources>` entry (or update it in place if `name`
+ * already exists there — same "insert-or-update" shape as `upsertAuditSource`).
+ */
+export function addPackageSource(
+  xml: string,
+  name: string,
+  url: string,
+  opts?: { protocolVersion?: '2' | '3' },
+): string {
+  const section = upsertAdd(extractSection(xml, 'packageSources'), name, url);
+  let next = replaceSection(xml, 'packageSources', section.endsWith('\n') ? section : `${section}\n`);
+  next = rewriteSourceAddsInSection(next, 'packageSources', name, (attrs) => {
+    const i = attrIndex(attrs, 'protocolVersion');
+    if (opts?.protocolVersion) {
+      const entry = { name: 'protocolVersion', value: opts.protocolVersion };
+      if (i >= 0) attrs[i] = entry;
+      else attrs.push(entry);
+    } else if (i >= 0) {
+      attrs.splice(i, 1);
+    }
+  });
+  return next;
+}
+
+/**
+ * Remove one `<packageSources>` entry entirely (not a soft
+ * `<disabledPackageSources>` toggle). Removing the last one also drops the
+ * section, unless a `<clear />` is still there — same shape as `removeAuditSource`.
+ */
+export function removePackageSourceEntry(xml: string, name: string): string {
+  const section = extractSection(xml, 'packageSources');
+  if (!section) return xml;
+  const next = removeAddByDecodedKey(section, name);
+  if (!/<add\s/i.test(next) && !/<clear\s*\/>/i.test(next)) return removeSection(xml, 'packageSources');
+  return replaceSection(xml, 'packageSources', next.endsWith('\n') ? next : `${next}\n`);
 }
 
 export function extractCredentialUsernames(xml: string): Record<string, string> {
@@ -378,7 +421,7 @@ function setUrlKeyedSection(
   value: string | null,
 ): string {
   let section = extractSection(xml, sectionName);
-  section = removeAdd(section, sourceUrl);
+  section = removeAddByDecodedKey(section, sourceUrl);
   if (value !== null && value !== '') {
     section = upsertAdd(section, sourceUrl, value);
   }

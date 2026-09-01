@@ -653,6 +653,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .sources-check span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sources-check svg { flex-shrink: 0; color: var(--color-tab-inactive); }
 .sources-repo__edit { padding: 1px 6px; font-size: 11px; line-height: 18px; }
+.sources-repo__remove { padding: 1px 6px; font-size: 11px; line-height: 18px; }
+.sources-repo__remove:hover { color: var(--color-error); }
+.sources-add-row { display: flex; justify-content: flex-end; padding: var(--spacing-xs) var(--spacing-sm); }
+.sources-add-toggle { padding: 2px 8px; font-size: 11px; }
 .sources-warn {
   margin: var(--spacing-xs) var(--spacing-sm);
   padding: var(--spacing-xs) var(--spacing-sm);

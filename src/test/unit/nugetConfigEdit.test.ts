@@ -12,12 +12,14 @@ import {
   setPackageSourceCredentials,
   setPackageSourceConnectionFlags,
   setPackageSourceDisabled,
+  setPackageSourceMappingPatterns,
   findPackageSourceLine,
   replaceAuditSources,
   removeAuditSource,
   upsertAuditSource,
   writeSourceApiKey,
 } from '../../nugetConfigEdit';
+import { extractPackageSourceMapping } from '../../nugetConfigChainResolver';
 
 const BASE = `<?xml version="1.0" encoding="utf-8"?>
 <configuration>
@@ -292,6 +294,91 @@ describe('setPackageSourceConnectionFlags', () => {
     });
     expect(next).toMatch(/<add key="nexus-group" value="http:\/\/localhost\/index.json" allowInsecureConnections="true" \/>/);
     expect(next).not.toMatch(/nuget.org[^>]*allowInsecureConnections/);
+  });
+});
+
+describe('setPackageSourceMappingPatterns', () => {
+  const MAPPING_BASE = `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+</configuration>`;
+
+  it('adds a new packageSourceMapping section with one <package> per pattern', () => {
+    const next = setPackageSourceMappingPatterns(MAPPING_BASE, 'nexus', ['Contoso.*', 'Fabrikam.*']);
+    const { mappings, cleared } = extractPackageSourceMapping(next);
+    expect(cleared).toBe(false);
+    expect(mappings).toEqual([{ sourceName: 'nexus', patterns: ['Contoso.*', 'Fabrikam.*'] }]);
+  });
+
+  it('updates only the targeted source, leaving other sources and <clear/> alone', () => {
+    const withClear = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <clear />
+    <packageSource key="nuget.org">
+      <package pattern="Newtonsoft.*" />
+    </packageSource>
+    <packageSource key="nexus">
+      <package pattern="Old.*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>`;
+    const next = setPackageSourceMappingPatterns(withClear, 'nexus', ['Contoso.*']);
+    const { mappings, cleared } = extractPackageSourceMapping(next);
+    expect(cleared).toBe(true);
+    expect(mappings).toEqual(expect.arrayContaining([
+      { sourceName: 'nuget.org', patterns: ['Newtonsoft.*'] },
+      { sourceName: 'nexus', patterns: ['Contoso.*'] },
+    ]));
+    expect(mappings).toHaveLength(2);
+  });
+
+  it('removes just that source\'s block when patterns is empty, keeping the section for others', () => {
+    const xml = setPackageSourceMappingPatterns(MAPPING_BASE, 'nexus', ['Contoso.*']);
+    const withTwo = setPackageSourceMappingPatterns(xml, 'nuget.org', ['Newtonsoft.*']);
+    const next = setPackageSourceMappingPatterns(withTwo, 'nexus', []);
+    const { mappings } = extractPackageSourceMapping(next);
+    expect(mappings).toEqual([{ sourceName: 'nuget.org', patterns: ['Newtonsoft.*'] }]);
+  });
+
+  it('removes the whole packageSourceMapping section once the last source is cleared (no <clear/>)', () => {
+    const xml = setPackageSourceMappingPatterns(MAPPING_BASE, 'nexus', ['Contoso.*']);
+    const next = setPackageSourceMappingPatterns(xml, 'nexus', []);
+    expect(next).not.toContain('packageSourceMapping');
+  });
+
+  it('is case-insensitive on the source key and de-duplicates patterns', () => {
+    const next = setPackageSourceMappingPatterns(MAPPING_BASE, 'NEXUS', ['A.*', 'A.*', ' B.* ']);
+    const { mappings } = extractPackageSourceMapping(next);
+    expect(mappings).toEqual([{ sourceName: 'NEXUS', patterns: ['A.*', 'B.*'] }]);
+  });
+
+  it('replaces the old block for a source name with XML special characters, not duplicates it', () => {
+    // key="Contoso &amp; Co" on disk is the source named "Contoso & Co" — a
+    // regex built from the raw (unescaped) name would never match this and
+    // would leave the stale block behind instead of replacing it.
+    const withSpecial = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="Contoso &amp; Co" value="https://contoso.example/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="Contoso &amp; Co">
+      <package pattern="Old.*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>`;
+    const next = setPackageSourceMappingPatterns(withSpecial, 'Contoso & Co', ['New.*']);
+    const { mappings } = extractPackageSourceMapping(next);
+    expect(mappings).toEqual([{ sourceName: 'Contoso & Co', patterns: ['New.*'] }]);
+    expect(next.match(/<packageSource\b/gi)).toHaveLength(1);
   });
 });
 

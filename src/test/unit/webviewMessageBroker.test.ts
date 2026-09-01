@@ -3,6 +3,7 @@ import { Logger } from '../../logger';
 import * as vscode from 'vscode';
 import * as projectFiles from '../../projectFileSnapshot';
 import * as projectAssets from '../../projectAssets';
+import { promises as fsPromises } from 'fs';
 import * as config from '../../config';
 import * as legacyPr from '../../legacyPackageReference';
 import * as projectStyle from '../../projectPackageStyle';
@@ -1701,6 +1702,84 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalled();
     expect(vscode.window.showWarningMessage.mock.calls[0][0]).toMatch(/writable nuget\.config/i);
+  });
+
+  // ── SET_SOURCE_MAPPING (#40) ───────────────────────────────────────────────
+
+  describe('SET_SOURCE_MAPPING', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('warns and does not touch disk when the path is not a writable nuget.config', async () => {
+      const vscode = require('vscode');
+      vscode.window.showWarningMessage.mockClear();
+      const writeSpy = jest.spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'SET_SOURCE_MAPPING',
+        name: 'nexus',
+        configFilePath: '/p/Directory.Build.props',
+        patterns: ['Contoso.*'],
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+      expect(vscode.window.showWarningMessage.mock.calls[0][0]).toMatch(/writable nuget\.config/i);
+      expect(writeSpy).not.toHaveBeenCalled();
+    });
+
+    it('writes the patterns to a writable nuget.config and broadcasts CONFIG_CHAIN_UPDATE', async () => {
+      const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+</configuration>`;
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(xml as never);
+      const writeSpy = jest.spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'SET_SOURCE_MAPPING',
+        name: 'nexus',
+        configFilePath: '/p/nuget.config',
+        patterns: ['Contoso.*', 'Fabrikam.*'],
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+      const written = writeSpy.mock.calls[0][1] as string;
+      expect(written).toContain('<packageSourceMapping>');
+      expect(written).toContain('<packageSource key="nexus">');
+      expect(written).toContain('pattern="Contoso.*"');
+      expect(written).toContain('pattern="Fabrikam.*"');
+      expect(posted.some((m) => m.type === 'CONFIG_CHAIN_UPDATE')).toBe(true);
+    });
+
+    it('shows an error and does not broadcast when the write fails', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockRejectedValue(new Error('EACCES'));
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'SET_SOURCE_MAPPING',
+        name: 'nexus',
+        configFilePath: '/p/nuget.config',
+        patterns: ['Contoso.*'],
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+      expect(posted.some((m) => m.type === 'CONFIG_CHAIN_UPDATE')).toBe(false);
+    });
   });
 
   // ── UPDATE_PACKAGES_BATCH ──────────────────────────────────────────────────

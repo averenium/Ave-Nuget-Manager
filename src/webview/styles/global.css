@@ -374,6 +374,7 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
 .pkg-row__mark--blocked { color: var(--color-tab-inactive); }
 .pkg-row__mark--vuln { color: var(--color-error); }
 .pkg-row__mark--vuln-via { color: var(--color-warning); }
+.pkg-row__mark--unmapped { color: var(--color-error); }
 
 /* ── Source filter dropdown ─────────────────────────────────────────────────── */
 .source-filter { position: relative; }

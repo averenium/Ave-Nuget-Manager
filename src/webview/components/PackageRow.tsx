@@ -1,7 +1,8 @@
 import React from 'react';
 import { compareSemVer } from '../utils/search';
-import type { InstalledPackage, ImplicitPackage, AvailablePackage, VulnerabilityFinding } from '../../types';
+import type { InstalledPackage, ImplicitPackage, AvailablePackage, VulnerabilityFinding, PackageSourceMapping } from '../../types';
 import { findingsAffectingPackage } from '../../vulnerabilities';
+import { packageMatchesAnyMapping } from '../../packageSourceMapping';
 import { PkgListRow } from './PkgListRow';
 
 /** Extract project name from absolute path without using Node's path module */
@@ -19,6 +20,8 @@ interface Props {
   allProjectEntries?: Array<{ projectPath: string; resolvedVersion: string }>;
   findings?: VulnerabilityFinding[];
   blocked?: boolean;
+  /** Active `<packageSourceMapping>` — installed rows only; see #40 follow-up. */
+  packageSourceMapping?: PackageSourceMapping[];
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
 }
@@ -32,7 +35,7 @@ function formatFindingLine(finding: VulnerabilityFinding, viaPackage?: string): 
 }
 
 export function PackageRow({
-  pkg, kind, selected, implicitVersions, allProjectEntries, findings, blocked, onClick, onContextMenu,
+  pkg, kind, selected, implicitVersions, allProjectEntries, findings, blocked, packageSourceMapping, onClick, onContextMenu,
 }: Props) {
   const installed = kind === 'installed' ? (pkg as InstalledPackage) : undefined;
   const implicit  = kind === 'implicit'  ? (pkg as ImplicitPackage)  : undefined;
@@ -85,11 +88,21 @@ export function PackageRow({
   const vulnTitle = [...direct.map((f) => formatFindingLine(f)), ...via.map((f) => formatFindingLine(f, f.packageId))]
     .join('\n') || undefined;
 
+  const mappingActive = kind === 'installed' && !!packageSourceMapping?.length;
+  const hasNoMappingSource = mappingActive && !packageMatchesAnyMapping(pkg.id, packageSourceMapping!);
+  const unmappedTitle = hasNoMappingSource
+    ? `No packageSourceMapping source matches "${pkg.id}" — restore will not be able to find it.\nMapped sources: ${
+      packageSourceMapping!.map((m) => m.sourceName).join(', ')
+    }`
+    : undefined;
+
   return (
     <PkgListRow
       name={pkg.id}
       selected={selected}
       hasUpdate={hasUpdate}
+      hasNoMappingSource={hasNoMappingSource}
+      unmappedTitle={unmappedTitle}
       blocked={!!blocked}
       hasVulnerability={direct.length + via.length > 0}
       vulnerabilityVia={direct.length === 0 && via.length > 0}

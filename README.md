@@ -6,6 +6,17 @@ Opens in the **Panel** (`NuGet`): search and install packages, scan advisories, 
 
 Requires the **.NET SDK** on `PATH`.
 
+## Features
+
+- **Packages** — search, install, update, remove; vulnerability marks from `dotnet list --vulnerable`.
+- **Groups** — batch-update All / a package family / Other in one go, with **Stop**.
+- **Sources** — full `nuget.config` chain editor: enable/disable, credentials, API key, HTTP flags.
+- **Trace** — one-click sanitized zip of the relevant `dotnet` output and config for a GitHub issue.
+- **Agent skill** — installs a dependency **breaking-changes review** skill for Cursor / Claude / Kiro.
+- **Folder scope** — manage a folder of loose `.csproj`/`.fsproj` with no `.sln` as one group, no solution file required.
+- **Block updates** — pin a package version per workspace so a bump doesn't happen by accident.
+- Accessible under VS Code **High Contrast** themes and Windows forced colors.
+
 ## Install (preview)
 
 1. Install from the Marketplace **Pre-release** channel, or
@@ -33,11 +44,16 @@ The panel does not review whether a bump is safe. The **Agents** tab (after Log)
 
 | Tab | What it does |
 |---|---|
-| **Packages** | Installed, implicit, catalog search. Details, install / update / remove. Vulnerability marks from `dotnet list --vulnerable`. |
+| **Packages** | Installed, implicit, catalog search. Details, install / update / remove. Vulnerability marks from `dotnet list --vulnerable`. A **∅** mark flags an installed package that matches no `<packageSourceMapping>` pattern on any source — restore will fail to find it. |
 | **Groups** | Update **All**, package **families** (`Microsoft.Extensions.*`, …), or **Other**. Packages that would fail one-at-a-time only because a sibling `ProjectReference` needs them bumped together are added with `--no-restore` and validated with a single restore at the end, instead of restoring after every individual package. |
-| **Sources** | Read-only `nuget.config` chain. |
+| **Sources** | `nuget.config` chain: toggle on/off, edit credentials / API key / HTTP flags, and **packageSourceMapping** patterns per source (comma-separated, e.g. `Contoso.*, Fabrikam.*`). |
 | **Log** | `dotnet` commands this extension ran. **● Trace** records a sanitised zip for a GitHub issue; **Clear log** wipes the list. |
 | **Agents** | Install or **Update** the dependency-review skill (files only; the panel does not run the agent). |
+
+## Under the hood
+
+- **Entangled-cluster batch updates** — in **Groups**, a package can fail one-at-a-time purely because a sibling `ProjectReference` requires it and another package in the same batch to land together (a version floor). Those are detected and applied with `--no-restore`, then validated with a single restore at the end — instead of every item in the batch failing (and rolling back) one by one.
+- **Package source mapping** — edit `packageSourceMapping` glob patterns per source (comma-separated, e.g. `Contoso.*, Fabrikam.*`) directly from **Sources**. Packages gets a **∅** mark on any installed id that matches no pattern on any source once mapping is active — the same condition that would otherwise only surface as a `dotnet restore` failure.
 
 ## Block updates
 
@@ -70,7 +86,7 @@ Gear on the **NuGet** title bar (or Command Palette **NuGet: Open Settings**) op
 - **Groups** will not target `Microsoft.CodeAnalysis.*` above the Roslyn version bundled with the active .NET SDK (`csc -version`). **Packages** still lists nuget.org latest and asks before an over-cap upgrade.
 - Scope: `.csproj` / `.fsproj` in the first workspace folder — a solution, a project, or a folder of loose projects.
 - `packages.config` projects are skipped (legacy csproj with `PackageReference` is updated in the XML, then `dotnet restore`).
-- Package sources are read-only.
+- No add/remove of new package sources — existing ones can be toggled, and have credentials, HTTP flags, and mapping patterns edited.
 
 ## License
 

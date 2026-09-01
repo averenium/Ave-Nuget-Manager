@@ -5,6 +5,7 @@ import { BlockedPackageMenu } from './BlockedPackageMenu';
 import { matchesQuery, sortByRelevance } from '../utils/search';
 import type { InstalledPackage } from '../../types';
 import { findingsAffectingPackage, vulnerabilityAffectRank } from '../../vulnerabilities';
+import { packageMatchesAnyMapping } from '../../packageSourceMapping';
 import { compareSemVer } from '../../semver';
 import { isPackageBlocked } from '../../blockedPackages';
 
@@ -46,6 +47,7 @@ function withUnionedDeps(entries: InstalledPackage[]): InstalledPackage {
 export function InstalledList() {
   const { state, dispatch } = useNugetManager();
   const { installed, implicit, searchQuery, isLoadingPackages, vulnerabilities, blockedPackages } = state.packages;
+  const packageSourceMapping = state.sources.snapshot?.packageSourceMapping ?? [];
   const [menu, setMenu] = useState<{ packageId: string; blocked: boolean; x: number; y: number } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -81,6 +83,9 @@ export function InstalledList() {
     const { direct, via } = findingsAffectingPackage(vulnerabilities, pkg.id, pkg.dependencies);
     return direct.length + via.length > 0;
   }).length;
+  const unmappedPkgCount = packageSourceMapping.length === 0 ? 0 : uniquePackages.filter(
+    (pkg) => !packageMatchesAnyMapping(pkg.id, packageSourceMapping),
+  ).length;
 
   return (
     <section className="pkg-section" aria-label="Installed packages">
@@ -91,6 +96,7 @@ export function InstalledList() {
             {displayed.length}
             {displayed.length !== totalUnique && `/${totalUnique}`}
             {vulnPkgCount > 0 ? ` · ${vulnPkgCount} vuln` : ''}
+            {unmappedPkgCount > 0 ? ` · ${unmappedPkgCount} unmapped` : ''}
           </span>
         )}
       </div>
@@ -115,6 +121,7 @@ export function InstalledList() {
                 allProjectEntries={allEntries}
                 findings={vulnerabilities}
                 blocked={blocked}
+                packageSourceMapping={packageSourceMapping}
                 onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
                 onContextMenu={(e) => setMenu({ packageId: pkg.id, blocked, x: e.clientX, y: e.clientY })}
               />

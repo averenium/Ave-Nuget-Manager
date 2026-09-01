@@ -93,6 +93,7 @@ import {
   upsertAuditSource,
   setPackageSourceConnectionFlags,
   setPackageSourceDisabled,
+  setPackageSourceMappingPatterns,
   findPackageSourceLine,
 } from './nugetConfigEdit';
 import { encryptNuGetConfigPassword, supportsEncryptedNuGetPasswords } from './nugetConfigDpapi';
@@ -445,6 +446,10 @@ export class WebviewMessageBroker {
 
       case 'SET_SOURCE_CONNECTION_FLAGS':
         await this._handleSetSourceConnectionFlags(msg);
+        break;
+
+      case 'SET_SOURCE_MAPPING':
+        await this._handleSetSourceMapping(msg);
         break;
 
       case 'SET_SOURCE_SECRETS':
@@ -2307,6 +2312,32 @@ export class WebviewMessageBroker {
       await this._pushConfigChainUpdate(true);
     } catch (err) {
       await vscode.window.showErrorMessage(`Could not update source ${msg.name}: ${String(err)}`);
+    }
+  }
+
+  private async _handleSetSourceMapping(
+    msg: Extract<WebviewMessage, { type: 'SET_SOURCE_MAPPING' }>,
+  ): Promise<void> {
+    if (!this._isWritableNuGetConfig(msg.configFilePath)) {
+      await this._warnNuGetConfigNotWritable(msg.configFilePath);
+      return;
+    }
+    try {
+      await patchNuGetConfigFile(msg.configFilePath, (xml) =>
+        setPackageSourceMappingPatterns(xml, msg.name, msg.patterns));
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        command: 'nuget.config source mapping',
+        args: [msg.name, `patterns=${msg.patterns.join(', ') || '(none)'}`, msg.configFilePath],
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      await this._pushConfigChainUpdate(true);
+    } catch (err) {
+      await vscode.window.showErrorMessage(`Could not update source mapping for ${msg.name}: ${String(err)}`);
     }
   }
 

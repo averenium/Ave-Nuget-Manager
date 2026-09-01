@@ -398,6 +398,44 @@ export function setClearTextApiKeyEntry(xml: string, sourceUrl: string, apiKey: 
   return setUrlKeyedSection(xml, 'clearTextApiKeys', sourceUrl, apiKey);
 }
 
+/**
+ * Set (or remove, when `patterns` is empty) one source's `<packageSourceMapping>`
+ * glob patterns. Mirrors {@link setPackageSourceCredentials}'s extract → mutate
+ * → replace/remove shape; `<clear />`, if present, is left untouched.
+ */
+export function setPackageSourceMappingPatterns(
+  xml: string,
+  sourceName: string,
+  patterns: string[],
+): string {
+  let section = extractSection(xml, 'packageSourceMapping');
+  // Compare the *decoded* key (a source named "Contoso & Co" is stored on
+  // disk as key="Contoso &amp; Co") rather than baking the raw, unescaped
+  // sourceName into a regex against already-escaped XML text — otherwise the
+  // old block for such a name is never matched and a stale duplicate
+  // <packageSource> is left behind. Same approach as rewriteSourceAddsInSection.
+  const wantKey = sourceName.toLowerCase();
+  section = section.replace(
+    /\s*<packageSource\b([^>]*)>[\s\S]*?<\/packageSource>/gi,
+    (full, attrs: string) => {
+      const parsed = parseAddAttrList(attrs);
+      const key = parsed[attrIndex(parsed, 'key')]?.value;
+      return key !== undefined && key.toLowerCase() === wantKey ? '' : full;
+    },
+  );
+  const unique = [...new Set(patterns.map((p) => p.trim()).filter(Boolean))];
+  if (unique.length > 0) {
+    const packages = unique.map((p) => `      <package pattern="${escapeXml(p)}" />`).join('\n');
+    const block = `    <packageSource key="${escapeXml(sourceName)}">\n${packages}\n    </packageSource>\n`;
+    const trimmed = section.replace(/\s+$/, '');
+    section = `${trimmed}${trimmed && !trimmed.endsWith('\n') ? '\n' : ''}${block}`;
+  }
+  if (!/<packageSource\b/i.test(section) && !/<clear\s*\/>/i.test(section)) {
+    return removeSection(xml, 'packageSourceMapping');
+  }
+  return replaceSection(xml, 'packageSourceMapping', section.endsWith('\n') ? section : `${section}\n`);
+}
+
 export async function patchNuGetConfigOnDisk(
   filePath: string,
   mutate: (xml: string) => string,

@@ -284,6 +284,7 @@ function RepoEditor({
   onToggle,
   onFlags,
   onSave,
+  onMapping,
   onCopyApiKeyExport,
   onClearCredentials,
   onClearApiKey,
@@ -301,6 +302,8 @@ function RepoEditor({
   onToggle: () => void;
   onFlags: (allowInsecureConnections: boolean, disableTlsCertificateValidation: boolean) => void;
   onSave: (username: string, password: string | undefined, apiKey: string | undefined) => void;
+  /** `packageSourceMapping` only applies to `<packageSources>` — omit for an audit-only source. */
+  onMapping?: (patterns: string[]) => void;
   onCopyApiKeyExport: (command: string) => void;
   onClearCredentials: () => void;
   onClearApiKey: () => void;
@@ -311,6 +314,8 @@ function RepoEditor({
   const [apiKey, setApiKey] = useState('');
   const [insecure, setInsecure] = useState(!!src.allowInsecureConnections);
   const [noTls, setNoTls] = useState(!!src.disableTlsCertificateValidation);
+  const patternsFromSrc = (src.mappingPatterns ?? []).join(', ');
+  const [mapping, setMapping] = useState(patternsFromSrc);
   const pendingRef = useRef({
     username,
     password,
@@ -332,6 +337,7 @@ function RepoEditor({
     setApiKey('');
     setInsecure(!!src.allowInsecureConnections);
     setNoTls(!!src.disableTlsCertificateValidation);
+    setMapping((src.mappingPatterns ?? []).join(', '));
   }, [
     src.name,
     src.configFilePath,
@@ -340,7 +346,11 @@ function RepoEditor({
     src.hasApiKey,
     src.allowInsecureConnections,
     src.disableTlsCertificateValidation,
+    src.mappingPatterns,
   ]);
+
+  const mappingPatterns = mapping.split(',').map((p) => p.trim()).filter(Boolean);
+  const mappingDirty = mappingPatterns.join(', ') !== patternsFromSrc;
 
   const persistSecrets = () => {
     const pending = pendingRef.current;
@@ -413,6 +423,32 @@ function RepoEditor({
         </label>
         {flagsDest}
       </div>
+      {onMapping ? (
+        <div className="sources-edit__row">
+          <input
+            className="sources-input"
+            value={mapping}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="packageSourceMapping patterns, e.g. Contoso.*, Fabrikam.*"
+            title={`packageSourceMapping patterns for this source, comma-separated. Empty clears it. Writes to ${fileLabel}.`}
+            onChange={(e) => setMapping(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              if (mappingDirty) onMapping(mappingPatterns);
+            }}
+          />
+          <button
+            type="button"
+            className="btn btn--secondary sources-save"
+            disabled={!mappingDirty}
+            onClick={() => onMapping(mappingPatterns)}
+          >
+            Save mapping
+          </button>
+        </div>
+      ) : null}
       <div className="sources-field">
         <input
           className="sources-input"
@@ -520,6 +556,7 @@ function RepoRow({
   onToggle,
   onFlags,
   onSave,
+  onMapping,
   onCopyApiKeyExport,
   onClearCredentials,
   onClearApiKey,
@@ -542,6 +579,7 @@ function RepoRow({
   onToggle: () => void;
   onFlags: (allowInsecureConnections: boolean, disableTlsCertificateValidation: boolean) => void;
   onSave: (username: string, password: string | undefined, apiKey: string | undefined) => void;
+  onMapping?: (patterns: string[]) => void;
   onCopyApiKeyExport: (command: string) => void;
   onClearCredentials: () => void;
   onClearApiKey: () => void;
@@ -654,6 +692,7 @@ function RepoRow({
           onToggle={onToggle}
           onFlags={onFlags}
           onSave={onSave}
+          onMapping={onMapping}
           onCopyApiKeyExport={onCopyApiKeyExport}
           onClearCredentials={onClearCredentials}
           onClearApiKey={onClearApiKey}
@@ -868,6 +907,14 @@ export function SourcesTab() {
         allowInsecureConnections,
         disableTlsCertificateValidation,
       })}
+      // packageSourceMapping only applies to <packageSources> — NuGet never
+      // consults it for <auditSources>, so don't offer a no-op editor there.
+      onMapping={kind === 'package' ? (patterns) => send({
+        type: 'SET_SOURCE_MAPPING',
+        name: src.name,
+        configFilePath: src.configFilePath,
+        patterns,
+      }) : undefined}
       onSave={(username, password, apiKey) => {
         const credChanged = password !== undefined || username !== (src.username ?? '');
         if (!credChanged && !apiKey) return;

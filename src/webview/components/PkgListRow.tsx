@@ -12,6 +12,8 @@ interface Props {
   hasVulnerability?: boolean;
   vulnerabilityVia?: boolean;
   vulnerabilityTitle?: string;
+  hasNoMappingSource?: boolean;
+  unmappedTitle?: string;
   className?: string;
   onActivate?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -30,6 +32,8 @@ export function PkgListRow({
   hasVulnerability,
   vulnerabilityVia,
   vulnerabilityTitle,
+  hasNoMappingSource,
+  unmappedTitle,
   className,
   onActivate,
   onContextMenu,
@@ -79,6 +83,9 @@ export function PkgListRow({
               className={`pkg-row__mark ${vulnerabilityVia ? 'pkg-row__mark--vuln-via' : 'pkg-row__mark--vuln'}`}
               title={vulnerabilityTitle}
             >⚠</span>
+          ) : null}
+          {hasNoMappingSource ? (
+            <span className="pkg-row__mark pkg-row__mark--unmapped" title={unmappedTitle}>∅</span>
           ) : null}
         </span>
         {aside}

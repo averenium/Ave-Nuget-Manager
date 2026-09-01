@@ -70,6 +70,13 @@ export type WebviewMessage =
       disableTlsCertificateValidation: boolean;
     }
   | {
+      type: 'SET_SOURCE_MAPPING';
+      name: string;
+      configFilePath: string;
+      /** Empty clears this source's block — the whole `packageSourceMapping` section is removed if nothing else is left. */
+      patterns: string[];
+    }
+  | {
       type: 'SET_SOURCE_SECRETS';
       name: string;
       configFilePath: string;

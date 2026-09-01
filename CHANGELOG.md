@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Sources**: `packageSourceMapping` pattern editor per source; **∅** mark on Packages for an installed id with no matching source under an active mapping (#40)
+
+## 0.3.0
+
+### Added
+
+- **Sources** tab: full editor — toggle sources, credentials / API key, HTTP flags (#36)
+- **Folder scope**: manage a folder of loose `.csproj`/`.fsproj` with no `.sln` as one group (#39)
+- Groups: entangled-cluster updates — packages that only fail one-at-a-time because a sibling `ProjectReference` needs them bumped together now land in one `--no-restore` pass + a single restore (#38)
+- Loading skeleton on **Groups** (was plain text), matching **Packages** (#43)
+- Roslyn SDK cap: **Groups** will not target `Microsoft.CodeAnalysis.*` above the compiler bundled with the active SDK (#13)
+- Retry policy for transient `dotnet add` failures (NU1301, HTTP 429/502/503, network, file lock) (#9)
+- Settings button on the panel title bar (#22)
+
+### Changed
+
+- High Contrast / Windows forced-colors support: buttons, tabs, and status marks keep a visible border/outline instead of relying on color alone (#44)
+- Vulnerability scan skipped (with a hint) when no configured source has working `VulnerabilityInfo`, instead of a silent empty scan (#7)
+- Trace sanitizer: redacts proxy `.user`/`no_proxy` values and the containing-directory form of a project path (`cwd`), and follows `<ProjectReference>` to alias sibling projects within the workspace root (#38)
+
+### Fixed
+
+- Legacy (non-SDK-style) `.csproj` package updates (#12)
+
 ## 0.2.0
 
 Marketplace **pre-release** since 0.1.0 (issues #1–#29 that landed).

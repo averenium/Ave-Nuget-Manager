@@ -21,6 +21,7 @@ import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
 import { ActivityStrip } from './ActivityStrip';
 import { DetailHeader } from './DetailHeader';
 import { BlockedPackageMenu } from './BlockedPackageMenu';
+import { PackagesSkeleton } from './InstalledList';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from '../../blockedPackages';
 import type { BatchUpdateItem, BatchUpdateJob, BatchUpdateItemView } from '../../types';
 
@@ -319,6 +320,7 @@ export function UpdatesTab() {
     <div className="split-tab">
       <div className="pkg-toolbar">
         <ToolbarRestoreRefresh disabled={batchBusy} />
+        <span className="pkg-toolbar__spacer" />
         {runningJob ? (
           <span className="pkg-toolbar__progress" aria-live="polite">
             {batchProgressLabel(runningJob)}
@@ -328,7 +330,6 @@ export function UpdatesTab() {
             {enrichProgress.done}/{enrichProgress.total}
           </span>
         ) : null}
-        <span className="pkg-toolbar__spacer" />
         <PrereleaseToggle />
       </div>
       <ActivityStrip />
@@ -341,7 +342,7 @@ export function UpdatesTab() {
               Groups
               {!isLoadingPackages && <span>{2 + families.length}</span>}
             </div>
-            {isLoadingPackages && <div className="empty-state">Loading packages…</div>}
+            {isLoadingPackages && <PackagesSkeleton />}
             <div className="pkg-section__list" role="listbox" aria-label="Update groups">
               <GroupRow
                 name="All"

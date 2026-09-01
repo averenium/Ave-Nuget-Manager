@@ -8,7 +8,8 @@ import { findingsAffectingPackage, vulnerabilityAffectRank } from '../../vulnera
 import { compareSemVer } from '../../semver';
 import { isPackageBlocked } from '../../blockedPackages';
 
-function PackagesSkeleton() {
+/** Shared with UpdatesTab — same loading placeholder shape for the Packages and Groups lists (#43). */
+export function PackagesSkeleton() {
   return (
     <div className="pkg-skeleton" aria-label="Loading packages" aria-busy="true">
       {[40, 55, 35, 60, 45].map((w, i) => (

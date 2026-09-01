@@ -120,7 +120,7 @@ describe('CommandRegistrar.resolveTargetFromUri', () => {
     const registrar = makeRegistrar();
     const uri = vscode.Uri.file('/projects');
     const result = await registrar.resolveTargetFromUri(uri);
-    expect(result).toBe('/projects/My.sln');
+    expect(result).toBe(path.join('/projects', 'My.sln'));
     expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
   });
 
@@ -177,7 +177,7 @@ describe('CommandRegistrar.resolveTargetFromUri', () => {
     const result = await registrar.resolveTargetFromUri(uri);
 
     expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
-    expect(result).toBe('/projects/My.sln');
+    expect(result).toBe(path.join('/projects', 'My.sln'));
   });
 
   // ── Recursive fallback: nothing directly in the clicked folder ────────────

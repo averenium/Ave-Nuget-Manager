@@ -23,6 +23,8 @@ Drag the view **title bar** (or **View: Move View**) to the sidebar / secondary 
 - Explorer context menu on a `.sln` / `.slnx` / `.csproj` / `.fsproj`
 - Click the solution/project name in the panel tab bar to switch among `.sln` / `.slnx` / `.csproj` / `.fsproj` in the workspace
 
+Buttons, tabs, and status marks (↑ / ⊘ / ⚠) stay visible under VS Code's **High Contrast** themes and Windows **forced colors** — not just color-only, they draw a real border/outline in those modes.
+
 ## Agent skill
 
 The panel does not review whether a bump is safe. The **Agents** tab (after Log) explains and installs the **Dependency breaking-changes review** skill. If a copy is already on disk and older than the VSIX, **Update** writes the bundled files to that path (no folder picker). Palette **NuGet: SKILL -> Install Dependency Breaking Changes Review** still uses QuickPick for a first install. Details: [docs/agent-skill.md](docs/agent-skill.md).

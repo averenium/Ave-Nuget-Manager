@@ -25,6 +25,11 @@
   --color-success:      var(--vscode-terminal-ansiGreen, #4ec994);
   --color-link:         var(--vscode-textLink-foreground, #4ec9b0);
   --color-link-hover:   var(--vscode-textLink-activeForeground, #4ec9b0);
+  /* High Contrast themes: transparent in every other theme, so this is additive
+     with no visual change outside HC (#44). */
+  --color-contrast-border: var(--vscode-contrastBorder, transparent);
+  /* Falls back to the existing focus colour when no HC theme is active. */
+  --color-focus-border: var(--vscode-contrastActiveBorder, var(--color-btn-bg));
   --font-family:        var(--vscode-font-family, -apple-system, BlinkMacSystemFont, sans-serif);
   --font-size:          var(--vscode-font-size, 13px);
   --font-mono:          var(--vscode-editor-font-family, 'Courier New', monospace);
@@ -81,7 +86,12 @@ html { height: 100vh; }
 .tab-btn:hover { color: var(--color-fg); }
 .tab-btn--active {
   color: var(--color-tab-active);
-  border-bottom-color: var(--color-btn-bg);
+  /* The only "which tab is active" signal is this underline colour — give it
+     an HC-aware fallback chain, plus a full outline as a second cue, so it
+     doesn't rely on one colour matching the toolbar background (#44 review). */
+  border-bottom-color: var(--color-focus-border);
+  outline: 1px solid var(--color-contrast-border);
+  outline-offset: -1px;
 }
 .tab-btn__warn {
   flex-shrink: 0;
@@ -105,6 +115,8 @@ html { height: 100vh; }
   border-radius: var(--radius);
   font-family: inherit;
   line-height: inherit;
+  outline: 1px solid var(--color-contrast-border);
+  outline-offset: -1px;
 }
 .tab-bar__scope:hover {
   color: var(--color-fg);
@@ -173,8 +185,9 @@ html { height: 100vh; }
   background: var(--color-input-bg); color: var(--color-input-fg);
   border: 1px solid var(--color-border); border-radius: var(--radius);
   font-family: var(--font-family); font-size: var(--font-size);
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
-.pkg-toolbar__search:focus { outline: 1px solid var(--color-btn-bg); border-color: var(--color-btn-bg); }
+.pkg-toolbar__search:focus { outline: 1px solid var(--color-focus-border); border-color: var(--color-btn-bg); }
 .pkg-toolbar__refresh {
   flex-shrink: 0;
   width: 24px; height: 24px; padding: 0;
@@ -351,6 +364,11 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   font-size: 9px;
   margin-left: 3px;
   vertical-align: super;
+  /* A shape, not just a colour — stays legible when HC themes shrink the
+     colour palette down toward plain foreground/background (#44). */
+  padding: 0 3px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
 }
 .pkg-row__mark--update { color: var(--color-success); }
 .pkg-row__mark--blocked { color: var(--color-tab-inactive); }
@@ -365,6 +383,7 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   border: 1px solid var(--color-border); border-radius: var(--radius);
   text-align: left; cursor: pointer; font-size: 12px;
   font-family: var(--font-family); white-space: nowrap;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
 .source-filter__btn:hover { border-color: var(--color-btn-bg); }
 .source-filter__dropdown {
@@ -464,6 +483,8 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   font-family: var(--font-family);
   font-size: 12px;
   cursor: pointer;
+  outline: 1px solid var(--color-contrast-border);
+  outline-offset: -1px;
 }
 .version-select__btn:hover { border-color: var(--color-btn-bg); }
 .version-select__btn:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -503,7 +524,8 @@ select {
   border-radius: var(--radius);
   font-family: var(--font-family);
   font-size: 12px;
-  outline: none;
+  outline: 1px solid var(--color-contrast-border);
+  outline-offset: -1px;
   cursor: pointer;
 }
 select:focus { border-color: var(--color-btn-bg); }
@@ -515,6 +537,11 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   border: none; border-radius: var(--radius); cursor: pointer;
   font-family: var(--font-family); font-size: var(--font-size);
   flex-shrink: 0;
+  /* HC themes shrink the palette and expect an explicit boundary so a button
+     doesn't disappear into a same-toned background — inset outline keeps this
+     independent of `border` (which `.btn--danger` already sets its own). */
+  outline: 1px solid var(--color-contrast-border);
+  outline-offset: -1px;
 }
 .btn--primary { background: var(--color-btn-bg); color: var(--color-btn-fg); }
 .btn--primary:hover { background: var(--color-btn-hover); }
@@ -612,6 +639,11 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .sources-flag {
   display: inline-flex; align-items: center; color: var(--color-tab-inactive);
   flex-shrink: 0; line-height: 0;
+  /* Icon-only status flag rendered with `fill="currentColor"` — no shape of
+     its own to stay visible when HC themes shrink the colour palette (#44). */
+  outline: 1px solid var(--color-contrast-border);
+  outline-offset: 2px;
+  border-radius: var(--radius);
 }
 .sources-check {
   display: flex; align-items: center; gap: 6px; min-width: 0;
@@ -659,6 +691,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   background: var(--color-input-bg); color: var(--color-input-fg);
   border: 1px solid var(--color-border); border-radius: var(--radius);
   font-family: var(--font-family); font-size: 12px;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
 .sources-field { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .sources-field .sources-input { flex: 1; }
@@ -669,6 +702,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .sources-clear {
   flex-shrink: 0; background: none; border: none; padding: 0 4px;
   color: var(--color-tab-inactive); cursor: pointer; font-size: 14px; line-height: 1;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
 .sources-clear:hover { color: var(--color-fg); }
 .sources-edit {
@@ -703,6 +737,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   background: transparent; color: var(--color-fg);
   border: 1px solid var(--color-border); border-radius: var(--radius);
   padding: 2px 8px; cursor: pointer;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
 .log-toolbar__btn:hover { border-color: var(--color-btn-bg); color: var(--color-btn-bg); }
 .log-toolbar__btn--stop { border-color: var(--color-error); color: var(--color-error); }
@@ -737,6 +772,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   flex-shrink: 0; background: none; border: none;
   color: var(--color-tab-inactive); cursor: pointer;
   font-family: var(--font-mono); font-size: 10px; padding: 0 2px;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
 .log-entry__toggle:hover { color: var(--color-fg); }
 
@@ -780,8 +816,9 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   background: var(--color-input-bg); color: var(--color-input-fg);
   border: 1px solid var(--color-border); border-radius: var(--radius);
   font-family: var(--font-family); font-size: 12px;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
-.popup__search:focus { outline: 1px solid var(--color-btn-bg); border-color: var(--color-btn-bg); }
+.popup__search:focus { outline: 1px solid var(--color-focus-border); border-color: var(--color-btn-bg); }
 .popup__bulk { display: flex; gap: var(--spacing-xs); }
 .popup__bulk-btn {
   background: none; border: 1px solid var(--color-border); border-radius: var(--radius);
@@ -1001,4 +1038,29 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .pkg-ctx-menu__item:hover {
   background: var(--vscode-menu-selectionBackground, var(--color-list-active));
   color: var(--vscode-menu-selectionForeground, var(--color-list-active-fg));
+}
+
+/* ── OS-level forced colors (Windows) ──────────────────────────────────────────
+   Second safety net, independent of the --vscode-contrastBorder mechanism
+   above: system colour keywords always resolve under forced-colors, even if
+   VS Code's own tokens were somehow not populated (#44). */
+@media (forced-colors: active) {
+  .btn,
+  .tab-bar__scope,
+  .sources-clear,
+  .log-entry__toggle,
+  .source-filter__btn,
+  .version-select__btn,
+  select,
+  .sources-input,
+  .popup__search,
+  .pkg-toolbar__search,
+  .log-toolbar__btn {
+    outline-color: ButtonText;
+  }
+  .btn--primary, .btn--secondary { forced-color-adjust: none; background: ButtonFace; color: ButtonText; }
+  .btn--primary:hover, .btn--secondary:hover { background: Highlight; color: HighlightText; }
+  .tab-btn--active { border-bottom-color: Highlight; outline-color: Highlight; }
+  .pkg-row__mark { forced-color-adjust: none; }
+  .sources-flag { outline-color: CanvasText; }
 }

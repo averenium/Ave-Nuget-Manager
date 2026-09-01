@@ -187,6 +187,16 @@ export function buildPathReplacements(ctx: SanitizeContext): Array<{ from: strin
     for (const from of pathVariants(alias.absPath)) {
       rows.push({ from, to: alias.dest });
     }
+    // `cwd` fields are the containing directory, no trailing filename — the
+    // full-path rule above never matches those, so the real folder hierarchy
+    // below the workspace root passed through unredacted (#38 review).
+    const fromDir = path.dirname(alias.absPath);
+    if (fromDir && fromDir !== path.parse(fromDir).root) {
+      const toDir = path.dirname(alias.dest).replace(/\\/g, '/');
+      for (const from of pathVariants(fromDir)) {
+        rows.push({ from, to: toDir });
+      }
+    }
   }
 
   const byBase = new Map<string, FileAlias[]>();
@@ -413,7 +423,37 @@ function nameLooksSecret(name: string): boolean {
   return SECRET_NAME.test(name);
 }
 
+/**
+ * NuGet's `<config>` section only ever pairs `.user`/`.username` with a
+ * `.password` key for proxy settings (`http_proxy.user` / `http_proxy.password`,
+ * same for `https_proxy`) — matching only next to that sibling avoids treating
+ * an unrelated `key="..."` that merely contains "user" (a feed name, say) as
+ * secret. `<add key="X.password" .../>` implies `X.user`/`X.username` is just
+ * as sensitive, whether or not the sibling appears before or after it.
+ */
+function proxyUserKeysNextToPassword(xml: string): Set<string> {
+  const keys = new Set<string>();
+  const re = /<add\s[^>]*\bkey\s*=\s*["']([^"']+)\.password["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const prefix = m[1].toLowerCase();
+    keys.add(`${prefix}.user`);
+    keys.add(`${prefix}.username`);
+  }
+  return keys;
+}
+
+/**
+ * Free-text settings whose whole value is inherently internal-only info with
+ * no debugging benefit to keeping partial fragments — unlike a single
+ * hostname, `no_proxy` is a comma-separated exclusion list that can embed any
+ * number of internal domain fragments no single rule can pattern-match.
+ */
+const FULL_VALUE_SECRET_KEYS = new Set(['no_proxy', 'noproxy']);
+
 function redactSecretNamedXml(xml: string): string {
+  const proxyUserKeys = proxyUserKeysNextToPassword(xml);
+
   const pair = /<([A-Za-z][\w.-]*?(?:password|pwd|apikey|api[_-]?key)[\w.-]*)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi;
   let out = xml.replace(pair, (_all, tag: string, attrs: string | undefined) => {
     return `<${tag}${attrs ?? ''}><redacted></${tag}>`;
@@ -430,7 +470,11 @@ function redactSecretNamedXml(xml: string): string {
       const keyed = attrs.match(/\s(?:key|Key|Include|Name)\s*=\s*("[^"]*"|'[^']*')/);
       if (!keyed) return all;
       const keyVal = keyed[1].slice(1, -1);
-      if (!nameLooksSecret(keyVal) && !nameLooksSecret(tag)) return all;
+      const keyLower = keyVal.toLowerCase();
+      if (
+        !nameLooksSecret(keyVal) && !nameLooksSecret(tag)
+        && !proxyUserKeys.has(keyLower) && !FULL_VALUE_SECRET_KEYS.has(keyLower)
+      ) return all;
       return `<${tag}${redactAttrValues(attrs, ['value', 'Value', 'Password', 'ClearTextPassword', 'apiKey', 'ApiKey'])} />`;
     },
   );

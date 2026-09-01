@@ -3,10 +3,12 @@ import {
   collectFamilyGroups,
   collectOtherItems,
   collectUpdatableItems,
+  computeEntangledCluster,
   familyItemsAtVersion,
   formatBatchUpdateError,
   intersectVersions,
   preserveInstalledEnrichment,
+  type EntangledClusterInput,
 } from '../../batchUpdates';
 
 function pkg(
@@ -289,6 +291,94 @@ describe('intersectVersions', () => {
       ['9.0.0', '8.0.0', '8.0.1'],
       ['9.0.0', '8.0.1'],
     ])).toEqual(['9.0.0', '8.0.1']);
+  });
+});
+
+describe('computeEntangledCluster', () => {
+  function input(over: Partial<EntangledClusterInput>): EntangledClusterInput {
+    return {
+      currentVersions: new Map(),
+      floors: new Map(),
+      depsGraph: new Map(),
+      batchPackageIds: new Set(),
+      ...over,
+    };
+  }
+
+  it('is empty with no floor violations (the common case)', () => {
+    const cluster = computeEntangledCluster(input({
+      currentVersions: new Map([['pkg.a', '1.0.0']]),
+      floors: new Map([['pkg.a', '1.0.0']]),
+      batchPackageIds: new Set(['pkg.a']),
+    }));
+    expect(cluster.size).toBe(0);
+  });
+
+  it('is empty for a lone floor violation with no batch-mate to land with', () => {
+    // toVersion isn't modeled here — this is the pre-batch state; a lone
+    // violator either resolves once its own bump lands, or doesn't, and no
+    // clustering changes that.
+    const cluster = computeEntangledCluster(input({
+      currentVersions: new Map([['pkg.a', '1.0.0']]),
+      floors: new Map([['pkg.a', '2.0.0']]),
+      batchPackageIds: new Set(['pkg.a']),
+    }));
+    expect(cluster.size).toBe(0);
+  });
+
+  it('#38: unions two unrelated floor violations plus a graph neighbour into one cluster', () => {
+    // Real shape from the issue #38 trace: OpenTelemetry.Extensions.Hosting and
+    // Swashbuckle.AspNetCore.SwaggerGen each violate an independent
+    // ProjectReference floor (different package families, no edge between
+    // them) — both still need to land in the same no-restore pass. OpenTelemetry
+    // itself isn't floor-violating, but Extensions.Hosting depends on it, and a
+    // downgrade there (rolled back by an earlier, unrelated failure) blocks the
+    // whole cluster from resolving too.
+    const cluster = computeEntangledCluster({
+      currentVersions: new Map([
+        ['opentelemetry.extensions.hosting', '1.15.3'],
+        ['opentelemetry', '1.15.3'],
+        ['swashbuckle.aspnetcore.swaggergen', '10.1.7'],
+        ['swashbuckle.aspnetcore.redoc', '10.1.7'],
+      ]),
+      floors: new Map([
+        ['opentelemetry.extensions.hosting', '1.18.0'],
+        ['swashbuckle.aspnetcore.swaggergen', '10.2.3'],
+      ]),
+      depsGraph: new Map([
+        ['opentelemetry.extensions.hosting', ['OpenTelemetry']],
+      ]),
+      batchPackageIds: new Set([
+        'opentelemetry.extensions.hosting',
+        'opentelemetry',
+        'swashbuckle.aspnetcore.swaggergen',
+        'swashbuckle.aspnetcore.redoc',
+      ]),
+    });
+    expect(cluster).toEqual(new Set([
+      'opentelemetry.extensions.hosting',
+      'opentelemetry',
+      'swashbuckle.aspnetcore.swaggergen',
+    ]));
+    expect(cluster.has('swashbuckle.aspnetcore.redoc')).toBe(false);
+  });
+
+  it('does not expand to a graph neighbour outside this batch', () => {
+    const cluster = computeEntangledCluster({
+      currentVersions: new Map([['pkg.a', '1.0.0']]),
+      floors: new Map([['pkg.a', '2.0.0']]),
+      depsGraph: new Map([['pkg.a', ['Pkg.B']]]),
+      batchPackageIds: new Set(['pkg.a']), // Pkg.B is not part of this batch
+    });
+    expect(cluster.size).toBe(0);
+  });
+
+  it('ignores a package with no current version (not actually referenced yet)', () => {
+    const cluster = computeEntangledCluster(input({
+      floors: new Map([['pkg.a', '2.0.0']]),
+      batchPackageIds: new Set(['pkg.a']),
+    }));
+    expect(cluster.size).toBe(0);
   });
 });
 

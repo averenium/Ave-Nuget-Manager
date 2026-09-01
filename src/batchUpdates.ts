@@ -232,6 +232,76 @@ export function suggestedFamilyVersion(members: FamilyMember[], fromVersion: str
   return newer[0];
 }
 
+export interface EntangledClusterInput {
+  /** Current resolved version per package id (lowercase keys) on this one project. */
+  currentVersions: ReadonlyMap<string, string>;
+  /** Version floor a `ProjectReference` imposes per package id (lowercase keys). */
+  floors: ReadonlyMap<string, string>;
+  /** Package -> its own dependency ids (lowercase keys), from `project.assets.json`. */
+  depsGraph: ReadonlyMap<string, readonly string[]>;
+  /** Package ids (lowercase) this batch targets on this project. */
+  batchPackageIds: ReadonlySet<string>;
+}
+
+/**
+ * #38: packages (lowercase ids) that must be applied to one project together,
+ * with a single restore at the end, instead of one `dotnet add` + implicit
+ * restore per package. A package already below a `ProjectReference` floor
+ * fails *every* restore until it (and anything else needed to satisfy the
+ * resulting graph) lands — including packages whose own restart isn't
+ * floor-violating but got rolled back by an earlier, unrelated failure in the
+ * same batch (e.g. a dependency of the floor-violating package).
+ *
+ * Seeds are every batch package currently below its own floor; the cluster is
+ * the union of each seed's reachable set in the (batch-restricted, undirected)
+ * dependency graph — seeds do not need to be connected to *each other* (#38's
+ * real trace had two unrelated floor violations in the same project, neither
+ * depending on the other, both required in the same no-restore pass).
+ *
+ * A cluster of one (a lone floor violation with no batch-mate) gets nothing
+ * from this — either the batch's target version already satisfies the floor
+ * and the normal per-item flow succeeds, or it doesn't and no reordering
+ * fixes that. Returns an empty set in both the "nothing to do" and "no help
+ * possible" cases.
+ */
+export function computeEntangledCluster(input: EntangledClusterInput): Set<string> {
+  const { currentVersions, floors, depsGraph, batchPackageIds } = input;
+
+  const seeds = [...batchPackageIds].filter((id) => {
+    const floor = floors.get(id);
+    const current = currentVersions.get(id);
+    return !!floor && !!current && compareSemVer(current, floor) < 0;
+  });
+  if (seeds.length === 0) return new Set();
+
+  const adjacency = new Map<string, Set<string>>();
+  const link = (a: string, b: string): void => {
+    if (!adjacency.has(a)) adjacency.set(a, new Set());
+    adjacency.get(a)!.add(b);
+  };
+  for (const id of batchPackageIds) {
+    for (const dep of depsGraph.get(id) ?? []) {
+      const depKey = dep.toLowerCase();
+      if (!batchPackageIds.has(depKey)) continue;
+      link(id, depKey);
+      link(depKey, id);
+    }
+  }
+
+  const cluster = new Set<string>();
+  const stack = [...seeds];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (cluster.has(id)) continue;
+    cluster.add(id);
+    for (const neighbor of adjacency.get(id) ?? []) {
+      if (!cluster.has(neighbor)) stack.push(neighbor);
+    }
+  }
+
+  return cluster.size > 1 ? cluster : new Set();
+}
+
 /** Banner text for a finished batch: first line is the title, rest is the spoiler. */
 export function formatBatchUpdateError(
   items: Array<{ packageId: string; status: BatchItemStatus; error?: string }>,

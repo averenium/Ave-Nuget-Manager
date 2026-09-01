@@ -2,6 +2,7 @@ import { WebviewMessageBroker } from '../../webviewMessageBroker';
 import { Logger } from '../../logger';
 import * as vscode from 'vscode';
 import * as projectFiles from '../../projectFileSnapshot';
+import * as projectAssets from '../../projectAssets';
 import * as config from '../../config';
 import * as legacyPr from '../../legacyPackageReference';
 import * as projectStyle from '../../projectPackageStyle';
@@ -91,6 +92,7 @@ function makeBackend(): jest.Mocked<INuGetBackend> {
     getAllVersions: jest.fn().mockResolvedValue([]),
     getMetadata: jest.fn().mockResolvedValue(makeMetadata('Pkg')),
     installPackage: jest.fn().mockResolvedValue(makeCliResult()),
+    installPackageNoRestore: jest.fn().mockResolvedValue(makeCliResult()),
     removePackage: jest.fn().mockResolvedValue(makeCliResult()),
     restoreProject: jest.fn().mockResolvedValue(makeCliResult()),
     enrichPackage: jest.fn().mockResolvedValue({ latestVersion: '', sourceName: '', versions: [] }),
@@ -1898,6 +1900,273 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
 
     expect(backend.installPackage).toHaveBeenCalledTimes(1);
     expect(posted.some((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status === 'error')).toBe(true);
+  });
+
+  // ── Entangled clusters (#38): a ProjectReference version floor makes every
+  // restore fail until every package it (transitively) affects lands together.
+
+  describe('UPDATE_PACKAGES_BATCH — entangled clusters (#38)', () => {
+    const APP_XML =
+      '<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />'
+      + '<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.1.7" />';
+
+    const clusterItems = [
+      { packageId: 'OpenTelemetry.Extensions.Hosting', fromVersion: '1.15.3', toVersion: '1.18.0', projects: ['/p/App.csproj'] },
+      { packageId: 'Swashbuckle.AspNetCore.SwaggerGen', fromVersion: '10.1.7', toVersion: '10.2.3', projects: ['/p/App.csproj'] },
+    ];
+
+    function mockFloors(): void {
+      jest.spyOn(projectAssets, 'readProjectAssets').mockResolvedValue({
+        dependencies: new Map(),
+        floors: new Map([
+          ['opentelemetry.extensions.hosting', '1.18.0'],
+          ['swashbuckle.aspnetcore.swaggergen', '10.2.3'],
+        ]),
+      });
+    }
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('applies both entangled packages with --no-restore, then a single shared restore', async () => {
+      mockFloors();
+      jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+        { path: '/p/App.csproj', content: APP_XML },
+      ]);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackageNoRestore.mockResolvedValue(makeCliResult());
+      backend.restoreProject.mockResolvedValue(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: clusterItems,
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.installPackageNoRestore).toHaveBeenCalledTimes(2);
+      expect(backend.installPackageNoRestore).toHaveBeenCalledWith(
+        '/p/App.csproj', 'OpenTelemetry.Extensions.Hosting', '1.18.0', expect.anything(),
+      );
+      expect(backend.installPackageNoRestore).toHaveBeenCalledWith(
+        '/p/App.csproj', 'Swashbuckle.AspNetCore.SwaggerGen', '10.2.3', expect.anything(),
+      );
+      expect(backend.restoreProject).toHaveBeenCalledTimes(1);
+      expect(backend.installPackage).not.toHaveBeenCalled();
+
+      const finals = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status === 'ok') as any[];
+      expect(finals.map((m) => m.packageId).sort()).toEqual([
+        'OpenTelemetry.Extensions.Hosting', 'Swashbuckle.AspNetCore.SwaggerGen',
+      ].sort());
+      expect(finals.every((m) => m.succeededProjects.includes('/p/App.csproj'))).toBe(true);
+    });
+
+    it('rolls back both packages together when the shared restore still fails (onFailedUpdate: rollback)', async () => {
+      mockFloors();
+      jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+        { path: '/p/App.csproj', content: APP_XML },
+      ]);
+      const restoreSnapshotSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackageNoRestore.mockResolvedValue(makeCliResult());
+      backend.restoreProject.mockResolvedValue(makeCliResult({
+        exitCode: 1,
+        stdout: 'error NU1605: still broken',
+      }));
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: clusterItems,
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      // One shared snapshot, rolled back once per clustered package sharing it —
+      // still correct (idempotent), just not deduplicated.
+      expect(restoreSnapshotSpy).toHaveBeenCalled();
+      const finished = posted.find((m) => m.type === 'BATCH_UPDATE_FINISHED') as any;
+      expect(finished.canRollback).toBe(false);
+      const finals = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status === 'error') as any[];
+      expect(finals).toHaveLength(2);
+    });
+
+    it('keeps the shared restore failure and offers Rollback (onFailedUpdate: keep)', async () => {
+      jest.spyOn(config, 'getConfig').mockReturnValue({
+        dotnetConcurrency: 4,
+        cacheTtlMs: 1000,
+        includePrerelease: false,
+        onFailedUpdate: 'keep',
+        vulnerabilityScript: '',
+        blockedPackages: [],
+      });
+      mockFloors();
+      jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+        { path: '/p/App.csproj', content: APP_XML },
+      ]);
+      const restoreSnapshotSpy = jest.spyOn(projectFiles, 'restoreFileSnapshots').mockResolvedValue(undefined);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackageNoRestore.mockResolvedValue(makeCliResult());
+      backend.restoreProject.mockResolvedValue(makeCliResult({
+        exitCode: 1,
+        stdout: 'error NU1605: still broken',
+      }));
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: clusterItems,
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(restoreSnapshotSpy).not.toHaveBeenCalled();
+      const finished = posted.find((m) => m.type === 'BATCH_UPDATE_FINISHED') as any;
+      expect(finished.canRollback).toBe(true);
+    });
+
+    it('retries a transient failure on the no-restore add step, then succeeds', async () => {
+      mockFloors();
+      jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+        { path: '/p/App.csproj', content: APP_XML },
+      ]);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackageNoRestore
+        .mockResolvedValueOnce(makeCliResult({ exitCode: 1, stderr: 'HTTP 503 Service Unavailable' }))
+        .mockResolvedValue(makeCliResult());
+      backend.restoreProject.mockResolvedValue(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: clusterItems,
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.installPackageNoRestore).toHaveBeenCalledTimes(3); // 1 retried + 1 clean
+      expect(backend.restoreProject).toHaveBeenCalledTimes(1);
+      const finals = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status === 'ok') as any[];
+      expect(finals).toHaveLength(2);
+    });
+
+    it('retries a transient failure on the shared restore step, then succeeds', async () => {
+      mockFloors();
+      jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+        { path: '/p/App.csproj', content: APP_XML },
+      ]);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackageNoRestore.mockResolvedValue(makeCliResult());
+      backend.restoreProject
+        .mockResolvedValueOnce(makeCliResult({ exitCode: 1, stderr: 'HTTP 503 Service Unavailable' }))
+        .mockResolvedValue(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: clusterItems,
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.restoreProject).toHaveBeenCalledTimes(2);
+      const finals = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status === 'ok') as any[];
+      expect(finals).toHaveLength(2);
+    });
+
+    it('runs a non-clustered item on the same project through the normal one-by-one flow', async () => {
+      mockFloors();
+      jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+        { path: '/p/App.csproj', content: APP_XML },
+      ]);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackageNoRestore.mockResolvedValue(makeCliResult());
+      backend.installPackage.mockResolvedValue(makeCliResult());
+      backend.restoreProject.mockResolvedValue(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: [
+          ...clusterItems,
+          { packageId: 'Scalar.AspNetCore', fromVersion: '2.12.46', toVersion: '2.17.1', projects: ['/p/App.csproj'] },
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.installPackageNoRestore).toHaveBeenCalledTimes(2);
+      expect(backend.installPackage).toHaveBeenCalledWith(
+        '/p/App.csproj', 'Scalar.AspNetCore', '2.17.1', expect.anything(),
+      );
+      const finals = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status === 'ok') as any[];
+      expect(finals).toHaveLength(3);
+    });
+
+    it('does not touch a batch with no floor violation (the common case)', async () => {
+      jest.spyOn(projectAssets, 'readProjectAssets').mockResolvedValue({ dependencies: new Map(), floors: new Map() });
+      jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([]);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackage.mockResolvedValue(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: [
+          { packageId: 'A', fromVersion: '1.0.0', toVersion: '2.0.0', projects: ['/p/App.csproj'] },
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.installPackageNoRestore).not.toHaveBeenCalled();
+      expect(backend.installPackage).toHaveBeenCalledTimes(1);
+      expect(posted.some((m) => m.type === 'BATCH_UPDATE_ITEM' && (m as any).status === 'ok')).toBe(true);
+    });
   });
 
   it('does not retry a cancelled group add', async () => {

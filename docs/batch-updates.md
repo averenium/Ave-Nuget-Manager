@@ -1,6 +1,6 @@
 # Пакетні оновлення
 
-Код: `src/batchUpdates.ts`, `src/packageFamily.ts`, `src/webviewMessageBroker.ts` (`_handleUpdateBatch`), вкладка `UpdatesTab`.
+Код: `src/batchUpdates.ts`, `src/packageFamily.ts`, `src/webviewMessageBroker.ts` (`_handleUpdateBatch`), вкладка `UpdatesTab`. Entangled clusters (#38): `src/packageGraph.ts` (`parseAssetsFloors`), `src/projectAssets.ts` (`readProjectFloors`) — see below.
 
 Дві дії в UI, обидві використовують **той самий latest**, що вже порахований enrich з урахуванням галочки Pre-release.
 
@@ -48,6 +48,14 @@ History після запуску — під прев’ю. Одиночний u
 `UPDATE_PACKAGES_BATCH`: пакети **послідовно** (щоб не писати один csproj паралельно). Проєкти одного пакета — `dotnet add` з лімітом `dotnetConcurrency`. Rollback / keep — ті самі правила, що для одиночного add ([install-and-rollback](install-and-rollback.md)); batch не зупиняється на першій помилці.
 
 Якщо `dotnet add` падає **тимчасово**, host робить **ще одну** спробу того самого id/версії (пауза 750 мс). Між спробами знімки **не** відкочуються: другий add або дописує PackageReference, або лише restore. Rollback / keep — лише коли обидві спроби провалились. Stop / `cancelled` не ретраїться.
+
+## Entangled clusters (#38)
+
+A `ProjectReference` can pin a version floor on a package that the referencing project's own `PackageReference` hasn't caught up to yet (a sibling project was bumped independently). Landing a batch's 7 packages one at a time, each with its own implicit restore, fails on *every* item — not just the two that violate a floor — because each restore re-validates the whole graph, and `onFailedUpdate: rollback` reverts the whole project file after each failure, undoing earlier, unrelated packages too.
+
+`WebviewMessageBroker._computeClusterOutcomes` runs before the per-item loop: for each project in the batch, it reads `project.assets.json`'s `type: "project"` entries (`readProjectFloors`, `src/projectAssets.ts` — these entries are otherwise discarded by `parseAssetsDependencies`) and the package dependency graph, then `computeEntangledCluster` (`src/batchUpdates.ts`) finds every batch package currently below its own floor and unions in whatever it's graph-connected to within the batch. Two floor violations don't need to be connected *to each other* — the real #38 trace had two unrelated ones (different package families) that both had to land in the same pass.
+
+A cluster with 2+ members is applied via `installPackageNoRestore` (`dotnet add … --no-restore`) for every member, sequentially on that one project, followed by exactly one `restoreProject` for the whole set. Each member's outcome still goes through the existing `_finishInstallAttempts` — rollback/keep, `INSTALLED_PACKAGES_PATCH`, and the shared `keepFailures` list backing the batch's Rollback button all behave exactly as they do for a normal single-package failure. Items with no floor conflict (the common case) never enter this path — `computeEntangledCluster` returns an empty set and the loop below runs unchanged.
 
 ## Microsoft.CodeAnalysis.* і SDK compiler
 

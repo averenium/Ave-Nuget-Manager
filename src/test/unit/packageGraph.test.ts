@@ -1,5 +1,6 @@
 import {
   parseAssetsDependencies,
+  parseAssetsFloors,
   reachableAmong,
   sortPackagesByDependencies,
   immediateListedDependencies,
@@ -40,6 +41,47 @@ describe('parseAssetsDependencies', () => {
       'Microsoft.Extensions.Logging.Abstractions',
     ]);
     expect(graph.has('ave.electricitybot.telegramscraper')).toBe(false);
+  });
+});
+
+describe('parseAssetsFloors', () => {
+  it('reads version floors from type:"project" entries (#38: sibling ProjectReference floor)', () => {
+    const floors = parseAssetsFloors({
+      targets: {
+        'net10.0': {
+          'DDAS.EcaAuthorization.OpenTelemetry/1.0.0': {
+            type: 'project',
+            dependencies: { 'OpenTelemetry.Extensions.Hosting': '1.18.0' },
+          },
+          'OpenTelemetry.Extensions.Hosting/1.15.3': {
+            type: 'package',
+            dependencies: { OpenTelemetry: '1.15.3' },
+          },
+        },
+      },
+    });
+    expect(floors.get('opentelemetry.extensions.hosting')).toBe('1.18.0');
+    expect(floors.has('opentelemetry')).toBe(false);
+  });
+
+  it('takes the highest floor across TFMs', () => {
+    const floors = parseAssetsFloors({
+      targets: {
+        'net8.0': {
+          'Ref/1.0.0': { type: 'project', dependencies: { 'Pkg.A': '1.0.0' } },
+        },
+        'net9.0': {
+          'Ref/1.0.0': { type: 'project', dependencies: { 'Pkg.A': '2.0.0' } },
+        },
+      },
+    });
+    expect(floors.get('pkg.a')).toBe('2.0.0');
+  });
+
+  it('returns an empty map when there are no project references', () => {
+    expect(parseAssetsFloors({ targets: { 'net8.0': {} } }).size).toBe(0);
+    expect(parseAssetsFloors(null).size).toBe(0);
+    expect(parseAssetsFloors({}).size).toBe(0);
   });
 });
 

@@ -37,6 +37,8 @@ import {
   isSolutionFile,
   NUGET_CONFIG_GLOB,
 } from './dotnetWorkspace';
+import { readProjectAssets } from './projectAssets';
+import { computeEntangledCluster } from './batchUpdates';
 
 /** Absolute path uniquely identifying a scope — solution/folder path, or the single project. */
 function scopeIdentityPath(scope: WorkspaceScope): string {
@@ -129,6 +131,30 @@ interface InstallAttempt {
 
 function skippedInstallResult(): CliResult {
   return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
+}
+
+interface BatchItemOutcome {
+  status: BatchItemStatus;
+  succeeded: string[];
+  error?: string;
+}
+
+/** Worst status wins, in this order — matches how a partial multi-project failure already reads. */
+const BATCH_STATUS_RANK: Record<BatchItemStatus, number> = {
+  error: 4, timeout: 3, cancelled: 2, running: 1, pending: 1, ok: 0,
+};
+
+/**
+ * #38: a batch item can be split across an entangled-cluster pre-pass (some
+ * of its projects) and the normal per-item flow (the rest) — merge their
+ * independently-computed outcomes into the one status `_postBatchItem` reports.
+ */
+function mergeOutcomes(outcomes: BatchItemOutcome[]): BatchItemOutcome {
+  const succeeded = outcomes.flatMap((o) => o.succeeded);
+  const worst = outcomes.reduce((acc, o) =>
+    BATCH_STATUS_RANK[o.status] > BATCH_STATUS_RANK[acc.status] ? o : acc);
+  const errors = outcomes.map((o) => o.error).filter((e): e is string => !!e);
+  return { status: worst.status, succeeded, error: errors.length > 0 ? errors.join('\n\n') : undefined };
 }
 
 interface CacheEntry {
@@ -966,6 +992,16 @@ export class WebviewMessageBroker {
     const keepFailures: InstallAttempt[] = [];
 
     try {
+      // #38: some (project, package) pairs in this batch may be entangled by a
+      // ProjectReference version floor — applying them one at a time, each with
+      // its own implicit restore, fails every single item even though the full
+      // batch would resolve cleanly. Pre-resolve those pairs together (no
+      // restore until the whole cluster has landed); everything else keeps the
+      // existing one-item-at-a-time flow below untouched.
+      const clusterOutcomes = abort.signal.aborted
+        ? new Map<string, BatchItemOutcome>()
+        : await this._computeClusterOutcomes(queued, abort.signal, keepFailures);
+
       for (let i = 0; i < queued.length; i++) {
         const item = queued[i];
         if (abort.signal.aborted) {
@@ -974,35 +1010,56 @@ export class WebviewMessageBroker {
           }
           break;
         }
-        this._postBatchItem(jobId, item.packageId, 'running', [], undefined, []);
-        const succeededSoFar: string[] = [];
-        const completedSoFar: string[] = [];
-        const attempts = await this._installOnProjects(
+
+        const clusterKey = (p: string) => `${p} ${item.packageId.toLowerCase()}`;
+        const clusteredProjects = item.projects.filter((p) => clusterOutcomes.has(clusterKey(p)));
+        const remainingProjects = item.projects.filter((p) => !clusteredProjects.includes(p));
+        const clusteredResults = clusteredProjects.map((p) => clusterOutcomes.get(clusterKey(p))!);
+
+        this._postBatchItem(
+          jobId,
           item.packageId,
-          item.toVersion,
-          item.projects,
-          (projectPath, ok) => {
-            completedSoFar.push(projectPath);
-            if (ok) succeededSoFar.push(projectPath);
-            this._postBatchItem(
-              jobId,
-              item.packageId,
-              'running',
-              [...succeededSoFar],
-              undefined,
-              [...completedSoFar],
-            );
-          },
-          abort.signal,
-          true,
+          'running',
+          clusteredResults.flatMap((o) => o.succeeded),
+          undefined,
+          [...clusteredProjects],
         );
-        const outcome = await this._finishInstallAttempts(item.packageId, item.toVersion, attempts, {
-          notify: false,
-          refresh: false,
-        });
-        if (outcome.keepAttempts.length > 0) {
-          keepFailures.push(...outcome.keepAttempts);
+
+        let outcome: BatchItemOutcome;
+        if (remainingProjects.length > 0) {
+          const succeededSoFar: string[] = [...clusteredResults.flatMap((o) => o.succeeded)];
+          const completedSoFar: string[] = [...clusteredProjects];
+          const attempts = await this._installOnProjects(
+            item.packageId,
+            item.toVersion,
+            remainingProjects,
+            (projectPath, ok) => {
+              completedSoFar.push(projectPath);
+              if (ok) succeededSoFar.push(projectPath);
+              this._postBatchItem(
+                jobId,
+                item.packageId,
+                'running',
+                [...succeededSoFar],
+                undefined,
+                [...completedSoFar],
+              );
+            },
+            abort.signal,
+            true,
+          );
+          const remainingOutcome = await this._finishInstallAttempts(item.packageId, item.toVersion, attempts, {
+            notify: false,
+            refresh: false,
+          });
+          if (remainingOutcome.keepAttempts.length > 0) {
+            keepFailures.push(...remainingOutcome.keepAttempts);
+          }
+          outcome = mergeOutcomes([...clusteredResults, remainingOutcome]);
+        } else {
+          outcome = mergeOutcomes(clusteredResults);
         }
+
         const stopped = abort.signal.aborted && outcome.status !== 'ok';
         this._postBatchItem(
           jobId,
@@ -1037,6 +1094,169 @@ export class WebviewMessageBroker {
       this._batchRunning = false;
       this._batchAbort = null;
     }
+  }
+
+  /**
+   * #38: for every project touched by this batch, checks whether any of its
+   * batch packages sits below a `ProjectReference` version floor and, if so,
+   * resolves the whole entangled cluster on that project as one no-restore-adds
+   * + one-restore unit (via `_runClusterForProject`), reusing the existing
+   * `_finishInstallAttempts` for rollback/keep bookkeeping per package.
+   * Returns per-(project, packageId) outcomes keyed by `${projectPath} ${packageIdLower}`
+   * — empty (and no-op) when nothing in the batch has a floor conflict.
+   */
+  private async _computeClusterOutcomes(
+    queued: BatchUpdateItem[],
+    signal: AbortSignal,
+    keepFailures: InstallAttempt[],
+  ): Promise<Map<string, BatchItemOutcome>> {
+    const outcomes = new Map<string, BatchItemOutcome>();
+    const projectPaths = [...new Set(queued.flatMap((item) => item.projects))];
+
+    // One project's cluster work (reading its assets file, snapshotting, the
+    // no-restore adds, the shared restore) is independent of every other
+    // project's — fan out the same way every other multi-project pass in this
+    // file does (_restoreProjects, _listProjectsThenApply, _installOnProjects),
+    // instead of scanning the whole batch's projects one at a time.
+    await runWithConcurrency(
+      projectPaths.map((projectPath) => async () => {
+        if (signal.aborted) return;
+
+        const membersForProject = queued
+          .filter((item) => item.projects.includes(projectPath))
+          .map((item) => ({ packageId: item.packageId, toVersion: item.toVersion }));
+        const batchPackageIds = new Set(membersForProject.map((m) => m.packageId.toLowerCase()));
+
+        const [{ dependencies: depsGraph, floors }, snapshot] = await Promise.all([
+          readProjectAssets(projectPath),
+          snapshotProjectFiles(projectPath),
+        ]);
+        const currentVersions = new Map<string, string>();
+        for (const { packageId } of membersForProject) {
+          const version = readPackageVersionFromSnapshots(snapshot, packageId);
+          if (version) currentVersions.set(packageId.toLowerCase(), version);
+        }
+
+        const cluster = computeEntangledCluster({ currentVersions, floors, depsGraph, batchPackageIds });
+        if (cluster.size === 0) return;
+
+        const members = membersForProject.filter((m) => cluster.has(m.packageId.toLowerCase()));
+        this.trace?.recordBroker('cluster-detected', {
+          project: path.basename(projectPath),
+          packages: members.map((m) => m.packageId).join(', '),
+        });
+
+        const results = await this._runClusterForProject(projectPath, members, snapshot, currentVersions, signal);
+        for (const { packageId, toVersion, attempt } of results) {
+          const outcome = await this._finishInstallAttempts(packageId, toVersion, [attempt], {
+            notify: false,
+            refresh: false,
+          });
+          outcomes.set(`${projectPath} ${packageId.toLowerCase()}`, {
+            status: outcome.status,
+            succeeded: outcome.succeeded,
+            error: outcome.error,
+          });
+          keepFailures.push(...outcome.keepAttempts);
+        }
+      }),
+      getConfig().dotnetConcurrency,
+    );
+
+    return outcomes;
+  }
+
+  /**
+   * Applies every cluster member to one project with `--no-restore`, then runs
+   * a single `restoreProject` for the whole set — the fix for #38 (a floor
+   * violation fails *every* restore until every entangled package lands, not
+   * just the one that violates it). Transient failures retry the same way a
+   * normal single-package install does; a real (non-transient) failure on one
+   * package's add does not block the others from also being applied — the
+   * shared restore afterwards is what ultimately decides success or failure.
+   */
+  private async _runClusterForProject(
+    projectPath: string,
+    members: Array<{ packageId: string; toVersion: string }>,
+    snapshot: FileSnapshot[],
+    currentVersions: ReadonlyMap<string, string>,
+    signal: AbortSignal,
+  ): Promise<Array<{ packageId: string; toVersion: string; attempt: InstallAttempt }>> {
+    const addResults = new Map<string, CliResult>();
+
+    for (const { packageId, toVersion } of members) {
+      if (signal.aborted) {
+        addResults.set(packageId.toLowerCase(), {
+          exitCode: null, stdout: '', stderr: 'Cancelled', timedOut: false, cancelled: true,
+        });
+        continue;
+      }
+      let result = await this.backend.installPackageNoRestore(projectPath, packageId, toVersion, signal);
+      this.trace?.recordBroker('cluster-add', {
+        project: path.basename(projectPath), packageId, version: toVersion, ok: isCliOperationSuccess(result),
+      });
+      for (
+        let extra = 0;
+        extra < INSTALL_RETRY_EXTRA_ATTEMPTS && isRetryableCliFailure(result) && !signal.aborted;
+        extra++
+      ) {
+        await delayInstallRetry(signal);
+        if (signal.aborted) break;
+        result = await this.backend.installPackageNoRestore(projectPath, packageId, toVersion, signal);
+        this.trace?.recordBroker('cluster-add-retry', {
+          project: path.basename(projectPath), packageId, version: toVersion, ok: isCliOperationSuccess(result),
+        });
+      }
+      addResults.set(packageId.toLowerCase(), result);
+    }
+
+    const buildAttempts = (result: (packageId: string) => CliResult) => members.map(({ packageId, toVersion }) => ({
+      packageId,
+      toVersion,
+      attempt: {
+        projectPath,
+        snapshots: snapshot,
+        previousVersion: currentVersions.get(packageId.toLowerCase()) ?? null,
+        result: result(packageId),
+      } satisfies InstallAttempt,
+    }));
+
+    // Aborted between the adds and the restore — nothing here was actually
+    // validated; report every member as cancelled rather than "succeeded".
+    if (signal.aborted) {
+      return buildAttempts(() => ({
+        exitCode: null, stdout: '', stderr: 'Cancelled', timedOut: false, cancelled: true,
+      }));
+    }
+
+    const anyApplied = [...addResults.values()].some((r) => !r.cancelled);
+    let restoreResult: CliResult | undefined;
+    if (anyApplied) {
+      restoreResult = await this.backend.restoreProject(projectPath, signal);
+      this.trace?.recordBroker('cluster-restore', {
+        project: path.basename(projectPath), ok: isCliOperationSuccess(restoreResult),
+      });
+      for (
+        let extra = 0;
+        extra < INSTALL_RETRY_EXTRA_ATTEMPTS && isRetryableCliFailure(restoreResult) && !signal.aborted;
+        extra++
+      ) {
+        await delayInstallRetry(signal);
+        if (signal.aborted) break;
+        restoreResult = await this.backend.restoreProject(projectPath, signal);
+        this.trace?.recordBroker('cluster-restore-retry', {
+          project: path.basename(projectPath), ok: isCliOperationSuccess(restoreResult),
+        });
+      }
+    }
+    const finalRestoreResult = restoreResult;
+
+    return buildAttempts((packageId) => {
+      const addResult = addResults.get(packageId.toLowerCase())!;
+      // A package whose own add failed (or was cancelled) reports that failure
+      // directly; one that landed cleanly reports the shared restore's outcome.
+      return isCliOperationSuccess(addResult) ? (finalRestoreResult ?? addResult) : addResult;
+    });
   }
 
   private _postBatchItem(

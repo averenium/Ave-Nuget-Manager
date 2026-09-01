@@ -13,13 +13,15 @@ import {
   setPackageSourceConnectionFlags,
   setPackageSourceDisabled,
   setPackageSourceMappingPatterns,
+  addPackageSource,
+  removePackageSourceEntry,
   findPackageSourceLine,
   replaceAuditSources,
   removeAuditSource,
   upsertAuditSource,
   writeSourceApiKey,
 } from '../../nugetConfigEdit';
-import { extractPackageSourceMapping } from '../../nugetConfigChainResolver';
+import { extractPackageSourceMapping, extractSources } from '../../nugetConfigChainResolver';
 
 const BASE = `<?xml version="1.0" encoding="utf-8"?>
 <configuration>
@@ -90,6 +92,19 @@ describe('auditSources XML', () => {
 </configuration>`;
     const next = removeAuditSource(xml, 'nuget.org');
     expect(next).not.toMatch(/nuget\.org/);
+    expect(next).toMatch(/<add key="corp"/);
+  });
+
+  it('removeAuditSource matches a key with XML special characters', () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <auditSources>
+    <add key="Contoso &amp; Co" value="https://contoso.example/index.json" />
+    <add key="corp" value="https://corp.example/index.json" />
+  </auditSources>
+</configuration>`;
+    const next = removeAuditSource(xml, 'Contoso & Co');
+    expect(next).not.toMatch(/Contoso/);
     expect(next).toMatch(/<add key="corp"/);
   });
 
@@ -379,6 +394,101 @@ describe('setPackageSourceMappingPatterns', () => {
     const { mappings } = extractPackageSourceMapping(next);
     expect(mappings).toEqual([{ sourceName: 'Contoso & Co', patterns: ['New.*'] }]);
     expect(next.match(/<packageSource\b/gi)).toHaveLength(1);
+  });
+});
+
+describe('addPackageSource', () => {
+  const NO_SOURCES = `<?xml version="1.0"?>
+<configuration>
+  <config>
+    <add key="globalPackagesFolder" value="C:\\packages" />
+  </config>
+</configuration>`;
+
+  it('creates the packageSources section when missing', () => {
+    const next = addPackageSource(NO_SOURCES, 'contoso', 'https://contoso.example/index.json');
+    const sources = extractSources(next, '/nuget.config');
+    expect(sources).toEqual([
+      expect.objectContaining({ name: 'contoso', url: 'https://contoso.example/index.json' }),
+    ]);
+  });
+
+  it('updates an existing source in place when the key already exists', () => {
+    const next = addPackageSource(BASE, 'nexus', 'https://nexus.example/v2/index.json');
+    const sources = extractSources(next, '/nuget.config');
+    expect(sources).toHaveLength(2);
+    expect(sources.find((s) => s.name === 'nexus')?.url).toBe('https://nexus.example/v2/index.json');
+    expect(sources.find((s) => s.name === 'nuget.org')?.url).toBe('https://api.nuget.org/v3/index.json');
+  });
+
+  it('writes an explicit protocolVersion when given', () => {
+    const next = addPackageSource(BASE, 'legacy', 'https://legacy.example/nuget', { protocolVersion: '2' });
+    const sources = extractSources(next, '/nuget.config');
+    expect(sources.find((s) => s.name === 'legacy')?.protocolVersion).toBe('2');
+  });
+
+  it('omits protocolVersion entirely when not given', () => {
+    const next = addPackageSource(BASE, 'modern', 'https://modern.example/index.json');
+    const sources = extractSources(next, '/nuget.config');
+    expect(sources.find((s) => s.name === 'modern')?.protocolVersion).toBeUndefined();
+  });
+
+  it('clears a stale protocolVersion on an update-in-place re-submit without it', () => {
+    const withV2 = addPackageSource(BASE, 'legacy', 'https://legacy.example/nuget', { protocolVersion: '2' });
+    const next = addPackageSource(withV2, 'legacy', 'https://legacy.example/nuget');
+    const sources = extractSources(next, '/nuget.config');
+    expect(sources.find((s) => s.name === 'legacy')?.protocolVersion).toBeUndefined();
+  });
+});
+
+describe('removePackageSourceEntry', () => {
+  it('drops just the named source, keeping siblings', () => {
+    const next = removePackageSourceEntry(BASE, 'nexus');
+    const sources = extractSources(next, '/nuget.config');
+    expect(sources.map((s) => s.name)).toEqual(['nuget.org']);
+  });
+
+  it('is a no-op for a name that is not declared', () => {
+    const next = removePackageSourceEntry(BASE, 'does-not-exist');
+    expect(extractSources(next, '/nuget.config')).toHaveLength(2);
+  });
+
+  it('removes the whole packageSources section once the last source is gone (no <clear/>)', () => {
+    const oneSource = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+</configuration>`;
+    const next = removePackageSourceEntry(oneSource, 'nexus');
+    expect(next).not.toContain('packageSources');
+  });
+
+  it('keeps the section (and its <clear/>) when the last <add> is removed but <clear/> remains', () => {
+    const withClear = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+</configuration>`;
+    const next = removePackageSourceEntry(withClear, 'nexus');
+    expect(next).toContain('<packageSources>');
+    expect(next).toContain('<clear');
+    expect(extractSources(next, '/nuget.config')).toHaveLength(0);
+  });
+
+  it('matches a source name with XML special characters correctly', () => {
+    const withSpecial = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="Contoso &amp; Co" value="https://contoso.example/index.json" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+</configuration>`;
+    const next = removePackageSourceEntry(withSpecial, 'Contoso & Co');
+    const sources = extractSources(next, '/nuget.config');
+    expect(sources.map((s) => s.name)).toEqual(['nuget.org']);
   });
 });
 

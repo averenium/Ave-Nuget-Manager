@@ -8,14 +8,16 @@ interface Props {
   y: number;
   onCopy: () => void;
   onClose: () => void;
+  /** Present only for a package source not already declared for audit (#48). */
+  onAddAsAudit?: () => void;
 }
 
 function isHttpUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim());
 }
 
-/** Right-click on a source URL: Copy + Open in browser. */
-export function SourceUrlMenu({ url, x, y, onCopy, onClose }: Props) {
+/** Right-click on a source URL: Copy + Open in browser (+ Add as audit source, for a package row). */
+export function SourceUrlMenu({ url, x, y, onCopy, onClose, onAddAsAudit }: Props) {
   const { send } = useNugetManager();
   const rootRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -89,6 +91,19 @@ export function SourceUrlMenu({ url, x, y, onCopy, onClose }: Props) {
           }}
         >
           Open in browser
+        </button>
+      ) : null}
+      {onAddAsAudit ? (
+        <button
+          type="button"
+          className="pkg-ctx-menu__item"
+          role="menuitem"
+          onClick={() => {
+            onAddAsAudit();
+            onClose();
+          }}
+        >
+          Add as audit source
         </button>
       ) : null}
     </div>,

@@ -538,6 +538,96 @@ function RepoEditor({
   );
 }
 
+/** "+ Add source" / "+ Add audit source" affordance — collapsed button, expands to a small inline form (#48). */
+function AddSourceForm({
+  kind,
+  targetLabel,
+  disabled,
+  onAdd,
+}: {
+  kind: RepoKind;
+  targetLabel: string;
+  disabled: boolean;
+  onAdd: (name: string, url: string, protocolVersion?: '2' | '3') => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [url, setUrl] = useState('');
+  const [v2, setV2] = useState(false);
+
+  const reset = () => {
+    setName('');
+    setUrl('');
+    setV2(false);
+    setOpen(false);
+  };
+
+  if (disabled) return null;
+
+  if (!open) {
+    return (
+      <div className="sources-add-row">
+        <button
+          type="button"
+          className="btn btn--primary sources-add-toggle"
+          onClick={() => setOpen(true)}
+        >
+          + Add {kind === 'audit' ? 'audit ' : ''}source
+        </button>
+      </div>
+    );
+  }
+
+  const canSubmit = name.trim().length > 0 && url.trim().length > 0;
+  const submit = () => {
+    if (!canSubmit) return;
+    onAdd(name.trim(), url.trim(), v2 ? '2' : undefined);
+    reset();
+  };
+
+  return (
+    <div className="sources-edit" onClick={(e) => e.stopPropagation()}>
+      <div className="sources-field">
+        <input
+          className="sources-input"
+          value={name}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="key"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+        />
+      </div>
+      <div className="sources-field">
+        <input
+          className="sources-input"
+          value={url}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="https://…/index.json"
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+        />
+      </div>
+      {kind === 'package' ? (
+        <label className="sources-check" title="Explicit protocolVersion=&quot;2&quot; — otherwise inferred from the URL (default v2 unless it ends in .json)">
+          <input type="checkbox" checked={v2} onChange={() => setV2((v) => !v)} />
+          <span>NuGet v2 (OData)</span>
+        </label>
+      ) : null}
+      <div className="sources-edit__row">
+        <button type="button" className="btn btn--secondary sources-save" disabled={!canSubmit} onClick={submit}>
+          Add
+        </button>
+        <button type="button" className="btn btn--secondary" onClick={reset}>
+          Cancel
+        </button>
+        <DestHint dest={targetLabel} title={`New source writes to ${targetLabel}.`} />
+      </div>
+    </div>
+  );
+}
+
 function RepoRow({
   src,
   fileLabel,
@@ -557,6 +647,8 @@ function RepoRow({
   onFlags,
   onSave,
   onMapping,
+  onRemove,
+  onAddAsAudit,
   onCopyApiKeyExport,
   onClearCredentials,
   onClearApiKey,
@@ -580,12 +672,22 @@ function RepoRow({
   onFlags: (allowInsecureConnections: boolean, disableTlsCertificateValidation: boolean) => void;
   onSave: (username: string, password: string | undefined, apiKey: string | undefined) => void;
   onMapping?: (patterns: string[]) => void;
+  /** Fully removes the declared `<add>` — package sources only (#48); audit's disable already does this. */
+  onRemove?: () => void;
+  /** Package row not already declared for audit — promotes it via the existing audit-enable path (#48). */
+  onAddAsAudit?: () => void;
   onCopyApiKeyExport: (command: string) => void;
   onClearCredentials: () => void;
   onClearApiKey: () => void;
   isWindows: boolean;
 }) {
   const [urlMenu, setUrlMenu] = useState<{ x: number; y: number } | null>(null);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  useEffect(() => {
+    if (!confirmingRemove) return;
+    const timer = setTimeout(() => setConfirmingRemove(false), 4000);
+    return () => clearTimeout(timer);
+  }, [confirmingRemove]);
   return (
     <div
       className={`pkg-row${src.enabled ? '' : ' pkg-row--off'}${editing ? ' pkg-row--selected' : ''}`}
@@ -648,6 +750,24 @@ function RepoRow({
             {editing ? 'Close' : 'Edit'}
           </button>
         ) : null}
+        {canEdit && onRemove ? (
+          <button
+            type="button"
+            className="btn btn--secondary sources-repo__remove"
+            title={confirmingRemove ? 'Click again to confirm' : `Remove this source from ${fileLabel}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirmingRemove) {
+                onRemove();
+                setConfirmingRemove(false);
+              } else {
+                setConfirmingRemove(true);
+              }
+            }}
+          >
+            {confirmingRemove ? 'Confirm?' : '✕'}
+          </button>
+        ) : null}
       </div>
       <div className="pkg-row__meta">
         <button
@@ -669,6 +789,7 @@ function RepoRow({
           url={src.url}
           x={urlMenu.x}
           y={urlMenu.y}
+          onAddAsAudit={onAddAsAudit}
           onCopy={onCopy}
           onClose={() => setUrlMenu(null)}
         />
@@ -803,6 +924,13 @@ export function SourcesTab() {
     ? repos.package.filter((s) => isMachineConfigPath(s.configFilePath, chain))
     : [];
 
+  // Where a brand-new source (or a package source promoted to audit) lands —
+  // the specific file being viewed, or the nearest workspace config in
+  // Effective view (#48).
+  const addSourceTargetPath = selection.kind === 'file' ? selection.path : chain[0]?.filePath;
+  const canAddSourceHere = !selectedChainFile?.isMachineWide && !selectedExtraFile?.isMachineWide
+    && !!addSourceTargetPath;
+
   const sendSecrets = (
     src: EffectiveSourceRow,
     patch: {
@@ -822,14 +950,15 @@ export function SourcesTab() {
     });
   };
 
-  const fileLabelFor = (src: EffectiveSourceRow) => {
-    const exact = displayByPath.get(src.configFilePath);
+  const labelForPath = (path: string) => {
+    const exact = displayByPath.get(path);
     if (exact) return exact;
     for (const [p, label] of displayByPath) {
-      if (samePath(p, src.configFilePath)) return label;
+      if (samePath(p, path)) return label;
     }
-    return src.configFilePath.replace(/^.*[/\\]/, '');
+    return path.replace(/^.*[/\\]/, '');
   };
+  const fileLabelFor = (src: EffectiveSourceRow) => labelForPath(src.configFilePath);
   const nearestLabel = chain[0]?.displayPath ?? chain[0]?.filePath ?? 'nearest nuget.config';
   const globalConfigBase = chain.find((f) => f.isGlobal)?.displayPath ?? 'NuGet.Config';
   const globalConfigLabel = `global ${globalConfigBase}`;
@@ -852,6 +981,8 @@ export function SourcesTab() {
       ? `Credentials / API key write to ${globalConfigLabel}. A leftover workspace block is removed so it cannot override.`
       : `Credentials / API key write to ${globalConfigLabel}.`;
   };
+
+  const auditSourceNames = new Set(repos.audit.map((s) => s.name.toLowerCase()));
 
   const renderRepos = (kind: RepoKind, list: EffectiveSourceRow[]) => list.map((src) => (
     <RepoRow
@@ -915,6 +1046,24 @@ export function SourcesTab() {
         configFilePath: src.configFilePath,
         patterns,
       }) : undefined}
+      // Audit's "off" toggle already fully removes its <add> — a separate
+      // Remove is only meaningful for a package source, whose "off" is a
+      // soft <disabledPackageSources> entry, not a deletion (#48).
+      onRemove={kind === 'package' ? () => send({
+        type: 'REMOVE_PACKAGE_SOURCE',
+        configFilePath: src.configFilePath,
+        name: src.name,
+      }) : undefined}
+      onAddAsAudit={kind === 'package' && canAddSourceHere && !auditSourceNames.has(src.name.toLowerCase())
+        ? () => send({
+          type: 'SET_SOURCE_ENABLED',
+          name: src.name,
+          configFilePath: addSourceTargetPath!,
+          enabled: true,
+          kind: 'audit',
+          url: src.urlRaw ?? src.url,
+        })
+        : undefined}
       onSave={(username, password, apiKey) => {
         const credChanged = password !== undefined || username !== (src.username ?? '');
         if (!credChanged && !apiKey) return;
@@ -1048,6 +1197,21 @@ export function SourcesTab() {
                     {selectedExtraFile ? extraRoleLabel(selectedExtraFile) : 'No package sources'}
                   </div>
                 ) : renderRepos('package', packageRepos)}
+                {addSourceTargetPath ? (
+                  <AddSourceForm
+                    key={addSourceTargetPath}
+                    kind="package"
+                    targetLabel={labelForPath(addSourceTargetPath)}
+                    disabled={!canAddSourceHere}
+                    onAdd={(name, url, protocolVersion) => send({
+                      type: 'ADD_PACKAGE_SOURCE',
+                      configFilePath: addSourceTargetPath,
+                      name,
+                      url,
+                      protocolVersion,
+                    })}
+                  />
+                ) : null}
               </div>
             </section>
 
@@ -1088,6 +1252,22 @@ export function SourcesTab() {
                     </div>
                   </div>
                 ) : renderRepos('audit', repos.audit)}
+                {addSourceTargetPath ? (
+                  <AddSourceForm
+                    key={addSourceTargetPath}
+                    kind="audit"
+                    targetLabel={labelForPath(addSourceTargetPath)}
+                    disabled={!canAddSourceHere}
+                    onAdd={(name, url) => send({
+                      type: 'SET_SOURCE_ENABLED',
+                      name,
+                      configFilePath: addSourceTargetPath,
+                      enabled: true,
+                      kind: 'audit',
+                      url,
+                    })}
+                  />
+                ) : null}
               </div>
             </section>
 

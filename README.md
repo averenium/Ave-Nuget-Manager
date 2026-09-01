@@ -1,6 +1,6 @@
 # AVE NuGet Manager
 
-**Preview.** A NuGet manager for Visual Studio Code and Cursor, inspired by JetBrains Rider.
+**Preview.** A NuGet manager for Visual Studio Code and Cursor.
 
 Opens in the **Panel** (`NuGet`): search and install packages, scan advisories, update families, inspect `nuget.config`, and read `dotnet` output.
 
@@ -10,7 +10,7 @@ Requires the **.NET SDK** on `PATH`.
 
 - **Packages** — search, install, update, remove; vulnerability marks from `dotnet list --vulnerable`.
 - **Groups** — batch-update All / a package family / Other in one go, with **Stop**.
-- **Sources** — full `nuget.config` chain editor: enable/disable, credentials, API key, HTTP flags.
+- **Sources** — full `nuget.config` chain editor: add/remove sources, enable/disable, credentials, API key, HTTP flags.
 - **Trace** — one-click sanitized zip of the relevant `dotnet` output and config for a GitHub issue.
 - **Agent skill** — installs a dependency **breaking-changes review** skill for Cursor / Claude / Kiro.
 - **Folder scope** — manage a folder of loose `.csproj`/`.fsproj` with no `.sln` as one group, no solution file required.
@@ -86,7 +86,7 @@ Gear on the **NuGet** title bar (or Command Palette **NuGet: Open Settings**) op
 - **Groups** will not target `Microsoft.CodeAnalysis.*` above the Roslyn version bundled with the active .NET SDK (`csc -version`). **Packages** still lists nuget.org latest and asks before an over-cap upgrade.
 - Scope: `.csproj` / `.fsproj` in the first workspace folder — a solution, a project, or a folder of loose projects.
 - `packages.config` projects are skipped (legacy csproj with `PackageReference` is updated in the XML, then `dotnet restore`).
-- No add/remove of new package sources — existing ones can be toggled, and have credentials, HTTP flags, and mapping patterns edited.
+- Removing a source does not clean up its (now orphaned) `packageSourceMapping`, credentials, or `disabledPackageSources` entries elsewhere in the chain.
 
 ## License
 

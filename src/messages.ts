@@ -77,6 +77,14 @@ export type WebviewMessage =
       patterns: string[];
     }
   | {
+      type: 'ADD_PACKAGE_SOURCE';
+      configFilePath: string;
+      name: string;
+      url: string;
+      protocolVersion?: '2' | '3';
+    }
+  | { type: 'REMOVE_PACKAGE_SOURCE'; configFilePath: string; name: string }
+  | {
       type: 'SET_SOURCE_SECRETS';
       name: string;
       configFilePath: string;

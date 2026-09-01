@@ -94,6 +94,18 @@ Host відхиляє `INSTALL_PACKAGE` / `INSTALL_PACKAGE_MULTI` / `UPDATE_PACK
 
 `styles/global.css` — змінні під VS Code theme (`--vscode-*`), layout панелі, рядки пакетів, попап, лог. Окремого UI-kit немає.
 
+### High Contrast (#44)
+
+`--color-contrast-border: var(--vscode-contrastBorder, transparent)` і `--color-focus-border: var(--vscode-contrastActiveBorder, var(--color-btn-bg))` у `:root` — обидва прозорі/дефолтні поза HC-темами, тож це суто адитивно.
+
+Кожна нова кнопка (`.btn`) чи іконка-індикатор без власного border/background мають отримати:
+- `outline: 1px solid var(--color-contrast-border); outline-offset: -1px;` (або `outline-offset: 2px;` для іконки без padding) — межа, яку HC-теми чекають на interactive-елементі;
+- для focus/hover, де раніше стояв `outline: 1px solid var(--color-btn-bg)` — замінити на `var(--color-focus-border)` (fallback-ланцюжок зберігає той самий колір поза HC).
+
+`@media (forced-colors: active)` в кінці `global.css` — незалежний другий рівень захисту на системних ключових словах (`ButtonText`, `Canvas Text`, …) для Windows forced-colors, на випадок якщо `--vscode-contrastBorder` з якоїсь причини не проставлений.
+
+Перевірка: `workbench.colorTheme` → "High Contrast" / "High Contrast Light" у самому VS Code, спеціального стенду не треба.
+
 ## Налаштування, які читає UI
 
 Через `INIT_STATE.includePrerelease` і чекбокс → `SET_PRERELEASE_SETTING` → `config.ts` пише `averenium.nugetManager.includePrerelease` у Global. За замовчуванням галочка **вимкнена** (`false`).

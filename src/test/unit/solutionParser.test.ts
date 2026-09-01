@@ -1,4 +1,5 @@
 import * as fs from 'fs/promises';
+import * as path from 'path';
 import { SolutionParser, shouldShowContextMenu } from '../../solutionParser';
 
 jest.mock('fs/promises');
@@ -32,7 +33,7 @@ EndProject
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe('MyApp');
     expect(result[0].relativePath).toBe('src/MyApp/MyApp.csproj');
-    expect(result[0].absolutePath).toBe('/sol/src/MyApp/MyApp.csproj');
+    expect(result[0].absolutePath).toBe(path.resolve('/sol', 'src/MyApp/MyApp.csproj'));
   });
 
   it('parses multiple projects (csproj + fsproj) from a .sln', async () => {
@@ -67,7 +68,7 @@ EndProject
     const sln = `Project("{g}") = "Lib", "libs\\Lib\\Lib.csproj", "{g}"\nEndProject\n`;
     mockReadFile.mockResolvedValue(sln as any);
     const result = await parser.getProjects('/workspace/sol/My.sln');
-    expect(result[0].absolutePath).toBe('/workspace/sol/libs/Lib/Lib.csproj');
+    expect(result[0].absolutePath).toBe(path.resolve('/workspace/sol', 'libs/Lib/Lib.csproj'));
   });
 
   // ── .slnx parsing ─────────────────────────────────────────────────────────

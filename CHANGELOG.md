@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+### Changed
+
+- **Sources**: Edit / Remove / Add-source UI polish — floating popup instead of pushing the list down, icon buttons for Edit/Remove, remove confirmation moved into the popup, right-click **Add as audit source** works from anywhere on the row, and audit sources also get a Remove action (#48)
+
 ## 0.4.0
 
 ### Added

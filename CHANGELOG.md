@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+### Changed
+
+- No longer marked **Preview** on the Marketplace — dropped the `preview` flag and the leftover "(preview)" wording in the README's Install / Known limits sections.
+
 ## 0.4.1
 
 ### Changed

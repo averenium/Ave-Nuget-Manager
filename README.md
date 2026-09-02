@@ -1,6 +1,6 @@
 # AVE NuGet Manager
 
-**Preview.** A NuGet manager for Visual Studio Code and Cursor.
+A NuGet manager for Visual Studio Code, Cursor, Kiro, etc.
 
 Opens in the **Panel** (`NuGet`): search and install packages, scan advisories, update families, inspect `nuget.config`, and read `dotnet` output.
 
@@ -17,9 +17,9 @@ Requires the **.NET SDK** on `PATH`.
 - **Block updates** — pin a package version per workspace so a bump doesn't happen by accident.
 - Accessible under VS Code **High Contrast** themes and Windows forced colors.
 
-## Install (preview)
+## Install
 
-1. Install from the Marketplace **Pre-release** channel, or
+1. Install from the Marketplace, or
 2. `Extensions: Install from VSIX…` with a `.vsix` built from this repo.
 
 ## Open
@@ -80,7 +80,7 @@ Gear on the **NuGet** title bar (or Command Palette **NuGet: Open Settings**) op
 | `averenium.nugetManager.vulnerabilityScript` | `""` | Optional script that adds extra vulnerability findings (JSON on stdin/stdout). |
 | `averenium.nugetManager.blockedPackages` | `[]` | Workspace package ids that must not change version (Packages **↑** and Groups). Right-click a row to block or unblock. |
 
-## Known limits (preview)
+## Known limits
 
 - CLI backend only (no NuGet HTTP catalog yet): package metadata has no TFM / catalog dependency graph for a *selected* version. **↑** / Groups / the version list use feed latest from `dotnet package search`, not the latest that restores on this project’s TFM. The **Current Dependencies** tree is the restore graph of the *installed* version.
 - **Groups** will not target `Microsoft.CodeAnalysis.*` above the Roslyn version bundled with the active .NET SDK (`csc -version`). **Packages** still lists nuget.org latest and asks before an over-cap upgrade.

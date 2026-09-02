@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { SplitPane } from './SplitPane';
 import { fileName } from '../utils/pathUtils';
@@ -259,6 +260,28 @@ function IconKey() {
   );
 }
 
+function IconPencil() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M11.35 1.65a1.5 1.5 0 0 1 2.12 0l.88.88a1.5 1.5 0 0 1 0 2.12l-7.6 7.6-3.36.77.77-3.36 7.19-7.19Zm1.06 1.06-7 7-.34 1.5 1.5-.34 7-7-1.16-1.16Z"
+      />
+    </svg>
+  );
+}
+
+function IconTrash() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M6.5 1.5h3a1 1 0 0 1 1 1V3h3a.75.75 0 0 1 0 1.5h-.4l-.66 8.53A1.75 1.75 0 0 1 10.71 15H5.29a1.75 1.75 0 0 1-1.74-1.97L2.9 4.5h-.4a.75.75 0 0 1 0-1.5h3v-.5a1 1 0 0 1 1-1Zm-2.1 3 .65 8.4a.25.25 0 0 0 .25.23h5.4a.25.25 0 0 0 .25-.23l.65-8.4H4.4ZM6.25 6a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 6.25 6Zm3.5 0a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75Z"
+      />
+    </svg>
+  );
+}
+
 function DestHint({ dest, title }: { dest: string; title: string }) {
   return (
     <span className="sources-edit__dest" title={title}>
@@ -269,6 +292,89 @@ function DestHint({ dest, title }: { dest: string; title: string }) {
 
 function destHelpNeeded(viewPath: string | null, destPath: string | undefined): boolean {
   return !viewPath || !destPath || !samePath(viewPath, destPath);
+}
+
+/**
+ * Small anchored card, portaled to `document.body` so it overlays the list
+ * instead of pushing rows below it down. Right edge aligns under `anchorRef`,
+ * flips above it if there isn't room below. Closes on outside click, Escape,
+ * blur, or scroll (same behavior as `SourceUrlMenu`).
+ */
+function AnchoredPanel({
+  anchorRef,
+  onClose,
+  title,
+  children,
+}: {
+  anchorRef: React.RefObject<HTMLElement>;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    const anchor = anchorRef.current;
+    if (!el || !anchor) return;
+    const a = anchor.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const left = Math.min(Math.max(4, a.right - r.width), window.innerWidth - r.width - 4);
+    let top = a.bottom + 4;
+    if (top + r.height > window.innerHeight - 4) {
+      top = Math.max(4, a.top - r.height - 4);
+    }
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  });
+
+  useEffect(() => {
+    const close = () => onCloseRef.current();
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (rootRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+      close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('blur', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [anchorRef]);
+
+  return createPortal(
+    <div
+      ref={rootRef}
+      className="sources-popover"
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+    >
+      <div className="sources-popover__header">
+        <span className="sources-popover__title">{title}</span>
+        <button
+          type="button"
+          className="sources-popover__close"
+          title="Close"
+          aria-label="Close"
+          onClick={() => onCloseRef.current()}
+        >
+          ×
+        </button>
+      </div>
+      {children}
+    </div>,
+    document.body,
+  );
 }
 
 function RepoEditor({
@@ -554,6 +660,7 @@ function AddSourceForm({
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [v2, setV2] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
 
   const reset = () => {
     setName('');
@@ -564,20 +671,6 @@ function AddSourceForm({
 
   if (disabled) return null;
 
-  if (!open) {
-    return (
-      <div className="sources-add-row">
-        <button
-          type="button"
-          className="btn btn--primary sources-add-toggle"
-          onClick={() => setOpen(true)}
-        >
-          + Add {kind === 'audit' ? 'audit ' : ''}source
-        </button>
-      </div>
-    );
-  }
-
   const canSubmit = name.trim().length > 0 && url.trim().length > 0;
   const submit = () => {
     if (!canSubmit) return;
@@ -586,44 +679,63 @@ function AddSourceForm({
   };
 
   return (
-    <div className="sources-edit" onClick={(e) => e.stopPropagation()}>
-      <div className="sources-field">
-        <input
-          className="sources-input"
-          value={name}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="key"
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-        />
-      </div>
-      <div className="sources-field">
-        <input
-          className="sources-input"
-          value={url}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="https://…/index.json"
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-        />
-      </div>
-      {kind === 'package' ? (
-        <label className="sources-check" title="Explicit protocolVersion=&quot;2&quot; — otherwise inferred from the URL (default v2 unless it ends in .json)">
-          <input type="checkbox" checked={v2} onChange={() => setV2((v) => !v)} />
-          <span>NuGet v2 (OData)</span>
-        </label>
+    <div className="sources-add-row">
+      <button
+        ref={toggleRef}
+        type="button"
+        className="btn sources-add-toggle"
+        onClick={() => setOpen((o) => !o)}
+      >
+        + Add {kind === 'audit' ? 'audit ' : ''}source
+      </button>
+      {open ? (
+        <AnchoredPanel
+          anchorRef={toggleRef}
+          onClose={reset}
+          title={`Add ${kind === 'audit' ? 'audit ' : ''}source`}
+        >
+          <div className="sources-edit">
+            <div className="sources-field">
+              <input
+                className="sources-input"
+                value={name}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="key"
+                autoFocus
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+              />
+            </div>
+            <div className="sources-field">
+              <input
+                className="sources-input"
+                value={url}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="https://…/index.json"
+                onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+              />
+            </div>
+            {kind === 'package' ? (
+              <label className="sources-check" title="Explicit protocolVersion=&quot;2&quot; — otherwise inferred from the URL (default v2 unless it ends in .json)">
+                <input type="checkbox" checked={v2} onChange={() => setV2((v) => !v)} />
+                <span>NuGet v2 (OData)</span>
+              </label>
+            ) : null}
+            <div className="sources-edit__row">
+              <button type="button" className="btn btn--secondary sources-save" disabled={!canSubmit} onClick={submit}>
+                Add
+              </button>
+              <button type="button" className="btn btn--secondary" onClick={reset}>
+                Cancel
+              </button>
+              <DestHint dest={targetLabel} title={`New source writes to ${targetLabel}.`} />
+            </div>
+          </div>
+        </AnchoredPanel>
       ) : null}
-      <div className="sources-edit__row">
-        <button type="button" className="btn btn--secondary sources-save" disabled={!canSubmit} onClick={submit}>
-          Add
-        </button>
-        <button type="button" className="btn btn--secondary" onClick={reset}>
-          Cancel
-        </button>
-        <DestHint dest={targetLabel} title={`New source writes to ${targetLabel}.`} />
-      </div>
     </div>
   );
 }
@@ -683,11 +795,8 @@ function RepoRow({
 }) {
   const [urlMenu, setUrlMenu] = useState<{ x: number; y: number } | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
-  useEffect(() => {
-    if (!confirmingRemove) return;
-    const timer = setTimeout(() => setConfirmingRemove(false), 4000);
-    return () => clearTimeout(timer);
-  }, [confirmingRemove]);
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+  const removeButtonRef = useRef<HTMLButtonElement>(null);
   return (
     <div
       className={`pkg-row${src.enabled ? '' : ' pkg-row--off'}${editing ? ' pkg-row--selected' : ''}`}
@@ -695,6 +804,10 @@ function RepoRow({
         if ((e.target as HTMLElement).closest('button, input, a, .sources-edit')) return;
         e.preventDefault();
         onOpen();
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setUrlMenu({ x: e.clientX, y: e.clientY });
       }}
     >
       <div className="pkg-row__title">
@@ -741,45 +854,65 @@ function RepoRow({
           ) : null}
         </span>
         {canEdit ? (
-          <button
-            type="button"
-            className="btn btn--secondary sources-repo__edit"
-            title={editing ? 'Close' : 'Edit'}
-            onClick={onEdit}
-          >
-            {editing ? 'Close' : 'Edit'}
-          </button>
-        ) : null}
-        {canEdit && onRemove ? (
-          <button
-            type="button"
-            className="btn btn--secondary sources-repo__remove"
-            title={confirmingRemove ? 'Click again to confirm' : `Remove this source from ${fileLabel}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirmingRemove) {
-                onRemove();
-                setConfirmingRemove(false);
-              } else {
-                setConfirmingRemove(true);
-              }
-            }}
-          >
-            {confirmingRemove ? 'Confirm?' : '✕'}
-          </button>
+          <span className="sources-repo__actions">
+            <button
+              ref={editButtonRef}
+              type="button"
+              className={`btn btn--icon sources-repo__edit${editing ? ' sources-repo__edit--active' : ''}`}
+              title={editing ? 'Close' : 'Edit'}
+              aria-label={editing ? 'Close editor' : 'Edit'}
+              onClick={onEdit}
+            >
+              <IconPencil />
+            </button>
+            {onRemove ? (
+              <button
+                ref={removeButtonRef}
+                type="button"
+                className="btn btn--icon sources-repo__remove"
+                title={`Remove this source from ${fileLabel}`}
+                aria-label="Remove this source"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmingRemove(true);
+                }}
+              >
+                <IconTrash />
+              </button>
+            ) : null}
+          </span>
         ) : null}
       </div>
+      {confirmingRemove && onRemove ? (
+        <AnchoredPanel anchorRef={removeButtonRef} onClose={() => setConfirmingRemove(false)} title="Remove source?">
+          <div className="sources-edit">
+            <p className="hint">
+              Removes the <code>&lt;add&gt;</code> for “{src.name}” from {fileLabel}.
+            </p>
+            <div className="sources-edit__row">
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() => {
+                  onRemove();
+                  setConfirmingRemove(false);
+                }}
+              >
+                Remove
+              </button>
+              <button type="button" className="btn btn--secondary" onClick={() => setConfirmingRemove(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </AnchoredPanel>
+      ) : null}
       <div className="pkg-row__meta">
         <button
           type="button"
           className="pkg-row__version sources-url"
           title={src.urlRaw && src.urlRaw !== src.url ? `Copy ${src.url}\n(from ${src.urlRaw})` : 'Copy URL'}
           onClick={onCopy}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setUrlMenu({ x: e.clientX, y: e.clientY });
-          }}
         >
           {src.url}
         </button>
@@ -800,25 +933,27 @@ function RepoRow({
         </div>
       ) : null}
       {editing && (
-        <RepoEditor
-          src={src}
-          fileLabel={fileLabel}
-          enableDest={enableDest}
-          enableTitle={enableTitle}
-          secretsDest={secretsDest}
-          secretsTitle={secretsTitle}
-          showEnableDest={showEnableDest}
-          showFlagsDest={showFlagsDest}
-          showSecretsDest={showSecretsDest}
-          onToggle={onToggle}
-          onFlags={onFlags}
-          onSave={onSave}
-          onMapping={onMapping}
-          onCopyApiKeyExport={onCopyApiKeyExport}
-          onClearCredentials={onClearCredentials}
-          onClearApiKey={onClearApiKey}
-          isWindows={isWindows}
-        />
+        <AnchoredPanel anchorRef={editButtonRef} onClose={onEdit} title={`Edit — ${src.name}`}>
+          <RepoEditor
+            src={src}
+            fileLabel={fileLabel}
+            enableDest={enableDest}
+            enableTitle={enableTitle}
+            secretsDest={secretsDest}
+            secretsTitle={secretsTitle}
+            showEnableDest={showEnableDest}
+            showFlagsDest={showFlagsDest}
+            showSecretsDest={showSecretsDest}
+            onToggle={onToggle}
+            onFlags={onFlags}
+            onSave={onSave}
+            onMapping={onMapping}
+            onCopyApiKeyExport={onCopyApiKeyExport}
+            onClearCredentials={onClearCredentials}
+            onClearApiKey={onClearApiKey}
+            isWindows={isWindows}
+          />
+        </AnchoredPanel>
       )}
     </div>
   );
@@ -1046,14 +1181,23 @@ export function SourcesTab() {
         configFilePath: src.configFilePath,
         patterns,
       }) : undefined}
-      // Audit's "off" toggle already fully removes its <add> — a separate
-      // Remove is only meaningful for a package source, whose "off" is a
-      // soft <disabledPackageSources> entry, not a deletion (#48).
+      // Package "off" is a soft <disabledPackageSources> entry, so Remove
+      // needs its own REMOVE_PACKAGE_SOURCE. Audit's "off" already fully
+      // removes its <add> (removeAuditSource) — Remove here is the same
+      // SET_SOURCE_ENABLED{enabled:false} the toggle sends, just reachable
+      // from the row actions for a consistent Edit/Remove pair (#48).
       onRemove={kind === 'package' ? () => send({
         type: 'REMOVE_PACKAGE_SOURCE',
         configFilePath: src.configFilePath,
         name: src.name,
-      }) : undefined}
+      }) : () => send({
+        type: 'SET_SOURCE_ENABLED',
+        name: src.name,
+        configFilePath: src.configFilePath,
+        enabled: false,
+        kind: 'audit',
+        url: src.urlRaw ?? src.url,
+      })}
       onAddAsAudit={kind === 'package' && canAddSourceHere && !auditSourceNames.has(src.name.toLowerCase())
         ? () => send({
           type: 'SET_SOURCE_ENABLED',

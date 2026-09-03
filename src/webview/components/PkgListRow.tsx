@@ -1,5 +1,6 @@
 import React from 'react';
 import { BLOCKED_UPDATES_TOOLTIP } from '../../blockedPackages';
+import { IconMarkUp, IconMarkSlash, IconMarkWarning } from '../utils/icons';
 
 interface Props {
   name: string;
@@ -74,18 +75,24 @@ export function PkgListRow({
       <div className="pkg-row__title">
         <span className="pkg-row__name" title={nameTitle ?? name}>
           {name}
-          {hasUpdate ? <span className="pkg-row__mark pkg-row__mark--update" aria-hidden="true">↑</span> : null}
+          {hasUpdate ? (
+            <span className="pkg-row__mark pkg-row__mark--update" aria-hidden="true"><IconMarkUp /></span>
+          ) : null}
           {blocked ? (
-            <span className="pkg-row__mark pkg-row__mark--blocked" title={BLOCKED_UPDATES_TOOLTIP}>⊘</span>
+            <span className="pkg-row__mark pkg-row__mark--blocked" title={BLOCKED_UPDATES_TOOLTIP}>
+              <IconMarkSlash />
+            </span>
           ) : null}
           {hasVulnerability ? (
             <span
               className={`pkg-row__mark ${vulnerabilityVia ? 'pkg-row__mark--vuln-via' : 'pkg-row__mark--vuln'}`}
               title={vulnerabilityTitle}
-            >⚠</span>
+            ><IconMarkWarning /></span>
           ) : null}
           {hasNoMappingSource ? (
-            <span className="pkg-row__mark pkg-row__mark--unmapped" title={unmappedTitle}>∅</span>
+            <span className="pkg-row__mark pkg-row__mark--unmapped" title={unmappedTitle}>
+              <IconMarkSlash />
+            </span>
           ) : null}
         </span>
         {aside}

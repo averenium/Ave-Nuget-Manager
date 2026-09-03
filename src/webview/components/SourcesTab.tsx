@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { SplitPane } from './SplitPane';
 import { fileName } from '../utils/pathUtils';
+import { IconPencil, IconTrash } from '../utils/icons';
 import { AUDIT_SOURCES_HINT, snapshotNeedsSourcesWarn } from '../../vulnerabilityScanPolicy';
 import { nugetApiKeyExportCommand } from '../../nugetApiKeyEnv';
 import { SourceUrlMenu } from './SourceUrlMenu';
@@ -255,28 +256,6 @@ function IconKey() {
       <path
         fill="currentColor"
         d="M7.75 2.5a3.75 3.75 0 0 0-1.3 7.27L4 12.2V14h2v-1h1.5l2.1-2.1A3.75 3.75 0 1 0 7.75 2.5Zm0 2a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 0 1 0-3.5Z"
-      />
-    </svg>
-  );
-}
-
-function IconPencil() {
-  return (
-    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M11.35 1.65a1.5 1.5 0 0 1 2.12 0l.88.88a1.5 1.5 0 0 1 0 2.12l-7.6 7.6-3.36.77.77-3.36 7.19-7.19Zm1.06 1.06-7 7-.34 1.5 1.5-.34 7-7-1.16-1.16Z"
-      />
-    </svg>
-  );
-}
-
-function IconTrash() {
-  return (
-    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M6.5 1.5h3a1 1 0 0 1 1 1V3h3a.75.75 0 0 1 0 1.5h-.4l-.66 8.53A1.75 1.75 0 0 1 10.71 15H5.29a1.75 1.75 0 0 1-1.74-1.97L2.9 4.5h-.4a.75.75 0 0 1 0-1.5h3v-.5a1 1 0 0 1 1-1Zm-2.1 3 .65 8.4a.25.25 0 0 0 .25.23h5.4a.25.25 0 0 0 .25-.23l.65-8.4H4.4ZM6.25 6a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 6.25 6Zm3.5 0a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75Z"
       />
     </svg>
   );

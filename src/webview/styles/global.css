@@ -361,16 +361,25 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
 .pkg-row__bar-ok { background: var(--color-success); }
 .pkg-row__bar-fail { background: var(--color-error); }
 .pkg-row__mark {
-  font-size: 9px;
+  /* Fixed box, SVG content (#60) — plain Unicode glyphs (↑/⊘/⚠/∅) each have
+     a different natural size and baseline position depending on the
+     platform font, which no amount of CSS on the outer badge can fully
+     correct. An SVG child has exact coordinates, so flex-centering it here
+     is reliable regardless of font/platform. */
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px;
   margin-left: 3px;
   vertical-align: super;
   /* A shape, not just a colour — stays legible when HC themes shrink the
      colour palette down toward plain foreground/background (#44). */
-  padding: 0 3px;
   border: 1px solid currentColor;
   border-radius: 999px;
 }
-.pkg-row__mark--update { color: var(--color-success); border-color: transparent; padding: 0 1px; }
+.pkg-row__mark--update {
+  color: var(--color-success); border-color: transparent;
+  width: 16px; height: 16px;
+}
+.pkg-row__mark--update svg { width: 10px; height: 10px; }
 .pkg-row__mark--blocked { color: var(--color-tab-inactive); }
 .pkg-row__mark--vuln { color: var(--color-error); }
 .pkg-row__mark--vuln-via { color: var(--color-warning); }
@@ -556,6 +565,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   font-size: 13px; font-weight: bold; border-radius: var(--radius);
   flex-shrink: 0; line-height: 1;
 }
+/* Muted at rest, red only on hover — same convention as .sources-repo__remove,
+   instead of the always-red-bordered .btn--danger (#60). */
+.pkg-remove-btn { background: transparent; color: var(--color-tab-inactive); }
+.pkg-remove-btn:hover { background: var(--color-list-hover); color: var(--color-error); }
 .btn:disabled,
 .btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 .btn--primary[aria-disabled='true']:hover { background: var(--color-btn-bg); }
@@ -601,6 +614,20 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .project-row__name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .project-row .version-select { flex: 1 1 8em; width: auto; min-width: 0; }
 .project-row__error { width: 100%; color: var(--color-error); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+/* Brief pulse when a version change actually lands — colored by direction (#56). */
+.project-row--flash-up { animation: project-row-flash-up 850ms ease-out; }
+.project-row--flash-down { animation: project-row-flash-down 850ms ease-out; }
+@keyframes project-row-flash-up {
+  0% { background: color-mix(in srgb, var(--color-success) 30%, transparent); }
+  100% { background: transparent; }
+}
+@keyframes project-row-flash-down {
+  0% { background: color-mix(in srgb, var(--color-warning) 30%, transparent); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-row--flash-up, .project-row--flash-down { animation: none; }
+}
 
 /* ── Sources tab ────────────────────────────────────────────────────────────── */
 .sources-tab .pkg-row__title { align-items: center; }
@@ -1120,7 +1147,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   .btn--primary:hover, .btn--secondary:hover { background: Highlight; color: HighlightText; }
   .tab-btn--active { border-bottom-color: Highlight; outline-color: Highlight; }
   .pkg-row__mark { forced-color-adjust: none; }
-  .pkg-row__mark--update { border-color: currentColor; padding: 0 3px; }
+  .pkg-row__mark--update { border-color: currentColor; }
   .sources-flag { outline-color: CanvasText; }
   .sources-add-toggle { forced-color-adjust: none; border-color: ButtonText; color: ButtonText; }
   .sources-add-toggle:hover { background: Highlight; color: HighlightText; border-color: Highlight; }

@@ -11,6 +11,8 @@ import { findingsAffectingPackage } from '../../vulnerabilities';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
 import { compareSemVer } from '../../semver';
 import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
+import { versionTone } from '../utils/versionTone';
+import { IconTrash } from '../utils/icons';
 import type { VulnerabilityFinding } from '../../types';
 
 export function PackageDetailPanel() {
@@ -46,6 +48,17 @@ export function PackageDetailPanel() {
     .filter((p) => packageIdsEqual(p.id, selectedPackageId))
     .map((p) => p.resolvedVersion);
   const installedFrom = installedVersions[0] ?? '';
+  // Only meaningful once installed — Install (not yet installed) has no
+  // "from" version to compare against, so it keeps its own glyph (#55).
+  const updateTone = isInstalled ? versionTone(installedFrom, effectiveVersion) : undefined;
+  const updateGlyph = updateTone === 'down' ? '↓' : updateTone === 'same' ? '=' : '↑';
+  const updateTitle = updatesBlocked
+    ? BLOCKED_UPDATES_TOOLTIP
+    : updateTone === 'down'
+      ? 'Downgrade to selected version'
+      : updateTone === 'same'
+        ? 'Reinstall selected version'
+        : 'Update to selected version';
 
   const proceedInstall = () => {
     if (!effectiveVersion || updatesBlocked) return;
@@ -114,7 +127,7 @@ export function PackageDetailPanel() {
         actions={isInstalled ? (
           <>
             <button
-              className="btn btn--icon btn--primary"
+              className={`btn btn--icon ${updateTone === 'same' ? 'btn--secondary' : 'btn--primary'}`}
               onClick={() => {
                 if (updatesBlocked) {
                   send({
@@ -127,16 +140,16 @@ export function PackageDetailPanel() {
               }}
               disabled={isLoading}
               aria-disabled={updatesBlocked || undefined}
-              title={updatesBlocked ? BLOCKED_UPDATES_TOOLTIP : 'Update to selected version'}
+              title={updateTitle}
               aria-label="Update"
-            >↑</button>
+            >{updateGlyph}</button>
             <button
-              className="btn btn--icon btn--danger"
+              className="btn btn--icon pkg-remove-btn"
               onClick={handleRemove}
               disabled={isLoading}
               title="Remove package"
               aria-label="Remove"
-            >✕</button>
+            ><IconTrash /></button>
           </>
         ) : (
           <button

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import type { InstalledPackage, ProjectInfo } from '../../types';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
@@ -7,6 +7,8 @@ import { VersionSelect } from './VersionSelector';
 import { compareSemVer } from '../../semver';
 import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { RoslynCapPopup } from './RoslynCapPopup';
+import { versionTone } from '../utils/versionTone';
+import { IconTrash } from '../utils/icons';
 
 interface Props {
   packageId: string;
@@ -79,6 +81,25 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
     if (installedVersion) setLocalVersion(installedVersion);
   }, [installedVersion]);
 
+  // Brief flash on the row when a version change actually lands, colored by
+  // direction — no other feedback exists here otherwise (#56). Depends on
+  // the same versionTone comparison #55 uses for the button glyph below.
+  const prevInstalledVersionRef = useRef(installedVersion);
+  const [flashTone, setFlashTone] = useState<'up' | 'down' | null>(null);
+  useEffect(() => {
+    const prev = prevInstalledVersionRef.current;
+    prevInstalledVersionRef.current = installedVersion;
+    if (!prev || !installedVersion || prev === installedVersion) return;
+    const tone = versionTone(prev, installedVersion);
+    if (tone !== 'up' && tone !== 'down') return;
+    setFlashTone(tone);
+    const timer = setTimeout(() => setFlashTone(null), 850);
+    return () => clearTimeout(timer);
+  }, [installedVersion]);
+
+  const updateTone = installedVersion ? versionTone(installedVersion, localVersion) : undefined;
+  const updateGlyph = updateTone === 'down' ? '↓' : updateTone === 'same' ? '=' : '↑';
+
   const handleApply = async () => {
     if (updatesBlocked) return;
     if (installedVersion && compareSemVer(localVersion, installedVersion) === 0) return;
@@ -111,7 +132,7 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
   };
 
   return (
-    <div className="project-row">
+    <div className={`project-row${flashTone ? ` project-row--flash-${flashTone}` : ''}`}>
       <span className="project-row__name" title={p}>{project.name}</span>
 
       <VersionSelect
@@ -124,20 +145,20 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
 
       <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
         <button
-          className="btn btn--icon btn--primary"
+          className={`btn btn--icon ${updateTone === 'same' ? 'btn--secondary' : 'btn--primary'}`}
           onClick={requestApply}
           disabled={isLoading}
           aria-disabled={updatesBlocked || undefined}
           title={updatesBlocked ? BLOCKED_UPDATES_TOOLTIP : `Update ${project.name} to ${localVersion}`}
           aria-label={`Apply version for ${project.name}`}
-        >{isLoading ? '…' : '↑'}</button>
+        >{isLoading ? '…' : updateGlyph}</button>
         <button
-          className="btn btn--icon btn--danger"
+          className="btn btn--icon pkg-remove-btn"
           onClick={handleRemove}
           disabled={isLoading}
           title={`Remove from ${project.name}`}
           aria-label={`Remove from ${project.name}`}
-        >✕</button>
+        ><IconTrash /></button>
       </div>
 
       {error && <div className="project-row__error" role="alert">{error}</div>}

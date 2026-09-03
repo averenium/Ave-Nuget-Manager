@@ -13,6 +13,7 @@ import {
 import { isCodeAnalysisFamily, versionsAtOrBelow } from '../../roslynSdkCap';
 import { compareSemVer } from '../../semver';
 import { fileNameNoExt } from '../utils/pathUtils';
+import { versionTone } from '../utils/versionTone';
 import { SplitPane } from './SplitPane';
 import { VersionSelect } from './VersionSelector';
 import { PkgListRow } from './PkgListRow';
@@ -308,6 +309,14 @@ export function UpdatesTab() {
     }
   };
 
+  // All / Other targets are always filtered to latest > resolved, so they're
+  // always an upgrade; a family's shared target is picked manually and can
+  // land below the current shared version (#55).
+  const groupTone = selection?.type === 'family'
+    ? versionTone(selectedFamily?.fromVersion, familyTarget)
+    : 'up';
+  const groupGlyph = groupTone === 'down' ? '↓' : groupTone === 'same' ? '=' : '↑';
+
   const title = selection?.type === 'all'
     ? 'All'
     : selection?.type === 'other'
@@ -406,7 +415,7 @@ export function UpdatesTab() {
                   ) : (
                     <button
                       type="button"
-                      className="btn btn--icon btn--primary"
+                      className={`btn btn--icon ${groupTone === 'same' ? 'btn--secondary' : 'btn--primary'}`}
                       disabled={batchBusy || (previewItems.length === 0 && !blockedOnly)}
                       aria-disabled={blockedOnly || undefined}
                       title={blockedOnly
@@ -417,7 +426,7 @@ export function UpdatesTab() {
                       aria-label="Update"
                       onClick={startBatch}
                     >
-                      ↑
+                      {groupGlyph}
                     </button>
                   )}
                 >

@@ -5,6 +5,13 @@
 ### Fixed
 
 - Vulnerabilities didn't recheck reliably after an install/update: the restore-text fallback stayed pinned to the last explicit Restore, an audit-source change didn't trigger a rescan, a row could show a *different* project's finding for the same package id at another version (e.g. seen only transitively through a `<ProjectReference>`), and the fallback path trusted an already-stale `--no-restore` package list instead of re-restoring the solution/folder first (#53)
+- Update/Install button icons (Packages detail, per-project rows, Groups) always showed **↑**/**↓** regardless of whether the picked version was actually an upgrade, a downgrade, or unchanged — they're now direction-aware, and the button itself looks inactive (muted, not accent-colored) when the picked version already matches what's installed (#55)
+- Remove buttons in Packages (detail panel and per-project rows) used a plain **✕** instead of the trash icon already used in Sources, and rendered with the always-red `.btn--danger` styling — now the shared trash icon, muted at rest and red only on hover, matching Sources (#60)
+- The **↑**/**⊘**/**⚠**/**∅** row marks sized and positioned their pill off each glyph's own font-dependent metrics, so they rendered as differently-sized circles with the symbol sitting off-center inside the ring (worst for **⚠**) — replaced the Unicode glyphs with small fixed-coordinate SVG icons, the same approach already used for the Sources trash icon, so centering no longer depends on font/platform (#60)
+
+### Added
+
+- A per-project row briefly flashes (green for an upgrade, amber for a downgrade) when its version change actually lands, respecting `prefers-reduced-motion` (#56)
 
 ## 0.4.2
 

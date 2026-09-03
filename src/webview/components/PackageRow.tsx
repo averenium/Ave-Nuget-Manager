@@ -82,9 +82,13 @@ export function PackageRow({
     : undefined;
 
   const deps = installed?.dependencies ?? implicit?.dependencies;
+  // Only pin findings to this row's own version when it unambiguously has one —
+  // a multi-version aggregate row (this id at different versions across
+  // projects) still shows a finding for any of those versions (#53).
+  const rowVersion = hasMultipleVersions ? undefined : versionLabel;
   const { direct, via } = kind === 'available'
     ? { direct: [] as VulnerabilityFinding[], via: [] as VulnerabilityFinding[] }
-    : findingsAffectingPackage(findings ?? [], pkg.id, deps);
+    : findingsAffectingPackage(findings ?? [], pkg.id, deps, rowVersion || undefined);
   const vulnTitle = [...direct.map((f) => formatFindingLine(f)), ...via.map((f) => formatFindingLine(f, f.packageId))]
     .join('\n') || undefined;
 

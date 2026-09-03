@@ -3,6 +3,7 @@ import { Logger } from '../../logger';
 import * as vscode from 'vscode';
 import * as projectFiles from '../../projectFileSnapshot';
 import * as projectAssets from '../../projectAssets';
+import * as nugetHttpCacheVdb from '../../nugetHttpCacheVdb';
 import { promises as fsPromises } from 'fs';
 import * as config from '../../config';
 import * as legacyPr from '../../legacyPackageReference';
@@ -902,6 +903,24 @@ describe('WebviewMessageBroker', () => {
     expect(err?.failures[0].stderr).toBe('error');
   });
 
+  it('feeds dotnet add output into the restore-text fallback so a fresh NU190x warning is not stale (#53)', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.installPackage.mockResolvedValue(makeCliResult({
+      stdout: "warning NU1903: Package 'Pkg' 1.0.0 has a known high severity vulnerability",
+    }));
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    expect((broker as any)._lastRestoreText).toBe('');
+
+    simulateMessage({ type: 'INSTALL_PACKAGE', projectPath: '/p/App.csproj', packageId: 'Pkg', version: '1.0.0' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect((broker as any)._lastRestoreText).toContain('NU1903');
+  });
+
   it('summarizes NU1605 from stdout when stderr is empty', async () => {
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
@@ -1782,7 +1801,112 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     });
   });
 
+  describe('_scanVulnerabilities ordering (#53)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('a slower, superseded scan does not overwrite a faster, newer scan\'s findings', async () => {
+      const resolver = makeConfigResolver();
+      resolver.resolve.mockResolvedValue([{
+        filePath: '/p/nuget.config',
+        sources: [{
+          name: 'nexus',
+          url: 'https://nexus.example/repository/nuget/index.json',
+          enabled: true,
+          configFilePath: '/p/nuget.config',
+        }],
+      }]);
+
+      const { stub, posted } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+      broker.attach();
+
+      let resolveOld: (v: unknown) => void = () => {};
+      let resolveNew: (v: unknown) => void = () => {};
+      const oldPromise = new Promise((r) => { resolveOld = r; });
+      const newPromise = new Promise((r) => { resolveNew = r; });
+      jest.spyOn(nugetHttpCacheVdb, 'findingsFromNuGetHttpCache')
+        .mockReturnValueOnce(oldPromise as never)
+        .mockReturnValueOnce(newPromise as never);
+
+      const oldListed = {
+        installed: [{ ...makeInstalledPkg('SSH.NET', '/p/App.csproj'), resolvedVersion: '2024.2.0' }],
+        implicit: [],
+      };
+      const newListed = {
+        installed: [{ ...makeInstalledPkg('SSH.NET', '/p/App.csproj'), resolvedVersion: '2026.0.0' }],
+        implicit: [],
+      };
+
+      // Same sequence _applyListedPackages follows: cancel the previous scan,
+      // capture a fresh signal, start the next one — but here the OLDER
+      // scan's own cache lookup (mocked) resolves AFTER the newer one's.
+      const scanOld = (broker as any)._scanVulnerabilities(oldListed, (broker as any)._vulnAbort.signal);
+      (broker as any)._cancelVulnScan();
+      const scanNew = (broker as any)._scanVulnerabilities(newListed, (broker as any)._vulnAbort.signal);
+
+      resolveNew([]);
+      await scanNew;
+      expect(posted.filter((m) => m.type === 'VULNERABILITIES')).toHaveLength(1);
+
+      resolveOld([{
+        packageId: 'SSH.NET',
+        version: '2024.2.0',
+        severity: 'high',
+        id: 'GHSA-q939-rpr3-3284',
+        url: 'https://github.com/advisories/GHSA-q939-rpr3-3284',
+        source: 'nuget-cache',
+      }]);
+      await scanOld;
+
+      const vulnMessages = posted.filter((m) => m.type === 'VULNERABILITIES') as Array<{ findings: unknown[] }>;
+      expect(vulnMessages).toHaveLength(1);
+      expect(vulnMessages[0].findings).toEqual([]);
+    });
+  });
+
   // ── ADD_PACKAGE_SOURCE / REMOVE_PACKAGE_SOURCE (#48) ────────────────────────
+
+  describe('SET_SOURCE_ENABLED (audit)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('rescans vulnerabilities against the last listed packages after an audit source change (#53)', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(`<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+</configuration>` as never);
+      jest.spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      // Populate _lastListed via a normal install, same as any package refresh would.
+      simulateMessage({ type: 'INSTALL_PACKAGE', projectPath: '/p/App.csproj', packageId: 'Pkg', version: '1.0.0' });
+      await new Promise((r) => setTimeout(r, 20));
+      const vulnCountBefore = posted.filter((m) => m.type === 'VULNERABILITIES').length;
+      expect(vulnCountBefore).toBeGreaterThan(0);
+
+      simulateMessage({
+        type: 'SET_SOURCE_ENABLED',
+        kind: 'audit',
+        name: 'contoso',
+        configFilePath: '/p/nuget.config',
+        enabled: true,
+        url: 'https://contoso.example/index.json',
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      const vulnCountAfter = posted.filter((m) => m.type === 'VULNERABILITIES').length;
+      expect(vulnCountAfter).toBeGreaterThan(vulnCountBefore);
+    });
+  });
 
   describe('ADD_PACKAGE_SOURCE', () => {
     afterEach(() => {
@@ -2868,6 +2992,64 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     const hint = posted.find((m) => m.type === 'VULN_SCAN_HINT') as { show?: boolean } | undefined;
     expect(hint?.show).toBe(true);
     await fs.rm(emptyCache, { recursive: true, force: true });
+  });
+
+  it('re-restores the solution before the vuln fallback so a stale sibling-project floor is not scored (#53)', async () => {
+    // p01-style: project A only sees SSH.NET via a <ProjectReference> to
+    // project B, whose SSH.NET a plain install just bumped past the
+    // advisory's range. Only B gets restored by that install — the next
+    // `--no-restore` list for the whole solution can still report A's old
+    // (pre-bump) floor unless the vuln fallback re-restores itself.
+    const { stub, posted, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForSolution
+      .mockResolvedValueOnce({ installed: [], implicit: [] }) // WEBVIEW_READY
+      .mockResolvedValueOnce({
+        installed: [makeInstalledPkg('SSH.NET', '/sol/A/A.csproj')],
+        implicit: [],
+      }) // post-install --no-restore list: stale floor
+      .mockResolvedValueOnce({
+        installed: [{ ...makeInstalledPkg('SSH.NET', '/sol/A/A.csproj'), resolvedVersion: '2026.0.0' }],
+        implicit: [],
+      }); // the fix's own re-restore + re-list: current floor
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/sol/nuget.config',
+      sources: [{
+        name: 'nexus',
+        url: 'https://nexus.example/repository/nuget/index.json',
+        enabled: true,
+        configFilePath: '/sol/nuget.config',
+      }],
+    }]);
+
+    const fs = await import('fs/promises');
+    const os = await import('os');
+    const path = await import('path');
+    const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nuget-vdb-sshnet-'));
+    await fs.writeFile(
+      path.join(cacheDir, 'vulnerability.base.json'),
+      JSON.stringify({ 'ssh.net': [{ url: 'https://github.com/advisories/GHSA-q939-rpr3-3284', versions: '(,2024.2.0]', severity: 2 }] }),
+    );
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), resolver, logger,
+      undefined, undefined, undefined, undefined,
+      { httpCacheDir: () => cacheDir },
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    simulateMessage({ type: 'INSTALL_PACKAGE_MULTI', projects: ['/sol/B/B.csproj'], packageId: 'SSH.NET', version: '2026.0.0' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(backend.restoreProject).toHaveBeenCalledWith('/sol/My.sln');
+    expect(backend.restoreProject.mock.calls.filter((c) => c[0] === '/sol/My.sln').length).toBeGreaterThanOrEqual(2);
+    const vulnMessages = posted.filter((m) => m.type === 'VULNERABILITIES') as Array<{ findings: unknown[] }>;
+    expect(vulnMessages[vulnMessages.length - 1].findings).toEqual([]);
+
+    await fs.rm(cacheDir, { recursive: true, force: true });
   });
 
   it('runs list --vulnerable when Nexus packages have any auditSources', async () => {

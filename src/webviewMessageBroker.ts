@@ -191,6 +191,14 @@ export class WebviewMessageBroker {
   /** Cancellation token for the current enrich job — replaced on each new job */
   private _enrichAbort: AbortController = new AbortController();
   private _vulnAbort: AbortController = new AbortController();
+  /** Bumped on every `_cancelVulnScan()` — belt-and-suspenders against a
+   *  superseded scan posting stale findings after a newer one already did,
+   *  the same shape as `_restoreGeneration`/`_beginRestore` (#53). Needed
+   *  because the fallback branch's own file I/O (`findingsFromNuGetHttpCache`)
+   *  has no fixed duration, so two scans in flight back-to-back are not
+   *  guaranteed to resolve in start order even though the second one aborts
+   *  the first's signal. */
+  private _vulnScanGeneration = 0;
 
   /** Snapshots from the last failed add, used by the Rollback button (`onFailedUpdate: keep`). */
   private _pendingRollback: { packageId: string; attempts: InstallAttempt[] } | null = null;
@@ -203,6 +211,9 @@ export class WebviewMessageBroker {
   private _restoreInFlight?: Promise<CliResult>;
   private _restoreGeneration = 0;
   private _lastRestoreText = '';
+  /** Last package list handed to `_scanVulnerabilities` — reused to rescan
+   *  without a fresh `dotnet list` when only the source config changed (#53). */
+  private _lastListed?: PackageListResult;
 
   private _nugetConfigWatcher?: vscode.FileSystemWatcher;
   private _nugetConfigWatchSubs: vscode.Disposable[] = [];
@@ -328,6 +339,7 @@ export class WebviewMessageBroker {
   private _cancelVulnScan(): void {
     this._vulnAbort.abort();
     this._vulnAbort = new AbortController();
+    this._vulnScanGeneration++;
   }
 
   private _postBlockedPackages(): void {
@@ -630,6 +642,7 @@ export class WebviewMessageBroker {
     this._cancelVulnScan();
     this._restoreGeneration++;
     this._lastRestoreText = '';
+    this._lastListed = undefined;
     this.trace?.recordBroker('init-scope', {
       kind: scope.kind,
       path: path.basename(scopeIdentityPath(scope)),
@@ -806,6 +819,7 @@ export class WebviewMessageBroker {
     signal?: AbortSignal,
     retryTransient = false,
   ): Promise<InstallAttempt[]> {
+    const generation = this._restoreGeneration;
     const prepared = await Promise.all(
       projects.map(async (projectPath) => {
         const snapshots = await snapshotProjectFiles(projectPath);
@@ -818,7 +832,7 @@ export class WebviewMessageBroker {
         };
       }),
     );
-    return runWithConcurrency(
+    const attempts = await runWithConcurrency(
       prepared.map((p) => async () => {
         if (signal?.aborted) {
           const result: CliResult = {
@@ -869,6 +883,16 @@ export class WebviewMessageBroker {
       }),
       getConfig().dotnetConcurrency,
     );
+    if (generation === this._restoreGeneration) {
+      // `dotnet add`/the legacy-packageref restore it triggers can itself carry
+      // NU190x audit warnings — feed that text into `_lastRestoreText` too, not
+      // only explicit Restore/Force refresh, so `_scanVulnerabilities`'s
+      // restore-text fallback (#53) doesn't stay pinned to the last *explicit*
+      // restore after a plain install/update.
+      const merged = mergeCliResults(attempts.map((a) => a.result));
+      this._lastRestoreText = `${merged.stdout}\n${merged.stderr}`;
+    }
+    return attempts;
   }
 
   private async _addOrUpdatePackage(
@@ -1638,6 +1662,7 @@ export class WebviewMessageBroker {
     this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: installed });
     this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
 
+    this._lastListed = listed;
     this._cancelVulnScan();
     const vulnSignal = this._vulnAbort.signal;
     const vuln = this._scanVulnerabilities(listed, vulnSignal);
@@ -1783,6 +1808,37 @@ export class WebviewMessageBroker {
     return mergeCliResults(results);
   }
 
+  /**
+   * Real restore + list for the whole scope, bypassing whatever `--no-restore`
+   * package list the caller already has. Used only by the vulnerability
+   * fallback (no working `<auditSources>`): a plain single-project install
+   * only restores *that* project, so `dotnet list --no-restore` for the rest
+   * of a solution/folder can still report a stale floor for any OTHER project
+   * that reaches the updated one only via `<ProjectReference>` — e.g. p01
+   * referencing p02, whose SSH.NET was just bumped, still shows p01's old
+   * transitive SSH.NET version until something restores p01 too (#53). A
+   * single-project scope has nothing else that could go stale this way, so
+   * callers skip this for that case rather than pay for a needless restore.
+   */
+  private async _freshListedForScope(
+    scope: WorkspaceScope,
+  ): Promise<{ listed: PackageListResult; restoreText: string }> {
+    if (scope.kind === 'solution') {
+      const restoreResult = await this.backend.restoreProject(scope.solutionPath);
+      const listed = await this.backend.listAllForSolution(scope.solutionPath);
+      return { listed, restoreText: `${restoreResult.stdout}\n${restoreResult.stderr}` };
+    }
+    const projectPaths = scopeProjectPaths(scope);
+    const restoreResult = await this._restoreProjects(projectPaths);
+    const results = await Promise.all(projectPaths.map((p) => this.backend.listAllForProject(p)));
+    const listed: PackageListResult = {
+      installed: results.flatMap((r) => r.installed),
+      implicit: results.flatMap((r) => r.implicit),
+      error: results.find((r) => r.error)?.error,
+    };
+    return { listed, restoreText: `${restoreResult.stdout}\n${restoreResult.stderr}` };
+  }
+
   private _beginRestore(p: Promise<CliResult>): Promise<CliResult> {
     const generation = this._restoreGeneration;
     const tracked = p.then((result) => {
@@ -1821,6 +1877,8 @@ export class WebviewMessageBroker {
     listed: PackageListResult,
     signal: AbortSignal,
   ): Promise<void> {
+    const generation = this._vulnScanGeneration;
+    const lastRestoreTextAtStart = this._lastRestoreText;
     const scope = this.provider.getCurrentScope();
     const targetPath = scope ? scopeIdentityPath(scope) : undefined;
     if (!scope || !targetPath) return;
@@ -1856,13 +1914,28 @@ export class WebviewMessageBroker {
         durationMs: 0,
       });
       if (this._restoreInFlight) await this._restoreInFlight;
+      // A single-project install only restores that project — for a
+      // solution/folder scope, re-restore + re-list here rather than trust
+      // the (possibly `--no-restore`-listed) `listed` already in hand, so a
+      // sibling project that only sees the change via <ProjectReference>
+      // isn't scored against its own stale floor (#53).
+      let restoreTextForFallback = lastRestoreTextAtStart;
+      if (scope.kind !== 'project') {
+        try {
+          const fresh = await this._freshListedForScope(scope);
+          listed = fresh.listed;
+          restoreTextForFallback = fresh.restoreText;
+        } catch {
+          // Keep the already-listed (possibly stale) data rather than fail the scan.
+        }
+      }
       const cacheDir = this.vulnScan?.httpCacheDir
         ? [this.vulnScan.httpCacheDir()]
         : nugetHttpCacheDirs();
       const cached = await findingsFromNuGetHttpCache(
         cacheDir, listed.installed, listed.implicit,
       );
-      const fromRestore = parseRestoreAuditWarnings(this._lastRestoreText, {
+      const fromRestore = parseRestoreAuditWarnings(restoreTextForFallback, {
         installed: listed.installed,
         implicit: listed.implicit,
       });
@@ -1881,7 +1954,7 @@ export class WebviewMessageBroker {
       implicit: listed.implicit,
       signal,
     });
-    if (signal.aborted) return;
+    if (signal.aborted || generation !== this._vulnScanGeneration) return;
     this.provider.postMessage({ type: 'VULNERABILITIES', findings });
     this.provider.postMessage({
       type: 'VULN_SCAN_HINT',
@@ -2194,6 +2267,18 @@ export class WebviewMessageBroker {
     }
   }
 
+  /** Re-run the vuln scan against the last listed packages, without a fresh
+   *  `dotnet list` — used after an audit-source change, since that flips
+   *  which scan path (`DotnetVulnerableProvider` vs. the cache/restore-text
+   *  fallback) applies, and the panel would otherwise keep showing findings
+   *  from before the change until the next full refresh (#53). */
+  private _rescanVulnerabilities(): void {
+    if (!this._lastListed) return;
+    const listed = this._lastListed;
+    this._cancelVulnScan();
+    void this._scanVulnerabilities(listed, this._vulnAbort.signal);
+  }
+
   private async _handleSetSourceEnabled(
     msg: Extract<WebviewMessage, { type: 'SET_SOURCE_ENABLED' }>,
   ): Promise<void> {
@@ -2219,6 +2304,7 @@ export class WebviewMessageBroker {
         durationMs: 0,
       });
       await this._pushConfigChainUpdate(true);
+      if (msg.kind === 'audit') this._rescanVulnerabilities();
     } catch (err) {
       await vscode.window.showErrorMessage(`Could not update source ${msg.name}: ${String(err)}`);
     }

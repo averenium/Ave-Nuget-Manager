@@ -162,6 +162,27 @@ describe('findingsAffectingPackage', () => {
     expect(direct).toHaveLength(1);
     expect(via).toEqual([]);
   });
+
+  it('does not attribute a different project\'s vulnerable version to a row on the patched one (#53)', () => {
+    // A solution where one project has SSH.NET 2024.2.0 (vulnerable) transitively
+    // and another has it upgraded to 2026.0.0 directly — the patched row must
+    // not inherit the other project's finding just because the id matches.
+    const findings = [
+      finding({ packageId: 'SSH.NET', version: '2024.2.0', id: 'GHSA-q939-rpr3-3284' }),
+    ];
+    const patched = findingsAffectingPackage(findings, 'SSH.NET', undefined, '2026.0.0');
+    expect(patched.direct).toEqual([]);
+    const vulnerable = findingsAffectingPackage(findings, 'SSH.NET', undefined, '2024.2.0');
+    expect(vulnerable.direct).toEqual(findings);
+  });
+
+  it('still matches when no version is given, or the finding itself carries none', () => {
+    const findings = [finding({ packageId: 'SSH.NET', version: '2024.2.0' })];
+    expect(findingsAffectingPackage(findings, 'SSH.NET').direct).toEqual(findings);
+    const scriptFindings = [finding({ packageId: 'SSH.NET' })]; // no version field
+    expect(findingsAffectingPackage(scriptFindings, 'SSH.NET', undefined, '2026.0.0').direct)
+      .toEqual(scriptFindings);
+  });
 });
 
 describe('scriptCommand', () => {

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Vulnerabilities didn't recheck reliably after an install/update: the restore-text fallback stayed pinned to the last explicit Restore, an audit-source change didn't trigger a rescan, a row could show a *different* project's finding for the same package id at another version (e.g. seen only transitively through a `<ProjectReference>`), and the fallback path trusted an already-stale `--no-restore` package list instead of re-restoring the solution/folder first (#53)
+
 ## 0.4.2
 
 ### Changed

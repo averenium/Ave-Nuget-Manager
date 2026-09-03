@@ -50,12 +50,27 @@ export function mergeFindings(batches: VulnerabilityFinding[][]): VulnerabilityF
   });
 }
 
+/**
+ * Findings for one package id. `version`, when given, additionally requires
+ * the finding's own version to match — a solution can have the same id at
+ * different versions across projects (e.g. one project transitively pulling
+ * an old, vulnerable version while another has it upgraded directly), and
+ * without this a row for the *patched* version would still show the *other*
+ * project's finding, id-matched but for a version this row does not have (#53).
+ * A finding with no version (e.g. a user script that did not report one)
+ * still matches, to not silently drop it.
+ */
 export function findingsForPackage(
   findings: VulnerabilityFinding[],
   packageId: string,
+  version?: string,
 ): VulnerabilityFinding[] {
   const key = packageId.toLowerCase();
-  return findings.filter((f) => f.packageId.toLowerCase() === key);
+  return findings.filter((f) => {
+    if (f.packageId.toLowerCase() !== key) return false;
+    if (version === undefined || f.version === undefined) return true;
+    return f.version === version;
+  });
 }
 
 /** Findings on restore-graph dependencies (implicit or other installed), not on this id. */
@@ -77,9 +92,10 @@ export function findingsAffectingPackage(
   findings: VulnerabilityFinding[],
   packageId: string,
   dependencies?: readonly string[],
+  version?: string,
 ): { direct: VulnerabilityFinding[]; via: VulnerabilityFinding[] } {
   return {
-    direct: findingsForPackage(findings, packageId),
+    direct: findingsForPackage(findings, packageId, version),
     via: findingsViaDependencies(findings, packageId, dependencies),
   };
 }
@@ -89,8 +105,9 @@ export function vulnerabilityAffectRank(
   findings: VulnerabilityFinding[],
   packageId: string,
   dependencies?: readonly string[],
+  version?: string,
 ): number {
-  const { direct, via } = findingsAffectingPackage(findings, packageId, dependencies);
+  const { direct, via } = findingsAffectingPackage(findings, packageId, dependencies, version);
   if (direct.length > 0) {
     return 1000 + Math.max(...direct.map((f) => severityRank(f.severity)));
   }

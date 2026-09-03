@@ -12,6 +12,7 @@
 ### Added
 
 - A per-project row briefly flashes (green for an upgrade, amber for a downgrade) when its version change actually lands, respecting `prefers-reduced-motion` (#56)
+- Package detail panel: generalized the **Vulnerabilities** section into a **Problems** section that also explains a `packageSourceMapping` mismatch (which sources are mapped, why none match) and a blocked-updates state — previously those only showed as a bare row-mark tooltip with no detail (#57)
 
 ## 0.4.2
 

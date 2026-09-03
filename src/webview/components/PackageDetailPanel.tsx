@@ -13,6 +13,7 @@ import { compareSemVer } from '../../semver';
 import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { versionTone } from '../utils/versionTone';
 import { IconTrash } from '../utils/icons';
+import { buildPackageProblems } from '../utils/packageProblems';
 import type { VulnerabilityFinding } from '../../types';
 
 export function PackageDetailPanel() {
@@ -59,6 +60,20 @@ export function PackageDetailPanel() {
       : updateTone === 'same'
         ? 'Reinstall selected version'
         : 'Update to selected version';
+
+  // ── Problems: vulnerabilities + any other condition worth explaining, not
+  // just a row-mark tooltip (#57). `buildPackageProblems` holds the decision
+  // logic (which problems apply, with what tone) so it's testable without
+  // rendering; JSX bodies are built here from its plain-data descriptors.
+  const packageSourceMapping = state.sources.snapshot?.packageSourceMapping ?? [];
+  const problems = buildPackageProblems({
+    packageId: selectedPackageId,
+    findings,
+    viaFindings,
+    isInstalled,
+    packageSourceMapping,
+    updatesBlocked,
+  });
 
   const proceedInstall = () => {
     if (!effectiveVersion || updatesBlocked) return;
@@ -176,43 +191,55 @@ export function PackageDetailPanel() {
         </div>
       )}
 
-      {findings.length > 0 && (
+      {problems.length > 0 && (
         <div className="detail-section">
-          <div className="detail-section__title">Vulnerabilities</div>
+          <div className="detail-section__title">Problems</div>
           <ul className="vuln-list">
-            {findings.map((finding, index) => {
-              const via = viaFindings.includes(finding) ? finding.packageId : undefined;
+            {problems.map((p) => {
+              const via = p.kind === 'vulnerability' ? p.via : undefined;
               return (
-                <li
-                  key={`${via ?? 'direct'}:${finding.source}:${finding.id ?? finding.url ?? index}`}
-                  className={`vuln-item vuln-item--${finding.severity}${via ? ' vuln-item--via' : ''}`}
-                >
-                  <span className="vuln-item__sev">{finding.severity}</span>
-                  <span className="vuln-item__body">
-                    {via ? (
-                      <>
-                        <button
-                          type="button"
-                          className="vuln-item__via"
-                          onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: via })}
-                          title={`Open ${via}`}
-                        >
-                          via {via}
-                        </button>
-                        {' · '}
-                      </>
-                    ) : null}
-                    {finding.url ? (
-                      <a href={finding.url} target="_blank" rel="noopener noreferrer">
-                        {finding.id ?? finding.title ?? finding.url}
-                      </a>
-                    ) : (
-                      finding.id ?? finding.title ?? 'Advisory'
-                    )}
-                    {finding.version ? ` · ${finding.version}` : ''}
-                    {finding.source ? ` · ${finding.source}` : ''}
-                  </span>
-                </li>
+              <li key={p.key} className={`vuln-item vuln-item--${p.tone}${via ? ' vuln-item--via' : ''}`}>
+                <span className="vuln-item__sev">{p.label}</span>
+                <span className="vuln-item__body">
+                  {via ? (
+                    <>
+                      <button
+                        type="button"
+                        className="vuln-item__via"
+                        onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: via })}
+                        title={`Open ${via}`}
+                      >
+                        via {via}
+                      </button>
+                      {' · '}
+                    </>
+                  ) : null}
+                  {p.kind === 'vulnerability' ? (
+                    <>
+                      {p.finding.url ? (
+                        <a href={p.finding.url} target="_blank" rel="noopener noreferrer">
+                          {p.finding.id ?? p.finding.title ?? p.finding.url}
+                        </a>
+                      ) : (
+                        p.finding.id ?? p.finding.title ?? 'Advisory'
+                      )}
+                      {p.finding.version ? ` · ${p.finding.version}` : ''}
+                      {p.finding.source ? ` · ${p.finding.source}` : ''}
+                    </>
+                  ) : p.kind === 'mapping' ? (
+                    <>
+                      No <code>packageSourceMapping</code> pattern matches <strong>{selectedPackageId}</strong> — restore
+                      will not be able to find it.
+                      {' '}Mapped sources: {p.mappedSourceNames.join(', ')}.
+                    </>
+                  ) : (
+                    <>
+                      Updates are blocked for this package in this workspace. Right-click the row and choose{' '}
+                      <strong>Unblock updates</strong> to allow a version change.
+                    </>
+                  )}
+                </span>
+              </li>
               );
             })}
           </ul>

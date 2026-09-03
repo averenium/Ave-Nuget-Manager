@@ -257,9 +257,18 @@ export interface SourcesSnapshot {
 // Log
 // ─────────────────────────────────────────────
 
+/**
+ * `cli` — a real `dotnet` subprocess. `edit` — a synthetic, non-CLI file
+ * mutation (PackageReference, nuget.config). `scan` — a vulnerability-scan
+ * decision (e.g. skipped). `info`/`error` — routed from `Logger.info`/`error`,
+ * previously Output-Channel-only (#58).
+ */
+export type LogEntryKind = 'cli' | 'edit' | 'scan' | 'info' | 'error';
+
 export interface LogEntry {
   id: string;
   timestamp: string;
+  kind: LogEntryKind;
   command: string;
   args: string[];
   stdout: string;

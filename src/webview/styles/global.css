@@ -811,11 +811,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .hint code { font-family: var(--font-mono); font-size: 11px; }
 
 /* ── Log tab ────────────────────────────────────────────────────────────────── */
-.log-tab { display: flex; flex-direction: column; overflow: hidden; padding: var(--spacing-xs); font-family: var(--font-mono); font-size: 11px; }
-.log-toolbar {
-  display: flex; align-items: center; gap: var(--spacing-sm); flex-shrink: 0;
-  padding: 0 0 var(--spacing-xs);
-}
+.log-tab { display: flex; flex-direction: column; overflow: hidden; font-family: var(--font-mono); font-size: 11px; }
 .log-toolbar__btn {
   font-family: var(--font-ui); font-size: 12px;
   background: transparent; color: var(--color-fg);
@@ -824,14 +820,26 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
 .log-toolbar__btn:hover { border-color: var(--color-btn-bg); color: var(--color-btn-bg); }
-.log-toolbar__btn--stop { border-color: var(--color-error); color: var(--color-error); }
 .log-toolbar__badge {
   font-family: var(--font-ui); font-size: 11px;
   color: var(--color-error);
 }
-.log-toolbar__spacer { flex: 1; min-width: 0; }
-.log-tab .empty-state { flex: 1; }
-.log-tab__list { flex: 1; overflow-y: auto; min-height: 0; }
+.log-tab .empty-state { flex: 1; padding: 0 var(--spacing-sm); }
+/* Log tab reuses .pkg-toolbar/.pkg-toolbar__search/.pkg-toolbar__refresh
+   (defined for Packages/Groups) so the leading action button(s) + search
+   sit in the same place across tabs — Trace/Stop where Packages has
+   Restore/Force refresh, search styled identically either way. */
+.log-trace-btn {
+  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+  height: 24px; padding: 0 var(--spacing-sm);
+  background: transparent; color: var(--color-fg);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  font-family: var(--font-ui); font-size: 11px; cursor: pointer;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
+}
+.log-trace-btn:hover { border-color: var(--color-btn-bg); color: var(--color-btn-bg); }
+.log-trace-btn--recording { border-color: var(--color-error); color: var(--color-error); }
+.log-tab__list { flex: 1; overflow-y: auto; min-height: 0; position: relative; padding: 0 var(--spacing-sm) var(--spacing-xs); }
 .log-tab .log-entry { font-family: var(--font-mono); }
 .log-entry { margin-bottom: 3px; border: 1px solid var(--color-border); border-radius: var(--radius); }
 .log-entry--active { border-color: var(--color-btn-bg); }
@@ -865,6 +873,127 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .log-entry__body { white-space: pre-wrap; word-break: break-all; margin: 0; }
 .log-entry__body--stdout { color: var(--color-fg); }
 .log-entry__body--stderr { color: var(--color-error); }
+
+/* ── Log tab rows (#58) — separate namespace from .log-entry* above, which
+   App.tsx's error banner still uses for its own small log preview. ────────── */
+.log-kind-select {
+  height: 22px; flex-shrink: 0;
+  background: var(--color-input-bg); color: var(--color-input-fg);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  font-family: var(--font-ui); font-size: 11px; padding: 0 2px;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
+}
+.log-toolbar__divider { width: 1px; align-self: stretch; margin: 2px 0; background: var(--color-border); flex-shrink: 0; }
+/* Copy sanitised = the plain copy icon (.pkg-toolbar__refresh) + a tiny
+   shield badge in the corner — a separate small overlay icon, not merged
+   into the copy icon's own path. */
+.log-toolbar__icon-btn--badged { position: relative; }
+.log-toolbar__badge-icon {
+  position: absolute; bottom: 1px; right: 1px;
+  color: var(--color-success); background: var(--color-bg);
+  line-height: 0; border-radius: 2px;
+}
+
+.log-day-sep {
+  display: flex; align-items: center; gap: var(--spacing-sm);
+  color: var(--color-tab-inactive); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+  margin: var(--spacing-sm) 2px 4px;
+}
+.log-day-sep::before, .log-day-sep::after { content: ''; height: 1px; flex: 1; background: var(--color-border); }
+.log-day-sep:first-child { margin-top: 2px; }
+
+.log-row { margin-bottom: 3px; border: 1px solid var(--color-border); border-radius: var(--radius); font-family: var(--font-mono); }
+.log-row[hidden] { display: none; }
+.log-row__summary {
+  display: flex; align-items: flex-start; gap: var(--spacing-sm);
+  padding: 3px var(--spacing-sm); cursor: pointer;
+}
+.log-row:hover .log-row__summary,
+.log-row:hover .log-row__err-preview { background: var(--color-list-hover); }
+.log-row__chev { flex-shrink: 0; color: var(--color-tab-inactive); transition: transform 120ms ease; margin-top: 1px; }
+.log-row--open .log-row__chev { transform: rotate(90deg); }
+.log-row__ts { color: var(--color-tab-inactive); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.log-row__dur {
+  color: var(--color-tab-inactive); opacity: 0.75; flex-shrink: 0;
+  font-size: 10px; width: 34px; font-variant-numeric: tabular-nums;
+}
+.log-row__kind {
+  flex-shrink: 0; font-size: 9px; letter-spacing: 0.04em;
+  padding: 1px 4px; border-radius: 3px; margin-top: 1px;
+}
+.log-row__kind--cli { color: var(--color-link); background: color-mix(in srgb, var(--color-link) 16%, transparent); }
+.log-row__kind--edit { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 16%, transparent); }
+.log-row__kind--scan, .log-row__kind--info {
+  color: var(--color-tab-inactive); background: color-mix(in srgb, var(--color-tab-inactive) 16%, transparent);
+}
+.log-row__kind--error { color: var(--color-error); background: color-mix(in srgb, var(--color-error) 16%, transparent); }
+.log-row__cmd { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; justify-content: center; }
+.log-row__cmd-main { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-row__cmd-detail {
+  color: var(--color-tab-inactive); font-size: 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.log-row__exit {
+  flex-shrink: 0; font-size: 10px; padding: 1px 5px; border-radius: 3px;
+  border: 1px solid transparent; margin-top: 1px;
+}
+.log-row__exit--ok { color: var(--color-success); border-color: color-mix(in srgb, var(--color-success) 40%, transparent); }
+.log-row__exit--err { color: var(--color-error); border-color: color-mix(in srgb, var(--color-error) 40%, transparent); }
+.log-row__exit--timeout { color: var(--color-warning); border-color: color-mix(in srgb, var(--color-warning) 40%, transparent); }
+
+.log-row__err-preview {
+  display: flex; gap: 5px; align-items: baseline;
+  padding: 0 var(--spacing-sm) 4px calc(var(--spacing-sm) * 2 + 14px);
+  cursor: pointer; color: var(--color-error); background: none; border: none; width: 100%; text-align: left;
+  font-family: inherit;
+}
+.log-row__err-preview span {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.92; font-size: 10.5px;
+}
+
+.log-row__body { border-top: 1px solid var(--color-border); padding: 5px var(--spacing-sm) var(--spacing-sm); }
+.log-row__stream-label {
+  font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--color-tab-inactive); margin: 5px 0 2px;
+}
+.log-row__stream-label:first-child { margin-top: 0; }
+.log-row__cmd-full {
+  background: color-mix(in srgb, var(--color-fg) 6%, transparent);
+  border: 1px solid var(--color-border); border-radius: 3px;
+  padding: 3px 6px; white-space: pre-wrap; word-break: break-all;
+  user-select: all; margin: 0 0 2px;
+}
+.log-row__stream { white-space: pre-wrap; word-break: break-word; margin: 0 0 2px; }
+.log-row__stream--stderr { color: var(--color-error); }
+.log-row__nu-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; color: var(--color-error);
+  border: 1px solid color-mix(in srgb, var(--color-error) 45%, transparent);
+  border-radius: 3px; padding: 1px 6px; margin: 4px 0 1px; text-decoration: none;
+}
+.log-row__nu-chip:hover { background: color-mix(in srgb, var(--color-error) 12%, transparent); }
+.log-row__actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* Per-block copy affordance on the command/stdout/stderr blocks, revealed on hover. */
+.log-row__copyable { position: relative; }
+.log-row__copy-hover {
+  position: absolute; top: 3px; right: 3px;
+  width: 18px; height: 18px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 120ms ease;
+  background: transparent; color: var(--color-tab-inactive);
+  border: none; border-radius: var(--radius); cursor: pointer;
+}
+.log-row__copyable:hover .log-row__copy-hover,
+.log-row__copy-hover:focus-visible { opacity: 0.55; }
+.log-row__copy-hover:hover { opacity: 1; color: var(--color-fg); background: var(--color-list-hover); }
+
+.log-tab__new-pill {
+  position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+  background: var(--color-btn-bg); color: var(--color-btn-fg);
+  font-family: var(--font-ui); font-size: 11px; padding: 3px 10px; border-radius: 999px;
+  border: none; cursor: pointer; box-shadow: 0 4px 12px -3px rgba(0, 0, 0, 0.5);
+}
 
 /* ── Popup / modal ──────────────────────────────────────────────────────────── */
 .popup-overlay {

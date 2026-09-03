@@ -33,7 +33,7 @@ export interface TraceEnvInfo {
   dotnetVersion: string;
 }
 
-function sanitizeCtx(): SanitizeContext {
+export function sanitizeCtx(): SanitizeContext {
   return {
     home: os.homedir(),
     workspaceRoots: (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath),

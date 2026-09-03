@@ -1,9 +1,13 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
-import type { LogEntry } from './types';
+import type { LogEntry, LogEntryKind } from './types';
 
 export interface CliLogEntry {
   timestamp: Date;
+  /** Defaults to 'cli' — every real `dotnet` invocation goes through one call
+   *  site (`cliRunner.ts`); the handful of synthetic (non-CLI) callers in
+   *  `webviewMessageBroker.ts` pass their own kind explicitly (#58). */
+  kind?: LogEntryKind;
   command: string;
   args: string[];
   stdout: string;
@@ -14,6 +18,9 @@ export interface CliLogEntry {
 }
 
 export type LogListener = (entry: LogEntry) => void;
+
+/** Ring-buffer cap — the Output Channel (`_writeToChannel`) stays unbounded. */
+const MAX_ENTRIES = 500;
 
 export function formatUnknownError(err: unknown): string {
   if (err instanceof Error) {
@@ -31,15 +38,18 @@ export class Logger {
     this.channel = vscode.window.createOutputChannel('Averenium NuGet Manager');
   }
 
-  /** Startup / host diagnostics. Output Channel only — not the Log tab. */
+  /** Host diagnostic — Output Channel, and the Log tab as an `info` row (#58). */
   info(message: string): void {
     this._writePlain('info', message);
+    this._pushSynthetic('info', message);
   }
 
-  /** Startup / host failures. Output Channel + Extension Host console. */
+  /** Host failure — Output Channel, Extension Host console, and the Log tab as an `error` row (#58). */
   error(message: string, err?: unknown): void {
     const detail = err !== undefined ? formatUnknownError(err) : '';
-    this._writePlain('error', detail ? `${message}\n${detail}` : message);
+    const full = detail ? `${message}\n${detail}` : message;
+    this._writePlain('error', full);
+    this._pushSynthetic('error', full);
     try {
       console.error(`[AVE NuGet Manager] ${message}`, err ?? '');
     } catch {
@@ -56,6 +66,7 @@ export class Logger {
     const entry: LogEntry = {
       id: randomUUID(),
       timestamp: op.timestamp.toISOString(),
+      kind: op.kind ?? 'cli',
       command: op.command,
       args: op.args,
       stdout: op.stdout,
@@ -65,9 +76,32 @@ export class Logger {
       durationMs: op.durationMs,
     };
 
-    this.entries.push(entry);
+    this._pushEntry(entry);
     this._writeToChannel(entry);
     this._notifyListeners(entry);
+  }
+
+  /** `info`/`error` as a bodyless Log-tab row — the message is the "command" text. */
+  private _pushSynthetic(kind: 'info' | 'error', message: string): void {
+    const entry: LogEntry = {
+      id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      kind,
+      command: message.split('\n')[0],
+      args: [],
+      stdout: '',
+      stderr: kind === 'error' ? message : '',
+      exitCode: null,
+      timedOut: false,
+      durationMs: 0,
+    };
+    this._pushEntry(entry);
+    this._notifyListeners(entry);
+  }
+
+  private _pushEntry(entry: LogEntry): void {
+    this.entries.push(entry);
+    if (this.entries.length > MAX_ENTRIES) this.entries.splice(0, this.entries.length - MAX_ENTRIES);
   }
 
   /** Returns all recorded log entries in chronological order. */

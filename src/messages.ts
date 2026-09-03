@@ -103,6 +103,10 @@ export type WebviewMessage =
   | { type: 'START_TRACE' }
   | { type: 'STOP_TRACE' }
   | { type: 'CLEAR_LOG' }
+  /** Sanitizes `text` (same redaction as a trace zip — paths, hostname, proxy creds) and copies it (#58). */
+  | { type: 'COPY_LOG_SANITIZED'; text: string }
+  /** Reveals the unbounded Output Channel (#58). */
+  | { type: 'OPEN_LOG_OUTPUT' }
   /** Click the solution/project name in the panel tab bar. */
   | { type: 'SELECT_SCOPE' }
   /** Add/remove an id in workspace `blockedPackages`. */

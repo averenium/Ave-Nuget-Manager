@@ -13,6 +13,78 @@ export function IconPencil() {
   );
 }
 
+/** Start a trace — a plain filled dot, same "record" convention as most apps. */
+export function IconRecordDot() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <circle cx="8" cy="8" r="5" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Stop & save the trace zip. */
+export function IconStopSquare() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="9" height="9" rx="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function IconCopy() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+        d="M6.25 6.25h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z"
+      />
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M3.75 9.75h-1a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v1"
+      />
+    </svg>
+  );
+}
+
+/** Clear log — traced from a real broom icon (svgrepo.com), not hand-drawn. */
+export function IconBroom() {
+  return (
+    <svg viewBox="0 0 57.042 57.042" width="12" height="12" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M49.48,55.758l-8.571-29c-0.071-0.239-0.23-0.428-0.43-0.554c-0.433-6.226-5.623-11.162-11.958-11.162 s-11.524,4.936-11.958,11.162c-0.2,0.126-0.359,0.315-0.43,0.554l-8.571,29c-0.09,0.302-0.031,0.629,0.158,0.882 c0.188,0.252,0.485,0.401,0.801,0.401h40c0.315,0,0.612-0.149,0.801-0.401C49.511,56.387,49.57,56.061,49.48,55.758z M28.521,17.042c5.177,0,9.447,3.954,9.95,9h-19.9C19.073,20.996,23.344,17.042,28.521,17.042z M40.447,55.042l-4-17.226 c-0.124-0.539-0.665-0.873-1.2-0.748c-0.538,0.125-0.872,0.662-0.747,1.2l3.895,16.774h-8.874V43c0-0.552-0.447-1-1-1 s-1,0.448-1,1v12.042H18.6l3.894-16.774c0.125-0.538-0.21-1.075-0.747-1.2c-0.536-0.126-1.076,0.209-1.2,0.748l-3.999,17.226 H9.859l7.981-27h21.363l7.98,27H40.447z"
+      />
+      <rect fill="currentColor" x="27.521" width="2" height="14.042" />
+    </svg>
+  );
+}
+
+/** Tiny filled shield — badge overlay only (see .log-toolbar__badge-icon), not a standalone button icon. */
+export function IconShieldBadge() {
+  return (
+    <svg viewBox="0 0 16 16" width="7" height="7" aria-hidden="true">
+      <path fill="currentColor" d="M8 1 13 3v4c0 3.5-2.2 5.8-5 7-2.8-1.2-5-3.5-5-7V3Z" />
+    </svg>
+  );
+}
+
+/** Output Channel — a text/log panel, not a shell prompt (no terminal `>`). */
+export function IconOutputPanel() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <rect x="1.8" y="2.2" width="12.4" height="11.6" rx="1.4" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <path fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" d="M4.2 5.6h7.6M4.2 8h5.4M4.2 10.4h7.6" />
+    </svg>
+  );
+}
+
 export function IconTrash() {
   return (
     <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">

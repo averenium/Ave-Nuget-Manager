@@ -17,6 +17,8 @@ import {
 } from './nugetConfigChainResolver';
 import type { Logger } from './logger';
 import type { TraceController } from './traceController';
+import { sanitizeCtx } from './traceController';
+import { sanitizeText } from './traceSanitize';
 import type { WebviewMessage } from './messages';
 import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
 import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile } from './types';
@@ -450,6 +452,14 @@ export class WebviewMessageBroker {
         await vscode.env.clipboard.writeText(msg.text);
         break;
 
+      case 'COPY_LOG_SANITIZED':
+        await vscode.env.clipboard.writeText(sanitizeText(msg.text, sanitizeCtx()));
+        break;
+
+      case 'OPEN_LOG_OUTPUT':
+        this.logger.show();
+        break;
+
       case 'OPEN_URL':
         await this._handleOpenUrl(msg.url);
         break;
@@ -654,6 +664,7 @@ export class WebviewMessageBroker {
     const chainStart = Date.now();
     this.logger.logCliOperation({
       timestamp: new Date(),
+      kind: 'info',
       command: `NuGet config chain resolution`,
       args: ['startDir:', startDir],
       stdout: '',
@@ -673,6 +684,7 @@ export class WebviewMessageBroker {
     // Log what we found
     this.logger.logCliOperation({
       timestamp: new Date(),
+      kind: 'info',
       command: `NuGet config chain resolved`,
       args: [`found ${configChain.length} config file(s)`, ...configChain.map((c) => c.filePath)],
       stdout: configChain.map((c) => `${c.filePath}: ${c.sources.length} source(s)${c.parseError ? ' [ERROR: ' + c.parseError + ']' : ''}`).join('\n'),
@@ -928,6 +940,7 @@ export class WebviewMessageBroker {
       await writeProjectXml(projectPath, next);
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'edit',
         command: 'edit PackageReference',
         args: [projectPath, packageId, version],
         stdout: `Set ${packageId} to ${version} (legacy csproj)`,
@@ -962,6 +975,7 @@ export class WebviewMessageBroker {
       await writeProjectXml(projectPath, removePackageReferences(xml, packageId));
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'edit',
         command: 'edit PackageReference',
         args: [projectPath, packageId],
         stdout: `Removed ${packageId} (legacy csproj)`,
@@ -1482,6 +1496,7 @@ export class WebviewMessageBroker {
       await this.backend.restoreProject(attempt.projectPath);
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'edit',
         command: 'rollback project files',
         args: attempt.snapshots.map((s) => s.path),
         stdout: attempt.previousVersion
@@ -1905,6 +1920,7 @@ export class WebviewMessageBroker {
     } else {
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'scan',
         command: 'vulnerability scan skipped',
         args: ['dotnet list --vulnerable not started: a package source has no VulnerabilityInfo'],
         stdout: '',
@@ -2295,6 +2311,7 @@ export class WebviewMessageBroker {
       }
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'edit',
         command: msg.kind === 'audit' ? 'nuget.config auditSources' : 'nuget.config source',
         args: [msg.enabled ? 'enable' : 'disable', msg.name, msg.configFilePath],
         stdout: '',
@@ -2392,6 +2409,7 @@ export class WebviewMessageBroker {
       }));
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'edit',
         command: 'nuget.config source flags',
         args: [
           msg.name,
@@ -2423,6 +2441,7 @@ export class WebviewMessageBroker {
         setPackageSourceMappingPatterns(xml, msg.name, msg.patterns));
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'edit',
         command: 'nuget.config source mapping',
         args: [msg.name, `patterns=${msg.patterns.join(', ') || '(none)'}`, msg.configFilePath],
         stdout: '',
@@ -2449,6 +2468,7 @@ export class WebviewMessageBroker {
         addPackageSource(xml, msg.name, msg.url, { protocolVersion: msg.protocolVersion }));
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'edit',
         command: 'nuget.config add source',
         args: [msg.name, msg.url, msg.configFilePath],
         stdout: '',
@@ -2474,6 +2494,7 @@ export class WebviewMessageBroker {
       await patchNuGetConfigFile(msg.configFilePath, (xml) => removePackageSourceEntry(xml, msg.name));
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'edit',
         command: 'nuget.config remove source',
         args: [msg.name, msg.configFilePath],
         stdout: '',
@@ -2515,6 +2536,7 @@ export class WebviewMessageBroker {
       });
       this.logger.logCliOperation({
         timestamp: new Date(),
+        kind: 'edit',
         command: 'nuget.config secrets',
         args: [
           msg.clearCredentials || msg.clearApiKey ? 'clear' : 'update',

@@ -175,6 +175,26 @@ describe('Logger', () => {
     expect(ch.lines.some((l) => l.includes('hello output'))).toBe(true);
   });
 
+  it('defaults kind to "cli" when the caller does not pass one (#58)', () => {
+    logger.logCliOperation(makeOp());
+    expect(logger.getEntries()[0].kind).toBe('cli');
+  });
+
+  it('uses the caller-supplied kind for a synthetic (non-CLI) operation (#58)', () => {
+    logger.logCliOperation(makeOp({ kind: 'edit' }));
+    expect(logger.getEntries()[0].kind).toBe('edit');
+  });
+
+  it('caps stored entries at 500, dropping the oldest first (#58)', () => {
+    for (let i = 0; i < 505; i++) {
+      logger.logCliOperation(makeOp({ command: `dotnet cmd ${i}` }));
+    }
+    const entries = logger.getEntries();
+    expect(entries).toHaveLength(500);
+    expect(entries[0].command).toBe('dotnet cmd 5');
+    expect(entries[499].command).toBe('dotnet cmd 504');
+  });
+
   it('clear() drops entries and the Output Channel', () => {
     logger.logCliOperation(makeOp());
     expect(logger.getEntries()).toHaveLength(1);
@@ -182,17 +202,19 @@ describe('Logger', () => {
     expect(logger.getEntries()).toHaveLength(0);
   });
 
-  it('info writes to the Output Channel and does not create a LogEntry', () => {
+  it('info writes to the Output Channel and also creates an `info` LogEntry (#58)', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const vscode = require('vscode');
     const channels: Array<{ name: string; lines: string[] }> = vscode.window._outputChannels;
     const ch = channels.filter((c) => c.name === 'Averenium NuGet Manager').at(-1);
     logger.info('activate start');
-    expect(logger.getEntries()).toHaveLength(0);
     expect(ch?.lines.some((l) => l.includes('[info]') && l.includes('activate start'))).toBe(true);
+    const entries = logger.getEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ kind: 'info', command: 'activate start' });
   });
 
-  it('error writes stack and does not throw', () => {
+  it('error writes stack, does not throw, and creates an `error` LogEntry (#58)', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const vscode = require('vscode');
     const channels: Array<{ name: string; lines: string[] }> = vscode.window._outputChannels;
@@ -200,6 +222,10 @@ describe('Logger', () => {
     expect(() => logger.error('activate failed', new Error('boom'))).not.toThrow();
     expect(ch?.lines.some((l) => l.includes('[error]') && l.includes('activate failed'))).toBe(true);
     expect(ch?.lines.some((l) => l.includes('boom'))).toBe(true);
+    const entries = logger.getEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ kind: 'error', command: 'activate failed' });
+    expect(entries[0].stderr).toContain('boom');
   });
 });
 

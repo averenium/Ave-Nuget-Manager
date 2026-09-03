@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
+
+### Added
+
+- A per-project row briefly flashes (green for an upgrade, amber for a downgrade) when its version change actually lands, respecting `prefers-reduced-motion` (#56)
+- Package detail panel: generalized the **Vulnerabilities** section into a **Problems** section that also explains a `packageSourceMapping` mismatch (which sources are mapped, why none match) and a blocked-updates state — previously those only showed as a bare row-mark tooltip with no detail (#57)
+- **Log tab redesign** (#58, subsumes #50/#51/#52): a `kind` (cli/edit/scan/info/error) badge per row, with `args` rendered for the previously content-free synthetic rows (`edit PackageReference`, `nuget.config …`, `vulnerability scan skipped`); an in-panel search over command/args/output plus an All/Errors/CLI/Edits filter, since VS Code's own Ctrl+F cannot reach a sidebar view; day separators between entries from different days; a failure-aware one-line preview (via `summarizeDotnetFailure`) instead of a truncated stdout/stderr dump, with the full command, ordered stdout/stderr, and a clickable `NU‑code` chip once expanded; **Copy**, **Copy sanitised** (same redaction as a trace zip, for pasting into a public issue), and **Open Output** (the previously unreachable unbounded Output Channel) toolbar actions; `Logger.info`/`Logger.error` now also produce a Log-tab row instead of being Output-Channel-only; and a 500-entry ring buffer (host and webview) so a long session doesn't grow memory unbounded — the Output Channel remains the unbounded sink.
+
+Not folded into this pass: correlating a batch update's ~2N rows under one job/group (#58 finding #5) would need a job id threaded through the whole install pipeline (`INuGetBackend`/`CliBackend`/`cliRunner` signatures) — left for a follow-up given the size of this change already.
 
 ### Fixed
 
@@ -8,11 +16,9 @@
 - Update/Install button icons (Packages detail, per-project rows, Groups) always showed **↑**/**↓** regardless of whether the picked version was actually an upgrade, a downgrade, or unchanged — they're now direction-aware, and the button itself looks inactive (muted, not accent-colored) when the picked version already matches what's installed (#55)
 - Remove buttons in Packages (detail panel and per-project rows) used a plain **✕** instead of the trash icon already used in Sources, and rendered with the always-red `.btn--danger` styling — now the shared trash icon, muted at rest and red only on hover, matching Sources (#60)
 - The **↑**/**⊘**/**⚠**/**∅** row marks sized and positioned their pill off each glyph's own font-dependent metrics, so they rendered as differently-sized circles with the symbol sitting off-center inside the ring (worst for **⚠**) — replaced the Unicode glyphs with small fixed-coordinate SVG icons, the same approach already used for the Sources trash icon, so centering no longer depends on font/platform (#60)
+- **Log**: a new entry always auto-scrolled to the bottom, yanking the view away while reading an earlier one — it now only scrolls if the view was already at the bottom, otherwise a "N new ↓" pill appears (#51)
+- **Log**: `toLocaleTimeString()` followed the VS Code UI language rather than being explicit — entry times are now a fixed `HH:mm:ss.SSS`, independent of locale, with the full ISO timestamp in a tooltip (#52)
 
-### Added
-
-- A per-project row briefly flashes (green for an upgrade, amber for a downgrade) when its version change actually lands, respecting `prefers-reduced-motion` (#56)
-- Package detail panel: generalized the **Vulnerabilities** section into a **Problems** section that also explains a `packageSourceMapping` mismatch (which sources are mapped, why none match) and a blocked-updates state — previously those only showed as a bare row-mark tooltip with no detail (#57)
 
 ## 0.4.2
 

@@ -1,133 +1,367 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
-import type { LogEntry } from '../../types';
+import { summarizeDotnetFailure, summarizeListProblems } from '../../dotnetOutput';
+import { IconCopy, IconBroom, IconShieldBadge, IconOutputPanel, IconRecordDot, IconStopSquare } from '../utils/icons';
+import type { LogEntry, LogEntryKind } from '../../types';
 
-const PREVIEW_LINES = 3;
+type KindFilter = 'all' | 'error' | 'cli' | 'edit';
 
-function splitLines(text: string): string[] {
-  return (text ?? '').split('\n').map((l) => l.trimEnd()).filter((l) => l.length > 0);
+const NU_CODE_RE = /\bNU\d{4}\b/;
+const BOTTOM_SLACK_PX = 24;
+/** Below this, a command fits the row on one line — splitting it too would
+ *  just waste a line on something like "dotnet --version" (#58 follow-up). */
+const CLI_SPLIT_THRESHOLD = 48;
+
+function formatClock(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+function formatDuration(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+/** "Today" / "Yesterday" / an explicit date — never locale-formatted (#52/#58). */
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const oneDay = 24 * 60 * 60 * 1000;
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / oneDay);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function firstErrorLine(entry: LogEntry): string {
+  // `--format json` commands (package search, list) report failure as a
+  // "problems" array, not plain-text `error:`/NUxxxx lines — check that
+  // shape first, since summarizeDotnetFailure's line heuristics don't
+  // recognize it and fall back to just the raw JSON's first line ("{").
+  const jsonProblem = summarizeListProblems(entry.stdout) ?? summarizeListProblems(entry.stderr);
+  const summary = jsonProblem ?? summarizeDotnetFailure(entry.stdout, entry.stderr);
+  const line = summary.split('\n').map((l) => l.trim()).find(Boolean);
+  return line ?? (entry.timedOut ? 'Operation timed out' : 'Failed');
+}
+
+/**
+ * `cli` entries store the full command as one string ("dotnet package search
+ * Foo --exact-match --configfile <long path> --format json"), which used to
+ * render on one line, truncated with an ellipsis, with no way to read the
+ * rest short of expanding the row. Split at the first `-`/`--` flag, so the
+ * command-and-target part stays together on the main line and the (often
+ * long, path-heavy) flags wrap onto their own smaller-font line instead.
+ */
+function splitCliCommand(command: string): { main: string; detail?: string } {
+  if (command.length <= CLI_SPLIT_THRESHOLD) return { main: command };
+  const tokens = command.split(' ');
+  const flagIndex = tokens.findIndex((t) => t.startsWith('-'));
+  if (flagIndex <= 0) return { main: command };
+  return { main: tokens.slice(0, flagIndex).join(' '), detail: tokens.slice(flagIndex).join(' ') };
+}
+
+/** A `<pre>` block with a Copy button that only shows up on hover. */
+function CopyableBlock({ className, text }: { className: string; text: string }) {
+  const { send } = useNugetManager();
+  return (
+    <div className="log-row__copyable">
+      <pre className={className}>{text}</pre>
+      <button
+        type="button"
+        className="log-row__copy-hover"
+        title="Copy"
+        aria-label="Copy"
+        onClick={() => send({ type: 'COPY_TEXT', text })}
+      >
+        <IconCopy />
+      </button>
+    </div>
+  );
+}
+
+function kindLabel(kind: LogEntryKind): string {
+  return kind === 'error' ? 'error' : kind;
+}
+
+function matchesKindFilter(entry: LogEntry, filter: KindFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'error') return entry.kind === 'error' || (entry.exitCode !== 0 && entry.exitCode !== null) || entry.timedOut;
+  if (filter === 'cli') return entry.kind === 'cli';
+  return entry.kind === 'edit' || entry.kind === 'scan' || entry.kind === 'info';
+}
+
+function matchesSearch(entry: LogEntry, query: string): boolean {
+  if (!query) return true;
+  const haystack = [entry.command, entry.args.join(' '), entry.stdout, entry.stderr].join('\n').toLowerCase();
+  return haystack.includes(query);
 }
 
 export function LogTab() {
   const { state, send } = useNugetManager();
   const { entries } = state.log;
   const recording = state.traceRecording;
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [search, setSearch] = useState('');
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
+  const [pendingCount, setPendingCount] = useState(0);
+  const prevLengthRef = useRef(entries.length);
 
   useEffect(() => { send({ type: 'GET_LOG_ENTRIES' }); }, [send]);
 
+  const isAtBottom = () => {
+    const el = listRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK_PX;
+  };
+
+  // Stick to the bottom only if the view was already there — otherwise show
+  // a "N new" pill instead of yanking the scroll position (#51).
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const grew = entries.length - prevLengthRef.current;
+    prevLengthRef.current = entries.length;
+    if (grew <= 0) return;
+    const el = listRef.current;
+    if (!el) return;
+    if (isAtBottom()) {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      setPendingCount((c) => c + grew);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries.length]);
 
+  const scrollToBottom = () => {
+    const el = listRef.current;
+    if (!el) return;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' });
+    setPendingCount(0);
+  };
+
+  const query = search.trim().toLowerCase();
+  const filtered = useMemo(
+    () => entries.filter((e) => matchesKindFilter(e, kindFilter) && matchesSearch(e, query)),
+    [entries, kindFilter, query],
+  );
+
+  const copyVisible = () => {
+    const text = filtered.map((e) => {
+      const head = `[${e.timestamp}] ${e.command}${e.args.length ? ' ' + e.args.join(' ') : ''}`;
+      const body = [e.stdout, e.stderr].filter((s) => s.trim().length > 0).join('\n');
+      return body ? `${head}\n${body}` : head;
+    }).join('\n\n');
+    send({ type: 'COPY_TEXT', text });
+  };
+
+  const copySanitized = () => {
+    const text = filtered.map((e) => {
+      const head = `[${e.timestamp}] ${e.command}${e.args.length ? ' ' + e.args.join(' ') : ''}`;
+      const body = [e.stdout, e.stderr].filter((s) => s.trim().length > 0).join('\n');
+      return body ? `${head}\n${body}` : head;
+    }).join('\n\n');
+    send({ type: 'COPY_LOG_SANITIZED', text });
+  };
+
+  let lastDay: string | null = null;
+
   return (
-    <div className="log-tab" role="log" aria-label="Operation log" aria-live="polite">
-      <div className="log-toolbar">
+    <div className="log-tab" role="log" aria-label="Operation log">
+      <div className="pkg-toolbar">
         {recording ? (
           <button
             type="button"
-            className="log-toolbar__btn log-toolbar__btn--stop"
+            className="log-trace-btn log-trace-btn--recording"
             onClick={() => send({ type: 'STOP_TRACE' })}
+            title="Stop & save the trace zip"
           >
-            ■ Stop & save zip
+            <IconStopSquare /> Stop
           </button>
         ) : (
           <button
             type="button"
-            className="log-toolbar__btn"
+            className="log-trace-btn"
             onClick={() => send({ type: 'START_TRACE' })}
+            title="Start a diagnostic trace"
           >
-            ● Trace
+            <IconRecordDot /> Trace
           </button>
         )}
+        <input
+          type="search"
+          className="pkg-toolbar__search"
+          placeholder="Search commands, args, output…"
+          value={search}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search log entries"
+        />
         {recording && (
           <span className="log-toolbar__badge" title="Diagnostic trace is recording">
             recording
           </span>
         )}
-        <span className="log-toolbar__spacer" />
+        <select
+          className="log-kind-select"
+          value={kindFilter}
+          onChange={(e) => setKindFilter(e.target.value as KindFilter)}
+          aria-label="Filter by kind"
+        >
+          <option value="all">All</option>
+          <option value="error">Errors</option>
+          <option value="cli">CLI</option>
+          <option value="edit">Edits</option>
+        </select>
+        <div className="log-toolbar__divider" />
         <button
           type="button"
-          className="log-toolbar__btn"
-          onClick={() => send({ type: 'CLEAR_LOG' })}
+          className="pkg-toolbar__refresh"
+          onClick={copyVisible}
+          title="Copy visible entries"
+          aria-label="Copy visible entries"
         >
-          Clear log
+          <IconCopy />
+        </button>
+        <button
+          type="button"
+          className="pkg-toolbar__refresh log-toolbar__icon-btn--badged"
+          onClick={copySanitized}
+          title="Copy visible entries, sanitised (safe to paste into a public issue)"
+          aria-label="Copy visible entries, sanitised"
+        >
+          <IconCopy />
+          <span className="log-toolbar__badge-icon"><IconShieldBadge /></span>
+        </button>
+        <button
+          type="button"
+          className="pkg-toolbar__refresh"
+          onClick={() => send({ type: 'OPEN_LOG_OUTPUT' })}
+          title="Open the Output channel — full, unbounded log"
+          aria-label="Open Output channel"
+        >
+          <IconOutputPanel />
+        </button>
+        <button
+          type="button"
+          className="pkg-toolbar__refresh"
+          onClick={() => send({ type: 'CLEAR_LOG' })}
+          title="Clear log"
+          aria-label="Clear log"
+        >
+          <IconBroom />
         </button>
       </div>
       {entries.length === 0 ? (
         <div className="empty-state">No operations logged yet</div>
+      ) : filtered.length === 0 ? (
+        <div className="empty-state">No entries match this search/filter</div>
       ) : (
-        <div className="log-tab__list">
-          {entries.map((entry) => <LogEntryRow key={entry.id} entry={entry} />)}
-          <div ref={bottomRef} />
+        <div className="log-tab__list" ref={listRef}>
+          {filtered.map((entry) => {
+            const day = dayLabel(entry.timestamp);
+            const showSep = day !== lastDay;
+            lastDay = day;
+            return (
+              <React.Fragment key={entry.id}>
+                {showSep && <div className="log-day-sep">{day}</div>}
+                <LogRow entry={entry} />
+              </React.Fragment>
+            );
+          })}
+          {pendingCount > 0 && (
+            <button type="button" className="log-tab__new-pill" onClick={scrollToBottom}>
+              {pendingCount} new ↓
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function LogEntryRow({ entry }: { entry: LogEntry }) {
+function LogRow({ entry }: { entry: LogEntry }) {
+  const { send } = useNugetManager();
   const [open, setOpen] = useState(false);
 
+  const failed = entry.kind === 'error' || (entry.exitCode !== 0 && entry.exitCode !== null) || entry.timedOut;
   const exitClass = entry.timedOut
-    ? 'log-entry__exit--timeout'
-    : entry.exitCode === 0 ? 'log-entry__exit--ok' : 'log-entry__exit--err';
-
+    ? 'log-row__exit--timeout'
+    : failed ? 'log-row__exit--err' : 'log-row__exit--ok';
+  const nuCode = failed ? (entry.stderr.match(NU_CODE_RE) ?? entry.stdout.match(NU_CODE_RE))?.[0] : undefined;
   const exitLabel = entry.timedOut
     ? 'TIMEOUT'
-    : entry.exitCode !== null ? `exit ${entry.exitCode}` : '—';
+    : nuCode ?? (entry.exitCode !== null ? (failed ? `exit ${entry.exitCode}` : 'ok') : failed ? 'fail' : 'ok');
 
-  const stdoutLines = splitLines(entry.stdout);
-  const stderrLines = splitLines(entry.stderr);
-  const allLines = [
-    ...stdoutLines.map((l) => ({ text: l, kind: 'out' as const })),
-    ...stderrLines.map((l) => ({ text: l, kind: 'err' as const })),
-  ];
+  // `cli` entries embed args in `command` itself ("dotnet <args>") — split
+  // off the stable "dotnet <verb>" prefix so a long one still gets a second,
+  // smaller-font line instead of a single truncated ellipsis. Synthetic
+  // entries keep the payload separately in `args`, previously dropped
+  // entirely (#58 #1) — shown the same way.
+  const { main: cmdMain, detail: cmdDetail } = entry.kind === 'cli'
+    ? splitCliCommand(entry.command)
+    : { main: entry.command, detail: entry.args.join(' ') || undefined };
+  const fullCmd = entry.kind === 'cli' ? entry.command : `${entry.command}${cmdDetail ? ' ' + cmdDetail : ''}`;
+  const errPreview = !open && failed ? firstErrorLine(entry) : undefined;
 
-  const previewLines = allLines.slice(0, PREVIEW_LINES);
-  const remainingLines = allLines.slice(PREVIEW_LINES);
-  const hasMore = remainingLines.length > 0;
-
-  const ts = new Date(entry.timestamp).toLocaleTimeString();
-  const durationLabel = (entry.durationMs ?? 0) >= 1000
-    ? `${((entry.durationMs ?? 0) / 1000).toFixed(1)}s`
-    : `${entry.durationMs ?? 0}ms`;
+  const copyEntry = () => {
+    const body = [entry.stdout, entry.stderr].filter((s) => s.trim().length > 0).join('\n');
+    const text = body ? `${fullCmd}\n\n${body}` : fullCmd;
+    send({ type: 'COPY_TEXT', text });
+  };
 
   return (
-    <div className="log-entry">
-      <div className="log-entry__summary">
-        <span className="log-entry__ts">{ts}</span>
-        <span className="log-entry__duration">{durationLabel}</span>
-        <span className="log-entry__cmd">{entry.command}</span>
-        <span className={`log-entry__exit ${exitClass}`}>[{exitLabel}]</span>
-        {hasMore && (
-          <button
-            className="log-entry__toggle"
-            aria-expanded={open}
-            onClick={() => setOpen((o) => !o)}
-          >
-            {open ? '▲' : `▼ +${remainingLines.length}`}
-          </button>
-        )}
+    <div className={`log-row${open ? ' log-row--open' : ''}`}>
+      <div className="log-row__summary" onClick={() => setOpen((o) => !o)}>
+        <svg className="log-row__chev" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <path d="M6 3.5l5 4.5-5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="log-row__ts" title={entry.timestamp}>{formatClock(entry.timestamp)}</span>
+        <span className="log-row__dur">{formatDuration(entry.durationMs)}</span>
+        <span className={`log-row__kind log-row__kind--${entry.kind}`}>{kindLabel(entry.kind)}</span>
+        <span className="log-row__cmd" title={fullCmd}>
+          <span className="log-row__cmd-main">{cmdMain}</span>
+          {cmdDetail && <span className="log-row__cmd-detail">{cmdDetail}</span>}
+        </span>
+        <span className={`log-row__exit ${exitClass}`}>{exitLabel}</span>
       </div>
 
-      {previewLines.length > 0 && (
-        <div className="log-entry__preview">
-          {previewLines.map((l, i) => (
-            <pre key={i} className={`log-entry__body log-entry__body--${l.kind === 'err' ? 'stderr' : 'stdout'}`}>
-              {l.text}
-            </pre>
-          ))}
-        </div>
+      {errPreview && (
+        <button type="button" className="log-row__err-preview" onClick={() => setOpen(true)}>
+          <span>{errPreview}</span>
+        </button>
       )}
 
-      {open && hasMore && (
-        <div className="log-entry__details">
-          {remainingLines.map((l, i) => (
-            <pre key={i} className={`log-entry__body log-entry__body--${l.kind === 'err' ? 'stderr' : 'stdout'}`}>
-              {l.text}
-            </pre>
-          ))}
+      {open && (
+        <div className="log-row__body">
+          <div className="log-row__stream-label">command</div>
+          <CopyableBlock className="log-row__cmd-full" text={fullCmd} />
+          {entry.stdout.trim() && (
+            <>
+              <div className="log-row__stream-label">stdout</div>
+              <CopyableBlock className="log-row__stream" text={entry.stdout} />
+            </>
+          )}
+          {entry.stderr.trim() && (
+            <>
+              <div className="log-row__stream-label">stderr</div>
+              <CopyableBlock className="log-row__stream log-row__stream--stderr" text={entry.stderr} />
+              {nuCode && (
+                <a
+                  className="log-row__nu-chip"
+                  href={`https://learn.microsoft.com/en-us/nuget/reference/errors-and-warnings/${nuCode.toLowerCase()}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {nuCode} ↗
+                </a>
+              )}
+            </>
+          )}
+          <div className="log-row__actions">
+            <button type="button" className="log-toolbar__btn" onClick={copyEntry}>Copy</button>
+          </div>
         </div>
       )}
     </div>

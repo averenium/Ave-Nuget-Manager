@@ -4,11 +4,11 @@
 
 `Logger`:
 
-- Output Channel `Averenium NuGet Manager`;
-- in-memory масив `LogEntry[]` (хронологічний, без ліміту розміру);
+- Output Channel `Averenium NuGet Manager` — unbounded, повний сінк;
+- in-memory масив `LogEntry[]` (хронологічний), ring buffer — макс. 500, старі відкидаються (`MAX_ENTRIES`, #58);
 - pub/sub: `subscribe(listener)` → `Disposable`;
 - `clear()` — порожнить масив і Output Channel. **Не** зупиняє trace і не чіпає `globalStorage`.
-- `info` / `error` — діагностика host (активація, view). Лише Output Channel (+ `console.error` для `error`). У вкладку Log не потрапляють.
+- `info` / `error` — діагностика host (активація, view). Output Channel (+ `console.error` для `error`) **і** рядок у вкладці Log (`kind: 'info'`/`'error'`, без `stdout`; `error` кладе повний текст у `stderr`) — до #58 в Log tab не потрапляли.
 
 `activate()` обгорнутий у try/catch: кроки в Output (`activate start` … `activate done`). Якщо кидок — `error` зі stack, канал показується, toast `AVE NuGet Manager failed to start`, виняток пробрасується далі в VS Code. `resolveWebviewView` так само ловить свої помилки.
 
@@ -16,19 +16,24 @@
 
 Куди дивитись, якщо панель не з’явилась: **Output → Averenium NuGet Manager**, не лог C# / restore.
 
-Кожен `CliRunner.run` і частина «несправжніх» операцій broker (резолв config chain) викликають `logCliOperation`.
+Кожен `CliRunner.run` і частина «несправжніх» операцій broker (резолв config chain, edit PackageReference, nuget.config edits, vulnerability scan skipped) викликають `logCliOperation`.
 
-`LogEntry`: `id` (UUID), `timestamp` (ISO), `command`, `args`, `stdout`, `stderr`, `exitCode`, `timedOut`, `durationMs`.
+`LogEntry`: `id` (UUID), `timestamp` (ISO), `kind` (`'cli' | 'edit' | 'scan' | 'info' | 'error'`, дефолт `'cli'` в `logCliOperation` — реальний `dotnet` завжди йде через `CliRunner._logCli`, «несправжні» виклики в broker передають свій kind явно), `command`, `args`, `stdout`, `stderr`, `exitCode`, `timedOut`, `durationMs`.
 
 Помилки запису в Output Channel і помилки слухачів ковтаються — логер не повинен ламати CLI.
 
 ## Доставка в UI
 
-При `attach()` broker підписується на logger і шле `LOG_ENTRY_ADDED`. Вкладка Log при монтуванні просить повний зріз `GET_LOG_ENTRIES`. `CLEAR_LOG` шле `LOG_CLEARED`.
+При `attach()` broker підписується на logger і шле `LOG_ENTRY_ADDED`. Вкладка Log при монтуванні просить повний зріз `GET_LOG_ENTRIES`. `CLEAR_LOG` шле `LOG_CLEARED`. Webview-бік reducer теж тримає ring buffer (500, той самий ліміт, що й у `Logger`).
 
-`LogTab`: toolbar (**● Trace** / **■ Stop & save zip**, **Clear log**), бедж `recording`, автоскрол вниз, рядок з часом / duration / командою / exit, перші 3 рядки виводу, решта за кнопкою розгортання.
+`LogTab` (#58, редизайн — subsumes #50 пошук / #51 автоскрол / #52 формат часу):
 
-Метод `Logger.show()` (показати Output Channel) у UI не викликається.
+- **Toolbar**: **● Trace** / **■ Stop & save zip**, бедж `recording`, пошук (командa+args+stdout+stderr, case-insensitive substring — нативний Ctrl+F не працює в sidebar `WebviewView`), фільтр за kind (All / Errors / CLI / Edits), **Copy** (видимі рядки), **Copy sanitised** (`COPY_LOG_SANITIZED` → host прогонить через `sanitizeText`/`sanitizeCtx`, той самий редактор, що й trace-zip — для вставки в публічний issue без повного трейсу), **Output** (`OPEN_LOG_OUTPUT` → `logger.show()`), **Clear**.
+- **Рядок**: шеврон, час `HH:mm:ss.SSS` (без locale; повний ISO в `title`), duration, kind-бедж, команда (+ `args` окремим рядком для «несправжніх» kind — `cli` вже має args у самому `command`), exit-чіп (`ok`/`exit N`/NU-код/`TIMEOUT`). Розділювачі днів (`Today`/`Yesterday`/`YYYY-MM-DD`) між рядками різних днів.
+- **Прев'ю помилки** (тільки для нерозгорнутого рядка, що впав): перший змістовний рядок через `summarizeDotnetFailure`, а не перші 3 рядки сирого виводу.
+- **Розгорнутий рядок**: повна команда (copyable), stdout і stderr окремими підписаними блоками (не конкатенація), NU-код клікабельним чіпом на `learn.microsoft.com`, кнопка Copy для самого рядка.
+- **Автоскрол**: лише якщо список уже був унизу (`isAtBottom`, поріг 24px) — інакше піл "N new ↓" (клік = scroll to bottom, `prefers-reduced-motion` враховано).
+- `role="log"` без `aria-live` на всьому контейнері (раніше кожен доданий рядок озвучувався скрінрідером).
 
 ## Trace (діагностика для issue)
 

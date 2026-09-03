@@ -132,6 +132,9 @@ export interface AppState {
   isWindows: boolean;
 }
 
+/** Mirrors Logger's own ring-buffer cap (#58). */
+const LOG_ENTRIES_CAP = 500;
+
 const initialState: AppState = {
   scope: null,
   activeTab: 'packages',
@@ -497,8 +500,12 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
     case 'LOG_ENTRIES':
       return { ...state, log: { entries: msg.entries } };
 
-    case 'LOG_ENTRY_ADDED':
-      return { ...state, log: { entries: [...state.log.entries, msg.entry] } };
+    case 'LOG_ENTRY_ADDED': {
+      // Ring buffer, mirrors Logger's own cap — the Output Channel stays unbounded (#58).
+      const next = [...state.log.entries, msg.entry];
+      if (next.length > LOG_ENTRIES_CAP) next.splice(0, next.length - LOG_ENTRIES_CAP);
+      return { ...state, log: { entries: next } };
+    }
 
     case 'LOG_CLEARED':
       return { ...state, log: { entries: [] } };

@@ -457,8 +457,7 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   flex: 0 0 auto; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
   font-weight: 600; color: var(--color-error);
 }
-.vuln-item--moderate .vuln-item__sev,
-.vuln-item--low .vuln-item__sev { color: var(--color-warning); }
+.vuln-item--warning .vuln-item__sev { color: var(--color-warning); }
 .vuln-item__body { min-width: 0; overflow-wrap: anywhere; }
 .vuln-item__body a { color: inherit; }
 .vuln-item--via .vuln-item__sev { color: var(--color-warning); }

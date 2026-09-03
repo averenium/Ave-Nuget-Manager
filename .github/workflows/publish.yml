@@ -40,15 +40,15 @@ jobs:
 
       - name: Extract Changelog section
         id: extract_changelog
-        uses: ffurrer2/extract-release-notes@v2
+        uses: mindsers/changelog-reader-action@v2
         with:
-          changelog_file: CHANGELOG.md
-          release_notes: ${{ steps.metadata.outputs.version }}
+          path: CHANGELOG.md
+          version: ${{ steps.metadata.outputs.version }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: ${{ steps.metadata.outputs.vsix_file }}
-          body: ${{ steps.extract_changelog.outputs.release_notes }}
+          body: ${{ steps.extract_changelog.outputs.changes }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

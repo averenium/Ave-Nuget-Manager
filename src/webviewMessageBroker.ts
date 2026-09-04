@@ -18,7 +18,8 @@ import {
 import type { Logger } from './logger';
 import type { TraceController } from './traceController';
 import { sanitizeCtx } from './traceController';
-import { sanitizeText } from './traceSanitize';
+import { sanitizeText, type FileAlias, type SanitizeContext } from './traceSanitize';
+import { collectScopeSnapshotFiles } from './tracePack';
 import type { WebviewMessage } from './messages';
 import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
 import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile } from './types';
@@ -453,7 +454,7 @@ export class WebviewMessageBroker {
         break;
 
       case 'COPY_LOG_SANITIZED':
-        await vscode.env.clipboard.writeText(sanitizeText(msg.text, sanitizeCtx()));
+        await vscode.env.clipboard.writeText(sanitizeText(msg.text, await this._logSanitizeCtx()));
         break;
 
       case 'OPEN_LOG_OUTPUT':
@@ -2101,6 +2102,22 @@ export class WebviewMessageBroker {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * `sanitizeCtx()` alone has no `aliases`, so it can only redact the
+   * workspace root / home / hostname — project file names inside a relative
+   * path (`<workspace>/Foo.Data/Foo.Data.csproj`) pass through unchanged.
+   * "Copy sanitised" in the Log tab isn't a full trace-zip pack, but it must
+   * still mask project names the same way, so build the same kind of
+   * `pNN.csproj` aliases from the current scope's project files.
+   */
+  private async _logSanitizeCtx(): Promise<SanitizeContext> {
+    const scope = this.provider.getCurrentScope() ?? undefined;
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const snapshot = await collectScopeSnapshotFiles(scope, [], workspaceRoot);
+    const aliases: FileAlias[] = snapshot.files.map((f) => ({ absPath: f.absPath, dest: f.destName }));
+    return { ...sanitizeCtx(), aliases };
   }
 
   private _scopeStartDir(scope: WorkspaceScope | null | undefined): string | undefined {

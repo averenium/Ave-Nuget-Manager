@@ -812,14 +812,6 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* ── Log tab ────────────────────────────────────────────────────────────────── */
 .log-tab { display: flex; flex-direction: column; overflow: hidden; font-family: var(--font-mono); font-size: 11px; }
-.log-toolbar__btn {
-  font-family: var(--font-ui); font-size: 12px;
-  background: transparent; color: var(--color-fg);
-  border: 1px solid var(--color-border); border-radius: var(--radius);
-  padding: 2px 8px; cursor: pointer;
-  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
-}
-.log-toolbar__btn:hover { border-color: var(--color-btn-bg); color: var(--color-btn-bg); }
 .log-toolbar__badge {
   font-family: var(--font-ui); font-size: 11px;
   color: var(--color-error);
@@ -839,7 +831,8 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .log-trace-btn:hover { border-color: var(--color-btn-bg); color: var(--color-btn-bg); }
 .log-trace-btn--recording { border-color: var(--color-error); color: var(--color-error); }
-.log-tab__list { flex: 1; overflow-y: auto; min-height: 0; position: relative; padding: 0 var(--spacing-sm) var(--spacing-xs); }
+.log-tab__list-wrap { flex: 1; min-height: 0; position: relative; }
+.log-tab__list { height: 100%; overflow-y: auto; padding: 0 var(--spacing-sm) var(--spacing-xs); }
 .log-tab .log-entry { font-family: var(--font-mono); }
 .log-entry { margin-bottom: 3px; border: 1px solid var(--color-border); border-radius: var(--radius); }
 .log-entry--active { border-color: var(--color-btn-bg); }
@@ -972,21 +965,34 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   border-radius: 3px; padding: 1px 6px; margin: 4px 0 1px; text-decoration: none;
 }
 .log-row__nu-chip:hover { background: color-mix(in srgb, var(--color-error) 12%, transparent); }
-.log-row__actions { display: flex; justify-content: flex-end; margin-top: 4px; }
 
-/* Per-block copy affordance on the command/stdout/stderr blocks, revealed on hover. */
+/*
+ * Per-block copy affordance on the command/stdout/stderr blocks, revealed on
+ * hover. Pinned to the right edge (not under the cursor, which would cover
+ * the text being read); `data-copy-pos` (set in CopyableBlock's onMouseMove)
+ * snaps it to whichever of 2 fixed slots — top or bottom, only top on a short
+ * block — is nearest the cursor, instead of a fixed top corner far from a
+ * tall block's content, or continuous tracking / a 3rd middle slot, both of
+ * which felt jittery/unpredictable (#66).
+ */
 .log-row__copyable { position: relative; }
 .log-row__copy-hover {
-  position: absolute; top: 3px; right: 3px;
+  position: absolute; right: 3px; top: 3px;
   width: 18px; height: 18px; padding: 0;
   display: flex; align-items: center; justify-content: center;
-  opacity: 0; transition: opacity 120ms ease;
-  background: transparent; color: var(--color-tab-inactive);
+  opacity: 0; transition: opacity 120ms ease, top 120ms ease;
+  background: transparent; color: var(--color-fg);
   border: none; border-radius: var(--radius); cursor: pointer;
 }
+.log-row__copyable[data-copy-pos="bottom"] .log-row__copy-hover { top: calc(100% - 21px); }
+/* Scrolling passes rows under a stationary cursor; the browser's own hover
+   hit-testing then toggles each button's `:hover` state as it crosses,
+   which reads as flicker — pointer-events:none removes it from hit-testing
+   while `.log-tab__list--scrolling` is set (#66 follow-up). */
+.log-tab__list--scrolling .log-row__copyable { pointer-events: none; }
 .log-row__copyable:hover .log-row__copy-hover,
-.log-row__copy-hover:focus-visible { opacity: 0.55; }
-.log-row__copy-hover:hover { opacity: 1; color: var(--color-fg); background: var(--color-list-hover); }
+.log-row__copy-hover:focus-visible { opacity: 0.8; }
+.log-row__copy-hover:hover { opacity: 1; background: var(--color-list-hover); }
 
 .log-tab__new-pill {
   position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
@@ -1267,8 +1273,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   select,
   .sources-input,
   .popup__search,
-  .pkg-toolbar__search,
-  .log-toolbar__btn {
+  .pkg-toolbar__search {
     outline-color: ButtonText;
   }
   .btn--primary, .btn--secondary { forced-color-adjust: none; background: ButtonFace; color: ButtonText; }

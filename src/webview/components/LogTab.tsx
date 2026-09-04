@@ -62,11 +62,38 @@ function splitCliCommand(command: string): { main: string; detail?: string } {
   return { main: tokens.slice(0, flagIndex).join(' '), detail: tokens.slice(flagIndex).join(' ') };
 }
 
-/** A `<pre>` block with a Copy button that only shows up on hover. */
+type CopyPos = 'top' | 'bottom';
+
+/** Below this, a top+bottom button pair would overlap — just use top (#66 follow-up). */
+const COPY_HOVER_SPLIT_MIN_PX = 48;
+
+/**
+ * A `<pre>` block with a Copy button that only shows up on hover. It stays
+ * pinned to the right edge (not under the cursor, which would sit on top of
+ * whatever text is being read) and snaps to whichever of 2 fixed slots — top
+ * or bottom — is nearest the cursor, rather than continuously tracking it
+ * (which felt jittery/unpredictable) or sitting stuck in a fixed top corner
+ * far from a tall block's content (#66).
+ */
 function CopyableBlock({ className, text }: { className: string; text: string }) {
   const { send } = useNugetManager();
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<CopyPos>('top');
+
+  const handleMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    if (!el) return;
+    const height = el.offsetHeight;
+    if (height < COPY_HOVER_SPLIT_MIN_PX) {
+      setPos('top');
+      return;
+    }
+    const fraction = (e.clientY - el.getBoundingClientRect().top) / height;
+    setPos(fraction < 0.5 ? 'top' : 'bottom');
+  };
+
   return (
-    <div className="log-row__copyable">
+    <div className="log-row__copyable" ref={ref} onMouseMove={handleMove} data-copy-pos={pos}>
       <pre className={className}>{text}</pre>
       <button
         type="button"
@@ -107,8 +134,20 @@ export function LogTab() {
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [pendingCount, setPendingCount] = useState(0);
   const prevLengthRef = useRef(entries.length);
+  // Suppress hover during scroll: rows pass under a stationary cursor, and
+  // the browser's own hover hit-testing toggles each copy-hover button's
+  // `:hover` state as they cross it, which reads as flicker (#66 follow-up).
+  const [scrolling, setScrolling] = useState(false);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => { send({ type: 'GET_LOG_ENTRIES' }); }, [send]);
+  useEffect(() => () => clearTimeout(scrollTimerRef.current), []);
+
+  const handleScroll = () => {
+    setScrolling(true);
+    clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => setScrolling(false), 150);
+  };
 
   const isAtBottom = () => {
     const el = listRef.current;
@@ -258,18 +297,28 @@ export function LogTab() {
       ) : filtered.length === 0 ? (
         <div className="empty-state">No entries match this search/filter</div>
       ) : (
-        <div className="log-tab__list" ref={listRef}>
-          {filtered.map((entry) => {
-            const day = dayLabel(entry.timestamp);
-            const showSep = day !== lastDay;
-            lastDay = day;
-            return (
-              <React.Fragment key={entry.id}>
-                {showSep && <div className="log-day-sep">{day}</div>}
-                <LogRow entry={entry} />
-              </React.Fragment>
-            );
-          })}
+        // The pill lives in this non-scrolling wrapper, not inside
+        // `.log-tab__list` itself — that element is the scroll container, so
+        // an absolutely-positioned child of it scrolls away with the content
+        // instead of staying pinned to the visible bottom edge (#66 follow-up).
+        <div className="log-tab__list-wrap">
+          <div
+            className={`log-tab__list${scrolling ? ' log-tab__list--scrolling' : ''}`}
+            ref={listRef}
+            onScroll={handleScroll}
+          >
+            {filtered.map((entry) => {
+              const day = dayLabel(entry.timestamp);
+              const showSep = day !== lastDay;
+              lastDay = day;
+              return (
+                <React.Fragment key={entry.id}>
+                  {showSep && <div className="log-day-sep">{day}</div>}
+                  <LogRow entry={entry} />
+                </React.Fragment>
+              );
+            })}
+          </div>
           {pendingCount > 0 && (
             <button type="button" className="log-tab__new-pill" onClick={scrollToBottom}>
               {pendingCount} new ↓
@@ -282,7 +331,6 @@ export function LogTab() {
 }
 
 function LogRow({ entry }: { entry: LogEntry }) {
-  const { send } = useNugetManager();
   const [open, setOpen] = useState(false);
 
   const failed = entry.kind === 'error' || (entry.exitCode !== 0 && entry.exitCode !== null) || entry.timedOut;
@@ -304,12 +352,6 @@ function LogRow({ entry }: { entry: LogEntry }) {
     : { main: entry.command, detail: entry.args.join(' ') || undefined };
   const fullCmd = entry.kind === 'cli' ? entry.command : `${entry.command}${cmdDetail ? ' ' + cmdDetail : ''}`;
   const errPreview = !open && failed ? firstErrorLine(entry) : undefined;
-
-  const copyEntry = () => {
-    const body = [entry.stdout, entry.stderr].filter((s) => s.trim().length > 0).join('\n');
-    const text = body ? `${fullCmd}\n\n${body}` : fullCmd;
-    send({ type: 'COPY_TEXT', text });
-  };
 
   return (
     <div className={`log-row${open ? ' log-row--open' : ''}`}>
@@ -335,33 +377,44 @@ function LogRow({ entry }: { entry: LogEntry }) {
 
       {open && (
         <div className="log-row__body">
-          <div className="log-row__stream-label">command</div>
-          <CopyableBlock className="log-row__cmd-full" text={fullCmd} />
-          {entry.stdout.trim() && (
+          {entry.kind === 'cli' ? (
             <>
-              <div className="log-row__stream-label">stdout</div>
-              <CopyableBlock className="log-row__stream" text={entry.stdout} />
-            </>
-          )}
-          {entry.stderr.trim() && (
-            <>
-              <div className="log-row__stream-label">stderr</div>
-              <CopyableBlock className="log-row__stream log-row__stream--stderr" text={entry.stderr} />
-              {nuCode && (
-                <a
-                  className="log-row__nu-chip"
-                  href={`https://learn.microsoft.com/en-us/nuget/reference/errors-and-warnings/${nuCode.toLowerCase()}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {nuCode} ↗
-                </a>
+              <div className="log-row__stream-label">command</div>
+              <CopyableBlock className="log-row__cmd-full" text={fullCmd} />
+              {entry.stdout.trim() && (
+                <>
+                  <div className="log-row__stream-label">stdout</div>
+                  <CopyableBlock className="log-row__stream" text={entry.stdout} />
+                </>
+              )}
+              {entry.stderr.trim() && (
+                <>
+                  <div className="log-row__stream-label">stderr</div>
+                  <CopyableBlock className="log-row__stream log-row__stream--stderr" text={entry.stderr} />
+                </>
               )}
             </>
+          ) : (
+            // The summary row already shows the full label + args — no
+            // separate "command" heading here. But the label is still the
+            // only content for entries with no stdout/stderr (most `edit`
+            // operations), so it's folded into the same block as any
+            // stdout/stderr instead of being dropped (#66 follow-up).
+            <CopyableBlock
+              className={`log-row__cmd-full${failed ? ' log-row__stream--stderr' : ''}`}
+              text={[fullCmd, entry.stdout, entry.stderr].filter((s) => s.trim().length > 0).join('\n\n')}
+            />
           )}
-          <div className="log-row__actions">
-            <button type="button" className="log-toolbar__btn" onClick={copyEntry}>Copy</button>
-          </div>
+          {nuCode && (
+            <a
+              className="log-row__nu-chip"
+              href={`https://learn.microsoft.com/en-us/nuget/reference/errors-and-warnings/${nuCode.toLowerCase()}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {nuCode} ↗
+            </a>
+          )}
         </div>
       )}
     </div>

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Docs**: new user-facing [`docs/vulnerability-script.md`](docs/vulnerability-script.md) — the `averenium.nugetManager.vulnerabilityScript` protocol (stdin/stdout shape, accepted finding fields and aliases, the 30s timeout), a JavaScript example, and a new Python example for the `python <file>` runtime that previously had none documented. Linked from the setting's description and the README settings table (#69)
+- `averenium.nugetManager.vulnerabilityScript` now also runs `.fsx` (`dotnet fsi`), `.csx` (`dotnet script`), and `.dll` — a `.dll`'s PE header is checked for a CLR Runtime Header first, so a managed .NET assembly (a published tool, or one built with `dotnet publish`) runs as `dotnet <file>` and a native `.dll` still falls back to running the file itself unchanged
+
 ### Fixed
 
 - **Log**: **Copy sanitised** didn't mask project names — only the workspace root, home directory, and hostname were redacted, so a path like `<workspace>/AVE.ElectricityBot.Data/AVE.ElectricityBot.Data.csproj` kept the real project name. It now builds the same `pNN.csproj` aliases as a trace zip, from the current scope's project files (#65)

@@ -93,7 +93,7 @@
         "averenium.nugetManager.vulnerabilityScript": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional script that adds extra vulnerability findings. Receives a JSON snapshot on stdin (`scope`, `installed`, `implicit`) and must print a JSON array of findings (or `{ \"findings\": [...] }`) on stdout. Relative paths resolve from the workspace folder. See the extension docs for the finding shape."
+          "markdownDescription": "Optional script that adds extra vulnerability findings. Receives a JSON snapshot on stdin (`scope`, `installed`, `implicit`) and must print a JSON array of findings (or `{ \"findings\": [...] }`) on stdout. Relative paths resolve from the workspace folder. See [docs/vulnerability-script.md](https://github.com/averenium/Ave-Nuget-Manager/blob/main/docs/vulnerability-script.md) for the finding shape and JavaScript/Python examples."
         },
         "averenium.nugetManager.blockedPackages": {
           "type": "array",

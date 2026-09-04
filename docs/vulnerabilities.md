@@ -45,10 +45,15 @@ Finding на **implicit** пакеті також позначає installed (і
 
 ## Користувацький скрипт
 
+Користувацький опис (протокол, JS + Python приклади) — [`vulnerability-script.md`](vulnerability-script.md), лінк з Settings UI і README (#69). Тут — коротко, для контексту коду.
+
 Setting `averenium.nugetManager.vulnerabilityScript` — абсолютний шлях або відносно кореня workspace.
 
 - `.js` / `.mjs` / `.cjs` → `node <file>`
 - `.py` → `python <file>`
+- `.fsx` → `dotnet fsi <file>`
+- `.csx` → `dotnet script <file>`
+- `.dll` → якщо PE-заголовок має непорожній CLR Runtime Header (керована .NET-збірка, `isDotnetAssembly` в `userScriptVulnerabilities.ts`) — `dotnet <file>`; інакше як і будь-яке інше розширення
 - інакше файл запускається як executable
 
 stdin — JSON snapshot поточного scope:

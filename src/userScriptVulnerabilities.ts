@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { getConfig } from './config';
@@ -64,7 +65,69 @@ export function scriptCommand(scriptPath: string): { command: string; args: stri
   if (ext === '.py') {
     return { command: 'python', args: [scriptPath] };
   }
+  if (ext === '.fsx') {
+    return { command: 'dotnet', args: ['fsi', scriptPath] };
+  }
+  if (ext === '.csx') {
+    return { command: 'dotnet', args: ['script', scriptPath] };
+  }
+  if (ext === '.dll' && isDotnetAssembly(scriptPath)) {
+    return { command: 'dotnet', args: [scriptPath] };
+  }
   return { command: scriptPath, args: [] };
+}
+
+const PE_HEADER_MZ = 0x5a4d;
+const PE_SIGNATURE = 0x00004550;
+const PE32_MAGIC = 0x10b;
+const PE32_PLUS_MAGIC = 0x20b;
+/** Index of the CLR Runtime Header (COM Descriptor) in the PE optional header's data directories. */
+const CLR_HEADER_DIRECTORY_INDEX = 14;
+
+/**
+ * True when `filePath` is a managed (.NET) PE assembly — has a non-empty CLR
+ * Runtime Header data directory entry, the same signal the CLR/hostfxr use to
+ * tell a managed DLL apart from a native one. Reads only the PE header (a
+ * small fixed-size probe), not the whole file, and never throws — any
+ * mismatch (missing file, not a PE file, truncated/unexpected header layout)
+ * just means "not a .NET assembly" so `.dll` falls back to running the file
+ * directly, same as any other unrecognized extension.
+ */
+function isDotnetAssembly(filePath: string): boolean {
+  let fd: number;
+  try {
+    fd = fs.openSync(filePath, 'r');
+  } catch {
+    return false;
+  }
+  try {
+    const buf = Buffer.alloc(1024);
+    const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+    if (bytesRead < 0x40 || buf.readUInt16LE(0) !== PE_HEADER_MZ) return false;
+
+    const peOffset = buf.readUInt32LE(0x3c);
+    if (peOffset < 0 || peOffset + 24 > bytesRead || buf.readUInt32LE(peOffset) !== PE_SIGNATURE) return false;
+
+    const optHeaderOffset = peOffset + 24;
+    if (optHeaderOffset + 2 > bytesRead) return false;
+    const magic = buf.readUInt16LE(optHeaderOffset);
+    if (magic !== PE32_MAGIC && magic !== PE32_PLUS_MAGIC) return false;
+
+    // Data directories sit right after the optional header's fixed fields —
+    // 96 bytes in for PE32, 112 for PE32+ (ImageBase and a few others are
+    // 8 bytes instead of 4, and PE32+ drops BaseOfData).
+    const dataDirOffset = optHeaderOffset + (magic === PE32_PLUS_MAGIC ? 112 : 96);
+    const clrHeaderOffset = dataDirOffset + CLR_HEADER_DIRECTORY_INDEX * 8;
+    if (clrHeaderOffset + 8 > bytesRead) return false;
+
+    const clrHeaderRva = buf.readUInt32LE(clrHeaderOffset);
+    const clrHeaderSize = buf.readUInt32LE(clrHeaderOffset + 4);
+    return clrHeaderRva !== 0 && clrHeaderSize !== 0;
+  } catch {
+    return false;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function runProcess(

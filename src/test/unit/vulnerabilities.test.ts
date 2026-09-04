@@ -11,6 +11,9 @@ import {
 import { scriptCommand } from '../../userScriptVulnerabilities';
 import { collectVulnerabilityFindings, type IVulnerabilityProvider } from '../../vulnerabilityProvider';
 import type { VulnerabilityFinding } from '../../types';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 const finding = (over: Partial<VulnerabilityFinding> & Pick<VulnerabilityFinding, 'packageId'>): VulnerabilityFinding => ({
   severity: 'high',
@@ -185,9 +188,71 @@ describe('findingsAffectingPackage', () => {
   });
 });
 
+/** Minimal PE header with a CLR Runtime Header data directory — enough for `isDotnetAssembly` to inspect. */
+function buildPeBuffer(opts: { peOffset?: number; magic?: number; clrRva?: number; clrSize?: number }): Buffer {
+  const peOffset = opts.peOffset ?? 0x80;
+  const magic = opts.magic ?? 0x10b; // PE32
+  const dataDirOffset = peOffset + 24 + (magic === 0x20b ? 112 : 96);
+  const clrHeaderOffset = dataDirOffset + 14 * 8;
+  const buf = Buffer.alloc(clrHeaderOffset + 8);
+  buf.writeUInt16LE(0x5a4d, 0); // 'MZ'
+  buf.writeUInt32LE(peOffset, 0x3c);
+  buf.writeUInt32LE(0x00004550, peOffset); // 'PE\0\0'
+  buf.writeUInt16LE(magic, peOffset + 24);
+  buf.writeUInt32LE(opts.clrRva ?? 0, clrHeaderOffset);
+  buf.writeUInt32LE(opts.clrSize ?? 0, clrHeaderOffset + 4);
+  return buf;
+}
+
 describe('scriptCommand', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nuget-manager-script-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   it('runs js with node and py with python', () => {
     expect(scriptCommand('/ws/audit.js')).toEqual({ command: 'node', args: ['/ws/audit.js'] });
     expect(scriptCommand('/ws/audit.py')).toEqual({ command: 'python', args: ['/ws/audit.py'] });
+  });
+
+  it('runs fsx with dotnet fsi and csx with dotnet script', () => {
+    expect(scriptCommand('/ws/audit.fsx')).toEqual({ command: 'dotnet', args: ['fsi', '/ws/audit.fsx'] });
+    expect(scriptCommand('/ws/audit.csx')).toEqual({ command: 'dotnet', args: ['script', '/ws/audit.csx'] });
+  });
+
+  it('runs a managed .dll (PE32, non-empty CLR header) with dotnet', () => {
+    const dllPath = path.join(tmpDir, 'audit.dll');
+    fs.writeFileSync(dllPath, buildPeBuffer({ clrRva: 0x2000, clrSize: 0x48 }));
+    expect(scriptCommand(dllPath)).toEqual({ command: 'dotnet', args: [dllPath] });
+  });
+
+  it('runs a managed .dll (PE32+, non-empty CLR header) with dotnet', () => {
+    const dllPath = path.join(tmpDir, 'audit64.dll');
+    fs.writeFileSync(dllPath, buildPeBuffer({ magic: 0x20b, clrRva: 0x2000, clrSize: 0x48 }));
+    expect(scriptCommand(dllPath)).toEqual({ command: 'dotnet', args: [dllPath] });
+  });
+
+  it('falls back to running the file directly for a native .dll (empty CLR header)', () => {
+    const dllPath = path.join(tmpDir, 'native.dll');
+    fs.writeFileSync(dllPath, buildPeBuffer({ clrRva: 0, clrSize: 0 }));
+    expect(scriptCommand(dllPath)).toEqual({ command: dllPath, args: [] });
+  });
+
+  it('falls back to running the file directly for a non-PE .dll or a missing one', () => {
+    const notAPe = path.join(tmpDir, 'notapedll.dll');
+    fs.writeFileSync(notAPe, 'not a PE file at all');
+    expect(scriptCommand(notAPe)).toEqual({ command: notAPe, args: [] });
+
+    const missing = path.join(tmpDir, 'does-not-exist.dll');
+    expect(scriptCommand(missing)).toEqual({ command: missing, args: [] });
+  });
+
+  it('runs any other extension directly as an executable', () => {
+    expect(scriptCommand('/ws/audit.sh')).toEqual({ command: '/ws/audit.sh', args: [] });
   });
 });

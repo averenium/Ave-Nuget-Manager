@@ -217,6 +217,21 @@ export class WebviewMessageBroker {
   /** Last package list handed to `_scanVulnerabilities` — reused to rescan
    *  without a fresh `dotnet list` when only the source config changed (#53). */
   private _lastListed?: PackageListResult;
+  /** `scopeIdentityPath` of the last scope `_initForScope` actually ran a
+   *  restore for — lets a re-init tell a real scope change apart from the
+   *  view simply being relocated (panel/sidebar/window), which tears down
+   *  and recreates the `WebviewView` without the scope changing at all (#71). */
+  private _lastInitScopePath?: string;
+  /** `_buildSourcesPayload` result from the last real init for `_lastInitScopePath`
+   *  — replayed as-is on a same-scope re-init instead of re-resolving the
+   *  nuget.config chain and re-scanning project files for no reason (#71). */
+  private _lastInitPayload?: Awaited<ReturnType<WebviewMessageBroker['_buildSourcesPayload']>>;
+  /** Last VULNERABILITIES/VULN_SCAN_HINT payload posted from a real scan —
+   *  replayed as-is on a same-scope re-init instead of re-running one (#71). */
+  private _lastVulnPost?: {
+    findings: Awaited<ReturnType<typeof collectVulnerabilityFindings>>;
+    hint: { show: boolean; fingerprint: string; message: string; configFilePath?: string };
+  };
 
   private _nugetConfigWatcher?: vscode.FileSystemWatcher;
   private _nugetConfigWatchSubs: vscode.Disposable[] = [];
@@ -652,13 +667,38 @@ export class WebviewMessageBroker {
     this._cancelEnrich();
     this._cancelVulnScan();
     this._restoreGeneration++;
-    this._lastRestoreText = '';
-    this._lastListed = undefined;
+
+    // Moving the view (panel ↔ sidebar ↔ secondary sidebar ↔ new window)
+    // always tears down and recreates the WebviewView, which re-sends
+    // WEBVIEW_READY → here even though the scope hasn't changed at all.
+    // Nothing about the scope or its packages can have changed just from
+    // moving the view, so replay the last known state instead of hitting
+    // `dotnet restore`/`dotnet list`/enrich/vuln-scan all over again for a
+    // genuinely new webview client with nothing rendered yet (#71). Only a
+    // real first-open or an actual scope change goes through the full path.
+    const scopePath = scopeIdentityPath(scope);
+    const isSameScopeReinit = !!scopePath
+      && scopePath === this._lastInitScopePath
+      && this._lastListed !== undefined
+      && this._lastInitPayload !== undefined;
+    this._lastInitScopePath = scopePath;
+
     this.trace?.recordBroker('init-scope', {
       kind: scope.kind,
       path: path.basename(scopeIdentityPath(scope)),
       projects: scope.kind === 'solution' || scope.kind === 'folder' ? scope.projects.length : 1,
+      replayed: isSameScopeReinit,
     });
+
+    if (isSameScopeReinit) {
+      await this._replayLastState(scope);
+      return;
+    }
+
+    this._lastRestoreText = '';
+    this._lastListed = undefined;
+    this._lastVulnPost = undefined;
+
     const startDir = this._scopeStartDir(scope) ?? '';
 
     // Log the resolution attempt so it appears in the Log tab
@@ -679,6 +719,7 @@ export class WebviewMessageBroker {
       this._buildSourcesPayload(scope),
       this._refreshRoslynCap(false),
     ]);
+    this._lastInitPayload = payload;
     const { configChain, sources, snapshot } = payload;
     this._lastSnapshotJson = JSON.stringify(snapshot);
 
@@ -710,8 +751,64 @@ export class WebviewMessageBroker {
     });
 
     // List with --no-restore so the UI fills even if restore is broken;
-    // restore runs in parallel and reports NU1605 etc. in the banner.
+    // restore runs in parallel and reports NU1605 etc. in the banner. This
+    // branch only runs for a genuine first-open or an actual scope change —
+    // a same-scope re-init took the `_replayLastState` return above instead.
     await this._handleRefresh({ restore: true });
+  }
+
+  /**
+   * Same-scope re-init (the view was moved/recreated, not an actual scope
+   * change): replay the last known state instead of hitting the CLI/network
+   * again. `dotnet restore`, `dotnet list`, enrich, and a vulnerability scan
+   * are all genuinely slow/network-hitting, and none of them can have
+   * anything new to report — nothing about the scope or its packages
+   * changed just because the view moved (#71).
+   */
+  private async _replayLastState(scope: WorkspaceScope): Promise<void> {
+    const payload = this._lastInitPayload!;
+    const listed = this._lastListed!;
+
+    this.provider.postMessage({
+      type: 'INIT_STATE',
+      scope,
+      sources: payload.sources,
+      configChain: payload.configChain,
+      snapshot: payload.snapshot,
+      includePrerelease: getConfig().includePrerelease,
+      blockedPackages: getBlockedPackages(),
+      traceRecording: this.trace?.isRecording() ?? false,
+      roslynCap: this._roslynCap ?? null,
+      isWindows: process.platform === 'win32',
+      ...(await this._skillFields()),
+    });
+
+    const installed = this._stampCachedLatest(listed.installed);
+    this._installedIds = new Set(installed.map((pkg) => pkg.id.toLowerCase()));
+    this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: installed });
+    this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
+
+    // Replay each package's cached enrich data (latest version, source,
+    // full version list) instead of re-fetching it — same source
+    // `_enrichInstalledPackages` itself reads from on a cache hit.
+    const uniqueIds = [...new Set(installed.map((p) => p.id))];
+    for (const id of uniqueIds) {
+      const cached = this._cache.get(id.toLowerCase());
+      if (!cached) continue;
+      this.provider.postMessage({
+        type: 'PACKAGE_INFO_UPDATE',
+        packageId: id,
+        latestVersion: cached.latestVersion,
+        sourceName: cached.sourceName,
+        versions: cached.versions,
+      });
+    }
+    this.provider.postMessage({ type: 'ENRICH_PROGRESS', done: uniqueIds.length, total: uniqueIds.length });
+
+    if (this._lastVulnPost) {
+      this.provider.postMessage({ type: 'VULNERABILITIES', findings: this._lastVulnPost.findings });
+      this.provider.postMessage({ type: 'VULN_SCAN_HINT', ...this._lastVulnPost.hint });
+    }
   }
 
   private async _handleSearch(
@@ -1972,14 +2069,10 @@ export class WebviewMessageBroker {
       signal,
     });
     if (signal.aborted || generation !== this._vulnScanGeneration) return;
+    const hint = { show: !runCli, fingerprint, message: AUDIT_SOURCES_HINT, configFilePath: nearestConfig };
+    this._lastVulnPost = { findings, hint };
     this.provider.postMessage({ type: 'VULNERABILITIES', findings });
-    this.provider.postMessage({
-      type: 'VULN_SCAN_HINT',
-      show: !runCli,
-      fingerprint,
-      message: AUDIT_SOURCES_HINT,
-      configFilePath: nearestConfig,
-    });
+    this.provider.postMessage({ type: 'VULN_SCAN_HINT', ...hint });
   }
 
   /** Fetches latestVersion + sourceName for each unique package id and pushes

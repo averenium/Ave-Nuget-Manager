@@ -340,9 +340,13 @@ describe('WebviewMessageBroker', () => {
     });
   });
 
-  it('runs onFirstWebviewReady once, then still inits on a later WEBVIEW_READY', async () => {
-    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+  it('runs onFirstWebviewReady once; a later WEBVIEW_READY for the same scope replays instead of re-listing (#71)', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
     const onFirst = jest.fn().mockResolvedValue(undefined);
     const broker = new WebviewMessageBroker(
       stub, backend, makeSolutionParser(), makeConfigResolver(), logger, onFirst,
@@ -357,7 +361,9 @@ describe('WebviewMessageBroker', () => {
     simulateMessage({ type: 'WEBVIEW_READY' });
     await new Promise((r) => setTimeout(r, 20));
     expect(onFirst).toHaveBeenCalledTimes(1);
-    expect(backend.listAllForProject).toHaveBeenCalledTimes(2);
+    // Same scope re-init (view move) — no new `dotnet list`, replayed from cache instead.
+    expect(backend.listAllForProject).toHaveBeenCalledTimes(1);
+    expect(posted.filter((m) => m.type === 'INSTALLED_PACKAGES')).toHaveLength(2);
   });
 
   it('sends INSTALLED_PACKAGES and IMPLICIT_PACKAGES after WEBVIEW_READY', async () => {
@@ -424,6 +430,37 @@ describe('WebviewMessageBroker', () => {
     expect(backend.restoreProject).toHaveBeenCalledTimes(1);
     expect(backend.restoreProject).toHaveBeenCalledWith('/sol/My.sln');
     expect(backend.restoreProject).not.toHaveBeenCalledWith('/sol/A/A.csproj');
+  });
+
+  it('replays the last known state on a second WEBVIEW_READY for the same scope instead of re-listing/restoring (#71)', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    // First WEBVIEW_READY: genuine first open — forces a real restore + list.
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(backend.restoreProject).toHaveBeenCalledTimes(1);
+    expect(backend.listAllForProject).toHaveBeenCalledTimes(1);
+
+    // Second WEBVIEW_READY for the same scope simulates the WebviewView
+    // being torn down and recreated by a move (panel/sidebar/window), not an
+    // actual scope change — must not touch the backend at all, only replay
+    // the already-known state for the freshly mounted webview client.
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(backend.restoreProject).toHaveBeenCalledTimes(1);
+    expect(backend.listAllForProject).toHaveBeenCalledTimes(1);
+
+    const installedPosts = posted.filter((m) => m.type === 'INSTALLED_PACKAGES') as any[];
+    expect(installedPosts).toHaveLength(2);
+    expect(installedPosts[1].packages[0].id).toBe('Newtonsoft.Json');
   });
 
   it('restores and lists every project independently for a folder scope (no .sln to pass to dotnet)', async () => {

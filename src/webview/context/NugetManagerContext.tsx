@@ -236,21 +236,35 @@ function reduceAppState(state: AppState, action: Action): AppState {
       };
     }
 
-    case 'SELECT_PACKAGE':
+    case 'SELECT_PACKAGE': {
+      // The same enrich pass that fills each row's `latestVersion` also
+      // stashes the full version list on the installed package — reuse it
+      // instead of blanking the panel and showing "Loading…" while the
+      // background GET_ALL_VERSIONS (still sent below, unconditionally)
+      // fetches something we may already have (#76). A not-yet-installed
+      // package only ever has `latestVersion`, so seed a single-entry list —
+      // still better than nothing until the real list arrives.
+      const cachedVersions = state.packages.installed.find(
+        (p) => packageIdsEqual(p.id, action.packageId) && p.versions?.length,
+      )?.versions;
+      const availablePkg = state.packages.available.find((p) => packageIdsEqual(p.id, action.packageId));
+      const seededVersions = cachedVersions ?? (availablePkg ? [availablePkg.latestVersion] : []);
+
       return {
         ...state,
         detail: {
           ...state.detail,
           selectedPackageId: action.packageId,
           metadata: null,
-          allVersions: [],
-          isLoading: true,
+          allVersions: seededVersions,
+          isLoading: seededVersions.length === 0,
           error: null,
           projectVersions: {},
           projectErrors: {},
           projectLoadingSet: new Set(),
         },
       };
+    }
 
     case 'SET_DETAIL_LOADING':
       return { ...state, detail: { ...state.detail, isLoading: action.loading } };

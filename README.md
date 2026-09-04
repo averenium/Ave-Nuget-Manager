@@ -77,7 +77,7 @@ Gear on the **NuGet** title bar (or Command Palette **NuGet: Open Settings**) op
 | `averenium.nugetManager.includePrerelease` | `false` | Pre-release versions in search and “latest”. |
 | `averenium.nugetManager.dotnetConcurrency` | `4` | Max parallel `dotnet` processes (list, search, enrich, install, remove, restore). |
 | `averenium.nugetManager.onFailedUpdate` | `rollback` | After a failed restore (`NU1605`): roll back the project file, or keep the version and show **Rollback**. |
-| `averenium.nugetManager.vulnerabilityScript` | `""` | Optional script that adds extra vulnerability findings (JSON on stdin/stdout). |
+| `averenium.nugetManager.vulnerabilityScript` | `""` | Optional script that adds extra vulnerability findings (JSON on stdin/stdout). Details: [docs/vulnerability-script.md](docs/vulnerability-script.md). |
 | `averenium.nugetManager.blockedPackages` | `[]` | Workspace package ids that must not change version (Packages **↑** and Groups). Right-click a row to block or unblock. |
 
 ## Known limits

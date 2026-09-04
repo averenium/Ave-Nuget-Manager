@@ -20,8 +20,10 @@ export interface INuGetBackend {
   /**
    * List all installed AND transitive packages for a solution in one CLI call.
    * CLI: `dotnet list <solutionPath> package --include-transitive --format json --no-restore`
+   * `projectCount`, when known, scales the CLI timeout up for a large
+   * solution instead of a single fixed ceiling for every size (#72).
    */
-  listAllForSolution(solutionPath: string): Promise<PackageListResult>;
+  listAllForSolution(solutionPath: string, projectCount?: number): Promise<PackageListResult>;
 
   /**
    * List all installed AND transitive packages for a project in one CLI call.
@@ -129,6 +131,8 @@ export interface INuGetBackend {
   /**
    * Known vulnerabilities for top-level and transitive packages.
    * CLI: `dotnet list <path> package --vulnerable --include-transitive --format json --no-restore`
+   * `projectCount`, when known (path is a solution), scales the CLI timeout
+   * up for a large solution instead of a single fixed ceiling (#72).
    */
-  listVulnerable(projectOrSolutionPath: string, signal?: AbortSignal): Promise<VulnerabilityFinding[]>;
+  listVulnerable(projectOrSolutionPath: string, signal?: AbortSignal, projectCount?: number): Promise<VulnerabilityFinding[]>;
 }

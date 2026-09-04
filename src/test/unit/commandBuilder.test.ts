@@ -44,6 +44,7 @@ describe('CliBackend — command construction', () => {
 
       expect(calls).toHaveLength(1);
       expect(calls[0].args).toEqual(['list', p, 'package', '--format', 'json', '--no-restore']);
+      // Single project (no count given) — base list timeout, same as before (#72).
       expect(calls[0].timeoutMs).toBe(30_000);
     });
 
@@ -84,6 +85,25 @@ describe('CliBackend — command construction', () => {
         'list', sln, 'package', '--include-transitive', '--format', 'json', '--no-restore',
       ]);
     });
+
+    // ── #72: timeout scales with project count instead of one fixed ceiling ──
+
+    it('uses the base 30s timeout with no project count given', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      await backend.listAllForSolution('/abs/My.sln');
+      expect(calls[0].timeoutMs).toBe(30_000);
+    });
+
+    it('scales the timeout up for a large solution, capped at 120s', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      await backend.listAllForSolution('/abs/My.sln', 10);
+      expect(calls[0].timeoutMs).toBe(48_000); // 30s + 9 * 2s
+
+      await backend.listAllForSolution('/abs/My.sln', 1000);
+      expect(calls[1].timeoutMs).toBe(120_000); // capped, not 30s + 999*2s
+    });
   });
 
   describe('listAllForProject', () => {
@@ -115,6 +135,13 @@ describe('CliBackend — command construction', () => {
       ]);
       expect(calls[0].cwd).toBe(path.dirname(sln));
       expect(calls[0].signal).toBe(ac.signal);
+    });
+
+    it('scales the timeout with projectCount, same as listAllForSolution (#72)', async () => {
+      const { runner, calls } = makeRunnerCapture();
+      const backend = new CliBackend(runner);
+      await backend.listVulnerable('/abs/My.sln', undefined, 10);
+      expect(calls[0].timeoutMs).toBe(48_000);
     });
   });
 
@@ -466,5 +493,66 @@ describe('CliBackend — output parsing', () => {
     const backend = new CliBackend(runner);
 
     expect(await backend.listInstalled('/p/Foo.csproj')).toEqual([]);
+  });
+
+  // ── #72: one automatic retry after a `dotnet list` timeout ─────────────────
+
+  it('retries once after a list timeout and returns the retry’s packages', async () => {
+    const listJson = JSON.stringify({
+      version: 1,
+      projects: [{
+        path: '/p/Foo.csproj',
+        frameworks: [{
+          framework: 'net8.0',
+          topLevelPackages: [{ id: 'Newtonsoft.Json', requestedVersion: '13.0.3', resolvedVersion: '13.0.3' }],
+        }],
+      }],
+    });
+    const logger = new Logger();
+    const runner = new CliRunner(logger);
+    let call = 0;
+    jest.spyOn(runner, 'run').mockImplementation(async () => {
+      call++;
+      if (call === 1) return { exitCode: null, stdout: '', stderr: '', timedOut: true };
+      return makeSuccessResult(listJson);
+    });
+    const backend = new CliBackend(runner);
+
+    const result = await backend.listAllForProject('/p/Foo.csproj');
+
+    expect(call).toBe(2);
+    expect(result.installed).toHaveLength(1);
+    expect(result.installed[0].id).toBe('Newtonsoft.Json');
+  });
+
+  it('gives up after one retry if the list still times out (not an infinite loop)', async () => {
+    const logger = new Logger();
+    const runner = new CliRunner(logger);
+    let call = 0;
+    jest.spyOn(runner, 'run').mockImplementation(async () => {
+      call++;
+      return { exitCode: null, stdout: '', stderr: '', timedOut: true };
+    });
+    const backend = new CliBackend(runner);
+
+    const result = await backend.listAllForSolution('/sol/My.sln');
+
+    expect(call).toBe(2);
+    expect(result.error).toBe('dotnet list timed out');
+  });
+
+  it('does not retry a plain non-zero exit (only a timeout is retried)', async () => {
+    const logger = new Logger();
+    const runner = new CliRunner(logger);
+    let call = 0;
+    jest.spyOn(runner, 'run').mockImplementation(async () => {
+      call++;
+      return { exitCode: 1, stdout: '', stderr: 'boom', timedOut: false };
+    });
+    const backend = new CliBackend(runner);
+
+    await backend.listAllForProject('/p/Foo.csproj');
+
+    expect(call).toBe(1);
   });
 });

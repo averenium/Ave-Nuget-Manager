@@ -14,6 +14,7 @@ import type { INuGetBackend } from './INuGetBackend';
 import { extractJsonObject, summarizeDotnetFailure, summarizeListProblems } from '../dotnetOutput';
 import { stampListedDependencies, attachAssetsDependencies } from '../projectAssets';
 import { parseDotnetVulnerableJson } from '../vulnerabilities';
+import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS } from '../cliRetry';
 
 // ─── dotnet JSON output shapes ────────────────────────────────────────────────
 
@@ -65,6 +66,23 @@ interface DotnetSearchOutput {
 const TIMEOUT_MS = 30_000;
 /** add / remove / restore include NuGet restore — 30s is too tight under load. */
 const MUTATION_TIMEOUT_MS = 120_000;
+/**
+ * `dotnet list --include-transitive` (and `--vulnerable`) scales with the
+ * number of projects being listed, unlike the feed/network-bound calls
+ * `TIMEOUT_MS` covers (a single package's search/metadata round-trip) — a
+ * large `.slnx` can legitimately take longer than 30s just to list. Scale the
+ * budget with the project count instead of paying the same 120s ceiling for
+ * a single-project list too (#72).
+ */
+const LIST_TIMEOUT_MIN_MS = 30_000;
+const LIST_TIMEOUT_MAX_MS = 120_000;
+/** Extra budget per project beyond the first, up to the max above. */
+const LIST_TIMEOUT_PER_PROJECT_MS = 2_000;
+
+function listTimeoutMs(projectCount = 1): number {
+  const extra = Math.max(0, projectCount - 1) * LIST_TIMEOUT_PER_PROJECT_MS;
+  return Math.min(LIST_TIMEOUT_MAX_MS, LIST_TIMEOUT_MIN_MS + extra);
+}
 
 /** Skip implicit restore (.NET 10+ fails the whole list when restore errors, e.g. NU1605). */
 function listPackageArgs(targetPath: string, includeTransitive: boolean): string[] {
@@ -77,15 +95,35 @@ function listPackageArgs(targetPath: string, includeTransitive: boolean): string
 export class CliBackend implements INuGetBackend {
   constructor(private readonly runner: CliRunner) {}
 
+  /**
+   * `dotnet list` (with or without `--vulnerable`) scales with repo size, not
+   * with anything transient like a network hiccup — a timeout there is not
+   * flaky the way a feed request is, but a large solution can legitimately
+   * need more than one run's worth of patience under load. One extra attempt
+   * after a timeout only (not a plain non-zero exit) mirrors the install
+   * retry in `cliRetry.ts` rather than inventing a separate mechanism (#72).
+   */
+  private async _runList(args: string[], cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<CliResult> {
+    let result = await this.runner.run({ args, cwd, timeoutMs, signal });
+    for (
+      let extra = 0;
+      extra < INSTALL_RETRY_EXTRA_ATTEMPTS && result.timedOut && !signal?.aborted;
+      extra++
+    ) {
+      await delayInstallRetry(signal);
+      if (signal?.aborted) break;
+      result = await this.runner.run({ args, cwd, timeoutMs, signal });
+    }
+    return result;
+  }
+
   // ── listAllForSolution ─────────────────────────────────────────────────────
 
-  async listAllForSolution(solutionPath: string): Promise<PackageListResult> {
+  async listAllForSolution(solutionPath: string, projectCount?: number): Promise<PackageListResult> {
     // One call: --include-transitive returns both topLevelPackages and transitivePackages
-    const result = await this.runner.run({
-      args: listPackageArgs(solutionPath, true),
-      cwd: path.dirname(solutionPath),
-      timeoutMs: TIMEOUT_MS,
-    });
+    const result = await this._runList(
+      listPackageArgs(solutionPath, true), path.dirname(solutionPath), listTimeoutMs(projectCount),
+    );
 
     const baseDir = path.dirname(solutionPath);
     const listed = this._toListResult(
@@ -102,11 +140,7 @@ export class CliBackend implements INuGetBackend {
   // ── listAllForProject ──────────────────────────────────────────────────────
 
   async listAllForProject(projectPath: string): Promise<PackageListResult> {
-    const result = await this.runner.run({
-      args: listPackageArgs(projectPath, true),
-      cwd: path.dirname(projectPath),
-      timeoutMs: TIMEOUT_MS,
-    });
+    const result = await this._runList(listPackageArgs(projectPath, true), path.dirname(projectPath), listTimeoutMs());
 
     const listed = this._toListResult(
       result,
@@ -121,28 +155,28 @@ export class CliBackend implements INuGetBackend {
 
   // ── listVulnerable ─────────────────────────────────────────────────────────
 
-  async listVulnerable(projectOrSolutionPath: string, signal?: AbortSignal): Promise<VulnerabilityFinding[]> {
-    const result = await this.runner.run({
-      args: [
+  async listVulnerable(
+    projectOrSolutionPath: string,
+    signal?: AbortSignal,
+    projectCount?: number,
+  ): Promise<VulnerabilityFinding[]> {
+    const result = await this._runList(
+      [
         'list', projectOrSolutionPath, 'package',
         '--vulnerable', '--include-transitive',
         '--format', 'json', '--no-restore',
       ],
-      cwd: path.dirname(projectOrSolutionPath),
-      timeoutMs: TIMEOUT_MS,
+      path.dirname(projectOrSolutionPath),
+      listTimeoutMs(projectCount),
       signal,
-    });
+    );
     return parseDotnetVulnerableJson(result.stdout);
   }
 
   // ── listInstalled ──────────────────────────────────────────────────────────
 
   async listInstalled(projectPath: string): Promise<InstalledPackage[]> {
-    const result = await this.runner.run({
-      args: listPackageArgs(projectPath, false),
-      cwd: path.dirname(projectPath),
-      timeoutMs: TIMEOUT_MS,
-    });
+    const result = await this._runList(listPackageArgs(projectPath, false), path.dirname(projectPath), listTimeoutMs());
 
     if (result.timedOut || result.exitCode !== 0) {
       return [];
@@ -154,11 +188,7 @@ export class CliBackend implements INuGetBackend {
   // ── listTransitive ─────────────────────────────────────────────────────────
 
   async listTransitive(projectPath: string): Promise<ImplicitPackage[]> {
-    const result = await this.runner.run({
-      args: listPackageArgs(projectPath, true),
-      cwd: path.dirname(projectPath),
-      timeoutMs: TIMEOUT_MS,
-    });
+    const result = await this._runList(listPackageArgs(projectPath, true), path.dirname(projectPath), listTimeoutMs());
 
     if (result.timedOut || result.exitCode !== 0) {
       return [];

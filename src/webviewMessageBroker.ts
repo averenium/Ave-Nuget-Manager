@@ -1736,7 +1736,7 @@ export class WebviewMessageBroker {
     if (!scope) return;
 
     if (scope.kind === 'solution') {
-      await this._refreshForSolution(scope.solutionPath, opts);
+      await this._refreshForSolution(scope.solutionPath, scope.projects.length, opts);
     } else if (scope.kind === 'folder') {
       await this._refreshForFolder(scope.folderPath, scopeProjectPaths(scope), opts);
     } else if (scope.projectPath) {
@@ -1818,11 +1818,12 @@ export class WebviewMessageBroker {
 
   private async _refreshForSolution(
     solutionPath: string,
+    projectCount: number,
     opts?: RefreshOpts,
   ): Promise<void> {
     if (opts?.restore && opts.listAfterRestore) {
       const restoreResult = await this._beginRestore(this.backend.restoreProject(solutionPath));
-      const listed = await this.backend.listAllForSolution(solutionPath);
+      const listed = await this.backend.listAllForSolution(solutionPath, projectCount);
       await this._applyListedPackages(listed, opts);
       this._reportRestoreIfCurrent(solutionPath, restoreResult);
       return;
@@ -1831,7 +1832,7 @@ export class WebviewMessageBroker {
     const restoreP = opts?.restore
       ? this._beginRestore(this.backend.restoreProject(solutionPath))
       : undefined;
-    const listed = await this.backend.listAllForSolution(solutionPath);
+    const listed = await this.backend.listAllForSolution(solutionPath, projectCount);
     await this._applyListedPackages(listed, opts);
     if (restoreP) this._reportRestoreIfCurrent(solutionPath, await restoreP);
   }
@@ -1938,7 +1939,7 @@ export class WebviewMessageBroker {
   ): Promise<{ listed: PackageListResult; restoreText: string }> {
     if (scope.kind === 'solution') {
       const restoreResult = await this.backend.restoreProject(scope.solutionPath);
-      const listed = await this.backend.listAllForSolution(scope.solutionPath);
+      const listed = await this.backend.listAllForSolution(scope.solutionPath, scope.projects.length);
       return { listed, restoreText: `${restoreResult.stdout}\n${restoreResult.stderr}` };
     }
     const projectPaths = scopeProjectPaths(scope);

@@ -6,6 +6,7 @@
 
 - **Log**: **Copy sanitised** didn't mask project names — only the workspace root, home directory, and hostname were redacted, so a path like `<workspace>/AVE.ElectricityBot.Data/AVE.ElectricityBot.Data.csproj` kept the real project name. It now builds the same `pNN.csproj` aliases as a trace zip, from the current scope's project files (#65)
 - **Log**: expanded-row and toolbar polish — removed a redundant "command" block and duplicate Copy button on non-CLI entries, repositioned the per-block hover-copy button (visible, no scroll flicker), and pinned the "N new ↓" pill so it no longer scrolls away with the list (#66)
+- Selecting a not-installed package after picking a specific version for a different package kept showing that leftover version instead of the newly selected package's own latest — `selectedVersion` is now reset on every package selection change (#59)
 
 ## 0.5.0
 

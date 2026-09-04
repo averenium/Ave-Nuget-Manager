@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { VersionSelector } from './VersionSelector';
 import { ProjectSelectionPopup } from './ProjectSelectionPopup';
@@ -33,6 +33,13 @@ export function PackageDetailPanel() {
   const [selectedVersion, setSelectedVersion] = useState<string>('');
   const [showPopup, setShowPopup] = useState<'install' | 'remove' | null>(null);
   const [showRoslynWarning, setShowRoslynWarning] = useState(false);
+
+  // A version picked for the previously selected package must not leak into
+  // a newly selected one — `effectiveVersion` checks `selectedVersion` first,
+  // so without this reset it would win over the new package's own latest (#59).
+  useEffect(() => {
+    setSelectedVersion('');
+  }, [selectedPackageId]);
 
   if (!selectedPackageId) {
     return <div className="detail-panel__empty">Select a package to see details</div>;

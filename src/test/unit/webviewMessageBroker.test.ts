@@ -798,7 +798,8 @@ describe('WebviewMessageBroker', () => {
     simulateMessage({ type: 'WEBVIEW_READY' });
     await new Promise((r) => setTimeout(r, 30));
 
-    expect(backend.listVulnerable).toHaveBeenCalledWith('/p/App.csproj', expect.any(AbortSignal));
+    // 3rd arg (project count) is undefined for a single-project scope (#72).
+    expect(backend.listVulnerable).toHaveBeenCalledWith('/p/App.csproj', expect.any(AbortSignal), undefined);
     const vuln = posted.find((m) => m.type === 'VULNERABILITIES') as { findings?: unknown[] } | undefined;
     expect(vuln?.findings).toHaveLength(1);
   });

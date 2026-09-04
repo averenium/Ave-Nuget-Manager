@@ -194,8 +194,25 @@ html { height: 100vh; }
   display: flex; align-items: center; justify-content: center;
   background: none; border: 1px solid var(--color-border); border-radius: var(--radius);
   color: var(--color-fg); cursor: pointer;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
-.pkg-toolbar__refresh:hover { border-color: var(--color-btn-bg); color: var(--color-btn-bg); }
+/*
+ * `border-color`/`color` alone changing to the accent colour isn't a
+ * reliable hover cue in High Contrast themes — the accent and the resting
+ * border can read as indistinguishable there, the same gap as the
+ * background-only hovers fixed in #68. Thickening the resting outline (same
+ * treatment as .log-trace-btn:hover) is a real, self-consistent change.
+ *
+ * `color` is deliberately left unchanged here (#68 follow-up): the icon
+ * previously switched to the same `--color-btn-bg` accent used for the
+ * border, and some HC themes define that token the same as the page
+ * background — an icon recoloured to match its own background disappears
+ * entirely, which is worse than not recolouring it at all.
+ */
+.pkg-toolbar__refresh:hover {
+  background: var(--color-list-hover); border-color: var(--color-btn-bg);
+  outline-width: 2px; outline-offset: -2px;
+}
 .pkg-toolbar__refresh:disabled { opacity: 0.5; cursor: not-allowed; }
 .pkg-toolbar__prerelease {
   display: flex; align-items: center; gap: 4px;
@@ -267,7 +284,7 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   position: relative;
   min-height: calc(1.25em + 15px + 2 * var(--spacing-xs) + 1px);
 }
-.pkg-row:hover { background: var(--color-list-hover); }
+.pkg-row:hover { background: var(--color-list-hover); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
 .pkg-row--selected {
   background: var(--color-list-active);
   color: var(--color-list-active-fg);
@@ -395,7 +412,17 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   font-family: var(--font-family); white-space: nowrap;
   outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
-.source-filter__btn:hover { border-color: var(--color-btn-bg); }
+/*
+ * Already has a resting outline (line above). `--color-focus-border` was
+ * tried here for the hover swap, but it maps to `contrastActiveBorder` —
+ * an orange/yellow tone HC themes reserve for keyboard focus rings, so
+ * reusing it for a plain mouse hover read as an unrelated, out-of-place
+ * color rather than "this button is hovered" (#68 follow-up). A thicker
+ * outline in the *same* colour is a real, self-consistent hover change
+ * instead — HC-only, since a 1px vs 2px outline of the same near-invisible
+ * `transparent` isn't visually different in a normal theme.
+ */
+.source-filter__btn:hover { background: var(--color-list-hover); border-color: var(--color-btn-bg); outline-width: 2px; outline-offset: -2px; }
 .source-filter__dropdown {
   position: absolute; right: 0; left: auto; top: calc(100% + 2px); z-index: 100;
   min-width: max(100%, 180px);
@@ -413,7 +440,7 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   cursor: pointer;
   min-width: 0;
 }
-.source-filter__item:hover { background: var(--color-list-hover); }
+.source-filter__item:hover { background: var(--color-list-hover); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
 .source-filter__name {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -495,7 +522,8 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   outline: 1px solid var(--color-contrast-border);
   outline-offset: -1px;
 }
-.version-select__btn:hover { border-color: var(--color-btn-bg); }
+/* Same reasoning as .source-filter__btn:hover above (#68 follow-up). */
+.version-select__btn:hover { background: var(--color-list-hover); border-color: var(--color-btn-bg); outline-width: 2px; outline-offset: -2px; }
 .version-select__btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .version-select__dropdown {
   position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 100;
@@ -514,7 +542,7 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   text-align: left; cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.version-select__option:hover { background: var(--color-list-hover); }
+.version-select__option:hover { background: var(--color-list-hover); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
 .version-select__option--selected {
   background: var(--color-list-active);
   color: var(--color-list-active-fg);
@@ -567,7 +595,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 /* Muted at rest, red only on hover — same convention as .sources-repo__remove,
    instead of the always-red-bordered .btn--danger (#60). */
 .pkg-remove-btn { background: transparent; color: var(--color-tab-inactive); }
-.pkg-remove-btn:hover { background: var(--color-list-hover); color: var(--color-error); }
+.pkg-remove-btn:hover { background: var(--color-list-hover); color: var(--color-error); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
 .btn:disabled,
 .btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 .btn--primary[aria-disabled='true']:hover { background: var(--color-btn-bg); }
@@ -689,16 +717,23 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   width: 20px; height: 20px;
   background: transparent; color: var(--color-tab-inactive);
 }
-.sources-repo__edit:hover { background: var(--color-list-hover); color: var(--color-fg); }
+.sources-repo__edit:hover { background: var(--color-list-hover); color: var(--color-fg); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
 .sources-repo__edit--active { color: var(--color-btn-bg); }
-.sources-repo__remove:hover { background: var(--color-list-hover); color: var(--color-error); }
+.sources-repo__remove:hover { background: var(--color-list-hover); color: var(--color-error); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
 .sources-add-row { display: flex; justify-content: flex-end; padding: var(--spacing-xs) var(--spacing-sm); }
 .sources-add-toggle {
   padding: 2px 10px; font-size: 11px;
   background: transparent; color: var(--color-tab-inactive);
   border: 1px solid var(--color-border);
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
-.sources-add-toggle:hover { border-color: var(--color-btn-bg); color: var(--color-btn-bg); }
+/* Same reasoning as .pkg-toolbar__refresh:hover above (#68 follow-up).
+   `color` left unchanged — see that comment on why recolouring text/icons
+   to the accent colour is unsafe in HC themes. */
+.sources-add-toggle:hover {
+  background: var(--color-list-hover); border-color: var(--color-btn-bg);
+  outline-width: 2px; outline-offset: -2px;
+}
 .sources-warn {
   margin: var(--spacing-xs) var(--spacing-sm);
   padding: var(--spacing-xs) var(--spacing-sm);
@@ -789,7 +824,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   color: var(--color-tab-inactive); cursor: pointer;
   font-size: 14px; line-height: 1;
 }
-.sources-popover__close:hover { background: var(--color-list-hover); color: var(--color-fg); }
+.sources-popover__close:hover { background: var(--color-list-hover); color: var(--color-fg); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
 .sources-edit {
   display: flex; flex-direction: column; gap: var(--spacing-sm); min-width: 0;
 }
@@ -829,7 +864,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   font-family: var(--font-ui); font-size: 11px; cursor: pointer;
   outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
-.log-trace-btn:hover { border-color: var(--color-btn-bg); color: var(--color-btn-bg); }
+/* Same reasoning as .source-filter__btn:hover above (#68 follow-up).
+   `color` left unchanged — see .pkg-toolbar__refresh:hover's comment on why
+   recolouring text/icons to the accent colour is unsafe in HC themes. */
+.log-trace-btn:hover { background: var(--color-list-hover); border-color: var(--color-btn-bg); outline-width: 2px; outline-offset: -2px; }
 .log-trace-btn--recording { border-color: var(--color-error); color: var(--color-error); }
 .log-tab__list-wrap { flex: 1; min-height: 0; position: relative; }
 .log-tab__list { height: 100%; overflow-y: auto; padding: 0 var(--spacing-sm) var(--spacing-xs); }
@@ -853,14 +891,6 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .log-entry__exit--ok { color: var(--color-success); }
 .log-entry__exit--err { color: var(--color-error); }
 .log-entry__exit--timeout { color: var(--color-warning); }
-.log-entry__toggle {
-  flex-shrink: 0; background: none; border: none;
-  color: var(--color-tab-inactive); cursor: pointer;
-  font-family: var(--font-mono); font-size: 10px; padding: 0 2px;
-  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
-}
-.log-entry__toggle:hover { color: var(--color-fg); }
-
 .log-entry__preview { padding: 2px var(--spacing-sm); border-top: 1px solid var(--color-border); }
 .log-entry__details { padding: 2px var(--spacing-sm); border-top: 1px solid var(--color-border); }
 .log-entry__body { white-space: pre-wrap; word-break: break-all; margin: 0; }
@@ -902,7 +932,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   padding: 3px var(--spacing-sm); cursor: pointer;
 }
 .log-row:hover .log-row__summary,
-.log-row:hover .log-row__err-preview { background: var(--color-list-hover); }
+.log-row:hover .log-row__err-preview {
+  background: var(--color-list-hover);
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
+}
 .log-row__chev { flex-shrink: 0; color: var(--color-tab-inactive); transition: transform 120ms ease; margin-top: 1px; }
 .log-row--open .log-row__chev { transform: rotate(90deg); }
 .log-row__ts { color: var(--color-tab-inactive); flex-shrink: 0; font-variant-numeric: tabular-nums; }
@@ -992,7 +1025,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .log-tab__list--scrolling .log-row__copyable { pointer-events: none; }
 .log-row__copyable:hover .log-row__copy-hover,
 .log-row__copy-hover:focus-visible { opacity: 0.8; }
-.log-row__copy-hover:hover { opacity: 1; background: var(--color-list-hover); }
+.log-row__copy-hover:hover { opacity: 1; background: var(--color-list-hover); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
 
 .log-tab__new-pill {
   position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
@@ -1043,8 +1076,13 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   background: none; border: 1px solid var(--color-border); border-radius: var(--radius);
   color: var(--color-fg); cursor: pointer; font-size: 11px;
   padding: 2px 8px; font-family: var(--font-family);
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
-.popup__bulk-btn:hover { border-color: var(--color-btn-bg); }
+/* Same reasoning as .pkg-toolbar__refresh:hover above (#68 follow-up). */
+.popup__bulk-btn:hover {
+  background: var(--color-list-hover); border-color: var(--color-btn-bg);
+  outline-width: 2px; outline-offset: -2px;
+}
 .popup__meta {
   flex-shrink: 0; font-size: 11px; color: var(--color-tab-inactive);
 }
@@ -1062,7 +1100,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   padding: 4px var(--spacing-xs);
   border-radius: var(--radius);
 }
-.popup__item:hover { background: var(--color-list-hover); }
+.popup__item:hover { background: var(--color-list-hover); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
 .popup__item--up {
   background: color-mix(in srgb, var(--color-success) 14%, transparent);
 }
@@ -1267,13 +1305,19 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   .btn,
   .tab-bar__scope,
   .sources-clear,
-  .log-entry__toggle,
   .source-filter__btn,
   .version-select__btn,
   select,
   .sources-input,
   .popup__search,
   .pkg-toolbar__search {
+    outline-color: ButtonText;
+  }
+  /* Hover-only outlines (#68) — matched at the same selector specificity as
+     their own `:hover` rule above, otherwise that rule's higher specificity
+     would keep winning over this one regardless of source order. */
+  .log-row:hover .log-row__summary,
+  .log-row__copy-hover:hover {
     outline-color: ButtonText;
   }
   .btn--primary, .btn--secondary { forced-color-adjust: none; background: ButtonFace; color: ButtonText; }

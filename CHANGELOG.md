@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Log**: **Copy sanitised** didn't mask project names — only the workspace root, home directory, and hostname were redacted, so a path like `<workspace>/AVE.ElectricityBot.Data/AVE.ElectricityBot.Data.csproj` kept the real project name. It now builds the same `pNN.csproj` aliases as a trace zip, from the current scope's project files (#65)
+
 ## 0.5.0
 
 ### Added

@@ -1674,6 +1674,38 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith('https://api.nuget.org/v3/index.json');
   });
 
+  it('masks the current scope project name for COPY_LOG_SANITIZED (regression)', async () => {
+    const vscode = require('vscode');
+    const os = require('os');
+    const path = require('path');
+    const root = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'nuget-log-sanitize-'));
+    try {
+      const projDir = path.join(root, 'AVE.ElectricityBot.Data');
+      await fsPromises.mkdir(projDir);
+      const csprojPath = path.join(projDir, 'AVE.ElectricityBot.Data.csproj');
+      await fsPromises.writeFile(csprojPath, '<Project Sdk="Microsoft.NET.Sdk"></Project>');
+
+      (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: root } }];
+      const scope: WorkspaceScope = { kind: 'project', projectPath: csprojPath };
+      const { stub, simulateMessage } = makeProvider(scope);
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'COPY_LOG_SANITIZED',
+        text: `<workspace>/AVE.ElectricityBot.Data/AVE.ElectricityBot.Data.csproj`,
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      const copied = vscode.env.clipboard.writeText.mock.calls.at(-1)?.[0];
+      expect(copied).not.toContain('AVE.ElectricityBot.Data');
+      expect(copied).toMatch(/projects\/p01\.csproj/);
+    } finally {
+      (vscode.workspace as any).workspaceFolders = undefined;
+      await fsPromises.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('opens http URLs in the browser for OPEN_URL', async () => {
     const vscode = require('vscode');
     vscode.env.openExternal.mockClear();

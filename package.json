@@ -2,7 +2,7 @@
   "name": "averenium-nuget-manager",
   "displayName": "AVE NuGet Manager",
   "description": "NuGet package manager for .NET solutions: search, install, update package families, audit vulnerabilities and edit nuget.config from one panel. Requires the .NET SDK.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "publisher": "averenium",
   "license": "MIT",
   "icon": "media/icon.png",

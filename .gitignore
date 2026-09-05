@@ -10,3 +10,5 @@ Thumbs.db
 *.nupkg
 docker/nexus/**/bin/
 docker/nexus/**/obj/
+demo/**
+demo/**

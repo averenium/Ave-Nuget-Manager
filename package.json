@@ -1,8 +1,8 @@
 {
   "name": "averenium-nuget-manager",
   "displayName": "AVE NuGet Manager",
-  "description": "NuGet manager for .NET solutions and projects (Packages, Groups, Sources, Log, Agents). Requires the .NET SDK.",
-  "version": "0.5.0",
+  "description": "NuGet package manager for .NET solutions: search, install, update package families, audit vulnerabilities and edit nuget.config from one panel. Requires the .NET SDK.",
+  "version": "0.6.0",
   "publisher": "averenium",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -29,10 +29,28 @@
   ],
   "keywords": [
     "nuget",
+    "nuget manager",
+    "nuget package manager",
+    "package manager",
+    "packages",
+    "packagereference",
+    "nuget.config",
     "dotnet",
+    ".net",
+    "c#",
     "csharp",
+    "f#",
     "fsharp",
-    "package manager"
+    "dependencies",
+    "dependency management",
+    "update packages",
+    "outdated",
+    "vulnerabilities",
+    "security audit",
+    "restore",
+    "solution",
+    "csproj",
+    "msbuild"
   ],
   "extensionKind": [
     "workspace"

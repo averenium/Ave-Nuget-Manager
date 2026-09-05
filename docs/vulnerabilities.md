@@ -75,7 +75,7 @@ const fs = require('fs');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const extra = [];
 for (const pkg of [...input.installed, ...input.implicit]) {
-  if (pkg.id.toLowerCase() === 'contoso.legacy') {
+  if (pkg.id.toLowerCase() === 'example.legacy') {
     extra.push({
       packageId: pkg.id,
       version: pkg.resolvedVersion,

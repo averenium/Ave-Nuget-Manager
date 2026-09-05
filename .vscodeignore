@@ -16,6 +16,7 @@ jest.config.ts
 .gitattributes
 docs/**
 docker/**
+demo/**
 *.md
 !README.md
 !CHANGELOG.md

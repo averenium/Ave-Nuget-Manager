@@ -12,6 +12,7 @@ import {
 } from '../../batchUpdates';
 import { isCodeAnalysisFamily, versionsAtOrBelow } from '../../roslynSdkCap';
 import { compareSemVer } from '../../semver';
+import { bestOverlapCandidate, memberKeysOf } from '../familySelection';
 import { fileNameNoExt } from '../utils/pathUtils';
 import { versionTone } from '../utils/versionTone';
 import { SplitPane } from './SplitPane';
@@ -29,7 +30,7 @@ import type { BatchUpdateItem, BatchUpdateJob, BatchUpdateItemView } from '../..
 type Selection =
   | { type: 'all' }
   | { type: 'other' }
-  | { type: 'family'; family: string; fromVersion: string };
+  | { type: 'family'; family: string; fromVersion: string; memberKeys: string[] };
 
 function statusLabel(item: BatchUpdateItemView): string {
   switch (item.status) {
@@ -43,11 +44,15 @@ function statusLabel(item: BatchUpdateItemView): string {
   }
 }
 
+// Family-only, deliberately ignoring `fromVersion`/`memberKeys` — this
+// tracks "which group is the user looking at" across an update that shifts
+// the group's own resolved version (see the "follow" effect below), same as
+// jobMatchesSelection already does for matching a running/finished job.
 function selectionKey(sel: Selection | null): string {
   if (!sel) return '';
   if (sel.type === 'all') return 'all';
   if (sel.type === 'other') return 'other';
-  return `family:${sel.family}@${sel.fromVersion}`;
+  return `family:${sel.family}`;
 }
 
 function jobMatchesSelection(job: BatchUpdateJob, sel: Selection | null): boolean {
@@ -178,7 +183,23 @@ export function UpdatesTab() {
   const selectedFamily: FamilyGroup | undefined =
     selection?.type === 'family'
       ? families.find((g) => g.family === selection.family && g.fromVersion === selection.fromVersion)
+        ?? bestOverlapCandidate(families.filter((g) => g.family === selection.family), selection.memberKeys)
       : undefined;
+
+  // Once the members we're tracking land in a bucket at a new fromVersion
+  // (e.g. right after an update), re-anchor the selection on that bucket's
+  // own (fromVersion, memberKeys) so highlighting and the exact-match lookup
+  // above stay in sync going forward.
+  useEffect(() => {
+    if (selection?.type !== 'family' || !selectedFamily) return;
+    if (selectedFamily.fromVersion === selection.fromVersion) return;
+    setSelection({
+      type: 'family',
+      family: selectedFamily.family,
+      fromVersion: selectedFamily.fromVersion,
+      memberKeys: memberKeysOf(selectedFamily),
+    });
+  }, [selection, selectedFamily]);
 
   const familyIds = selectedFamily?.members.map((m) => m.packageId) ?? [];
 
@@ -379,6 +400,7 @@ export function UpdatesTab() {
                       type: 'family',
                       family: g.family,
                       fromVersion: g.fromVersion,
+                      memberKeys: memberKeysOf(g),
                     })}
                   />
                 );

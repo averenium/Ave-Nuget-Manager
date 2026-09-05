@@ -7,6 +7,9 @@
 - **Agent skill** (Dependency breaking-changes review, bumped to `1.1.0`): a bundled `scripts/review.fsx` run via `dotnet fsi` — `diff`, `graph` and `notes` collect the manifest diff, the restore graph and every changed package's release notes for a pending bump, and write a report skeleton the agent fills in. Needs no GitHub token (#67)
 - **Docs**: new [`docs/vulnerability-script.md`](docs/vulnerability-script.md) — the `averenium.nugetManager.vulnerabilityScript` protocol, with JavaScript and Python examples (#69)
 - `averenium.nugetManager.vulnerabilityScript` also runs `.fsx` (`dotnet fsi`), `.csx` (`dotnet script`) and managed `.dll` (#69)
+- **Docs**: README reworked as a landing page for the VS Code Marketplace and Open VSX — what the extension replaces, a quick start, an install table per editor, and a screenshot slot per feature (shot list: [`docs/marketplace-assets.md`](docs/marketplace-assets.md)) (#84)
+- Marketplace search terms: `description` rewritten and `keywords` expanded from 5 to 23 (#84)
+- **Demo**: `demo/` — an `Example.Shop` solution built for the listing screenshots: five .NET 10 projects, outdated packages throughout, two package families, five real advisories including a transitive one, a `RabbitMQ.Client` 6.x pin and a two-source `nuget.config` (#84)
 
 ### Fixed
 
@@ -18,6 +21,7 @@
 - `dotnet list`/`--vulnerable` timeout now scales with the project count (30s to 120s), with one retry after a timeout (#72)
 - The version list is seeded from cached enrich data instead of blanking to "Loading…" on every package selection (#76)
 - Hover states add an outline so they stay visible in High Contrast themes (#68)
+- **Groups**: the right-hand detail panel no longer blanks (name, version selector, package list) right after a group update succeeds, including when the same family is split across projects pinned to different versions
 
 ## 0.5.0
 

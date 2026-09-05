@@ -515,7 +515,7 @@ function RepoEditor({
             value={mapping}
             autoComplete="off"
             spellCheck={false}
-            placeholder="packageSourceMapping patterns, e.g. Contoso.*, Fabrikam.*"
+            placeholder="packageSourceMapping patterns, e.g. Example.*, Internal.*"
             title={`packageSourceMapping patterns for this source, comma-separated. Empty clears it. Writes to ${fileLabel}.`}
             onChange={(e) => setMapping(e.target.value)}
             onKeyDown={(e) => {

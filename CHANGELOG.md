@@ -4,19 +4,20 @@
 
 ### Added
 
-- **Docs**: new user-facing [`docs/vulnerability-script.md`](docs/vulnerability-script.md) — the `averenium.nugetManager.vulnerabilityScript` protocol (stdin/stdout shape, accepted finding fields and aliases, the 30s timeout), a JavaScript example, and a new Python example for the `python <file>` runtime that previously had none documented. Linked from the setting's description and the README settings table (#69)
-- `averenium.nugetManager.vulnerabilityScript` now also runs `.fsx` (`dotnet fsi`), `.csx` (`dotnet script`), and `.dll` — a `.dll`'s PE header is checked for a CLR Runtime Header first, so a managed .NET assembly (a published tool, or one built with `dotnet publish`) runs as `dotnet <file>` and a native `.dll` still falls back to running the file itself unchanged
+- **Agent skill** (Dependency breaking-changes review, bumped to `1.1.0`): a bundled `scripts/review.fsx` run via `dotnet fsi` — `diff`, `graph` and `notes` collect the manifest diff, the restore graph and every changed package's release notes for a pending bump, and write a report skeleton the agent fills in. Needs no GitHub token (#67)
+- **Docs**: new [`docs/vulnerability-script.md`](docs/vulnerability-script.md) — the `averenium.nugetManager.vulnerabilityScript` protocol, with JavaScript and Python examples (#69)
+- `averenium.nugetManager.vulnerabilityScript` also runs `.fsx` (`dotnet fsi`), `.csx` (`dotnet script`) and managed `.dll` (#69)
 
 ### Fixed
 
-- **Log**: **Copy sanitised** didn't mask project names — only the workspace root, home directory, and hostname were redacted, so a path like `<workspace>/AVE.ElectricityBot.Data/AVE.ElectricityBot.Data.csproj` kept the real project name. It now builds the same `pNN.csproj` aliases as a trace zip, from the current scope's project files (#65)
-- **Log**: expanded-row and toolbar polish — removed a redundant "command" block and duplicate Copy button on non-CLI entries, repositioned the per-block hover-copy button (visible, no scroll flicker), and pinned the "N new ↓" pill so it no longer scrolls away with the list (#66)
-- Selecting a not-installed package after picking a specific version for a different package kept showing that leftover version instead of the newly selected package's own latest — `selectedVersion` is now reset on every package selection change (#59)
-- The source filter dropdown (Packages toolbar) only ever closed via its own toggle button — clicking a package row, or anywhere else on the page, left it open on top of whatever was underneath it. It now closes on an outside click, Escape, blur, or scroll, the same pattern already used by the source-URL context menu (#70)
-- Moving the NuGet panel (panel ↔ sidebar ↔ secondary sidebar ↔ new window ↔ "Open in New Window") always tears down and recreates the view, which forced a full `dotnet restore` + `dotnet list` + enrich + vulnerability scan every time regardless of whether the scope actually changed. A re-init for the same scope now replays the last known state (package list, per-package version/source info, vulnerability findings) straight from cache instead of touching the CLI/network at all (#71)
-- `dotnet list`/`--vulnerable` (repo-size-bound) shared the same fixed 30s timeout as single-package feed calls, and could legitimately time out on a large solution (`--include-transitive` on a big `.slnx`). Its timeout now scales with the project count (30s for a single project, up to a 120s cap), and one automatic retry follows a timeout specifically — not a plain non-zero exit — since a large list being slow isn't the same as a flaky network failure (#72)
-- Selecting a package in the Packages tab always blanked the version list and showed "Loading…" for a moment, even when the version list was already known from the last enrich pass — it's now seeded from that cached data immediately (a not-yet-installed package gets its known latest version as a single-entry placeholder), while the background refresh that keeps it fresh still runs and updates the list the same as before (#76)
-- Most row/button hover states relied only on a `background` swap, and the Restore/Refresh/Trace/filter/dropdown-style buttons relied only on a border/text/icon colour swap to the accent colour — both are invisible (or worse, made the icon vanish into an identically-coloured background) in VS Code's Dark/Light High Contrast themes. Hover now adds a thicker outline alongside the (restored, icon/text left alone) background/border swap — consistently across all of them, not a colour swap to `contrastActiveBorder`, since that orange/yellow tone is reserved for keyboard focus and read as out of place on a plain hover. No-op outside HC themes. Also removed a leftover dead `.log-entry__toggle` rule/reference from before the #58 Log tab redesign (#68)
+- **Log**: **Copy sanitised** now masks project names too, using the same `pNN.csproj` aliases as a trace zip (#65)
+- **Log**: expanded-row and toolbar polish — no duplicate Copy on non-CLI entries, repositioned hover-copy button, and the "N new ↓" pill no longer scrolls away (#66)
+- Selecting a not-installed package no longer shows the version picked for a different package (#59)
+- The source filter dropdown now closes on an outside click, Escape, blur, or scroll (#70)
+- Moving the panel between locations replays the last state from cache instead of forcing a full restore, list and vulnerability scan (#71)
+- `dotnet list`/`--vulnerable` timeout now scales with the project count (30s to 120s), with one retry after a timeout (#72)
+- The version list is seeded from cached enrich data instead of blanking to "Loading…" on every package selection (#76)
+- Hover states add an outline so they stay visible in High Contrast themes (#68)
 
 ## 0.5.0
 

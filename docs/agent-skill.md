@@ -8,6 +8,7 @@ The extension does **not** review bumps itself. It ships a **project Agent Skill
 |---|---|
 | `SKILL.md` | Triggers, four rules, workflow, report path, validate |
 | `references/nuget.md` | restore graph + diamonds from `project.assets.json` (always, no gate), cache `CHANGELOG.md` |
+| `scripts/review.fsx` | `dotnet fsi` script: `diff` (changed package ids + old/new versions from `git diff`), `graph` (diamonds + transitive major crossings), `notes` (GitHub/GitLab/Bitbucket/Azure DevOps release notes in a version range) — mechanizes the most expensive/error-prone parts of the manual workflow above (#67) |
 
 Report files the agent writes: existing docs/planning layout in **that** workspace, else `docs/dependency-reviews/YYYY-MM-DD-package-updates.md`.
 

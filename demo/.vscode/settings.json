@@ -1,0 +1,5 @@
+{
+  "averenium.nugetManager.blockedPackages": [
+    "RabbitMQ.Client"
+  ]
+}

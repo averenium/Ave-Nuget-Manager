@@ -83,6 +83,22 @@ describe('detectProjectPackageStyle', () => {
       false,
     )).toBe('sdk');
   });
+
+  it('is not misled by a comment mentioning Sdk= or PackageReference (#85)', () => {
+    // A legacy project whose only "Sdk=" or "PackageReference" mention is
+    // inside a migration-note comment must keep routing through the
+    // XML-edit path, not `dotnet add` (which only legacy-packageref/sdk
+    // detection gates).
+    const legacyWithComment = `<Project ToolsVersion="4.0">
+  <!-- migrated from Sdk="Microsoft.NET.Sdk" -->
+  <ItemGroup>
+    <!-- was <PackageReference Include="Old" Version="1.0.0" /> -->
+    <PackageReference Include="MongoDB.Driver" Version="3.4.0" />
+  </ItemGroup>
+</Project>`;
+    expect(isSdkStyleProject(legacyWithComment)).toBe(false);
+    expect(detectProjectPackageStyle(legacyWithComment, false)).toBe('legacy-packageref');
+  });
 });
 
 describe('upsertPackageReference', () => {
@@ -107,6 +123,30 @@ describe('upsertPackageReference', () => {
     expect(next).not.toContain('12.0.1');
   });
 
+  it('does not corrupt the file when a comment mentions <PackageReference> before a real non-self-closing element (#85)', () => {
+    // The highest-severity #85 finding: the non-self-closing alternative's
+    // lazy `[\s\S]*?` body capture treats the comment's bare `<PackageReference>`
+    // mention as a fake opening tag and swallows through to the real
+    // closing tag — `includeMatches` then finds the real `Include="Foo"`
+    // inside that bogus span and accepts it, so the edit splices the file
+    // starting mid-comment, silently truncating it.
+    const xml = `<Project>
+  <ItemGroup>
+    <!-- remove <PackageReference> for Foo once upgraded -->
+    <PackageReference Include="Foo">
+      <PrivateAssets>all</PrivateAssets>
+      <Version>1.0.0</Version>
+    </PackageReference>
+  </ItemGroup>
+</Project>`;
+    const next = upsertPackageReference(xml, 'Foo', '2.0.0');
+    expect(next).toContain('<!-- remove <PackageReference> for Foo once upgraded -->');
+    expect(next).toContain('<PrivateAssets>all</PrivateAssets>');
+    expect(next).toContain('<Version>2.0.0</Version>');
+    expect(next).not.toContain('<Version>1.0.0</Version>');
+    expect(countPackageReferences(next, 'Foo')).toBe(1);
+  });
+
   it('inserts a new id in a new unconditioned ItemGroup', () => {
     const xml = `<Project>
   <ItemGroup Condition="'$(Configuration)' == 'Debug'">
@@ -127,5 +167,19 @@ describe('removePackageReferences', () => {
     const next = removePackageReferences(ISSUE_LEGACY_CSPROJ, 'MongoDB.Driver');
     expect(countPackageReferences(next, 'MongoDB.Driver')).toBe(0);
     expect(countPackageReferences(next, 'Microsoft.AspNetCore.SignalR.Client.Core')).toBe(7);
+  });
+
+  it('does not delete a comment mentioning <PackageReference> along with the real element (#85)', () => {
+    const xml = `<Project>
+  <ItemGroup>
+    <!-- was <PackageReference Include="Foo" Version="1.0.0" /> -->
+    <PackageReference Include="Foo" Version="1.0.0" />
+    <PackageReference Include="Bar" Version="2.0.0" />
+  </ItemGroup>
+</Project>`;
+    const next = removePackageReferences(xml, 'Foo');
+    expect(next).toContain('<!-- was <PackageReference Include="Foo" Version="1.0.0" /> -->');
+    expect(countPackageReferences(next, 'Foo')).toBe(0);
+    expect(countPackageReferences(next, 'Bar')).toBe(1);
   });
 });

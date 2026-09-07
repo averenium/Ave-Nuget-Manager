@@ -1,4 +1,5 @@
 import * as fs from 'fs/promises';
+import { maskXmlComments } from './xmlComments';
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -13,13 +14,25 @@ export interface PackageReferenceSpan {
   text: string;
 }
 
+/**
+ * Matching runs against a comment-masked copy of `xml` (see #85): the
+ * non-self-closing alternative's lazy `[\s\S]*?` body capture would
+ * otherwise let a comment mentioning `<PackageReference>` in its own text
+ * swallow through to a real, distant `</PackageReference>` — and since
+ * `upsertPackageReference`/`removePackageReferences` splice the file at
+ * these spans directly, a bogus span means corrupting the real file on
+ * save, not just a misread. Returned spans/text always come from the real,
+ * unmasked `xml` — masking is only ever used to locate safe boundaries.
+ */
 export function findPackageReferenceSpans(xml: string, packageId: string): PackageReferenceSpan[] {
   const spans: PackageReferenceSpan[] = [];
+  const masked = maskXmlComments(xml);
   const re = new RegExp(PACKAGE_REFERENCE.source, PACKAGE_REFERENCE.flags);
   let m: RegExpExecArray | null;
-  while ((m = re.exec(xml)) !== null) {
-    if (includeMatches(m[0], packageId)) {
-      spans.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+  while ((m = re.exec(masked)) !== null) {
+    const text = xml.slice(m.index, m.index + m[0].length);
+    if (includeMatches(text, packageId)) {
+      spans.push({ start: m.index, end: m.index + m[0].length, text });
     }
   }
   return spans;

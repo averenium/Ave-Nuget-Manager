@@ -1,5 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { maskXmlComments } from './xmlComments';
 
 export interface FileSnapshot {
   path: string;
@@ -49,10 +50,17 @@ export async function restoreFileSnapshots(snapshots: FileSnapshot[]): Promise<v
   }
 }
 
+// Matches against a comment-masked copy (see #85): read-only, so there's no
+// splice to corrupt, but a comment mentioning `Include="<this id>"` (the
+// block fallback) or a phantom self-closing-looking `<PackageReference
+// Include=... Version=... />` inside a comment could still read back the
+// wrong version — worth guarding even though the trigger is narrower than
+// the file-corrupting write-side case in legacyPackageReference.ts.
 export function readPackageVersionFromXml(xml: string, packageId: string): string | null {
   const id = escapeRegex(packageId);
+  const masked = maskXmlComments(xml);
 
-  const attrAfterInclude = xml.match(
+  const attrAfterInclude = masked.match(
     new RegExp(
       `<Package(?:Reference|Version)\\b[^>]*Include\\s*=\\s*["']${id}["'][^>]*Version\\s*=\\s*["']([^"']+)["']`,
       'i',
@@ -60,7 +68,7 @@ export function readPackageVersionFromXml(xml: string, packageId: string): strin
   );
   if (attrAfterInclude?.[1]) return attrAfterInclude[1].trim();
 
-  const attrBeforeInclude = xml.match(
+  const attrBeforeInclude = masked.match(
     new RegExp(
       `<Package(?:Reference|Version)\\b[^>]*Version\\s*=\\s*["']([^"']+)["'][^>]*Include\\s*=\\s*["']${id}["']`,
       'i',
@@ -68,7 +76,7 @@ export function readPackageVersionFromXml(xml: string, packageId: string): strin
   );
   if (attrBeforeInclude?.[1]) return attrBeforeInclude[1].trim();
 
-  const block = xml.match(
+  const block = masked.match(
     new RegExp(
       `<Package(?:Reference|Version)\\b[^>]*Include\\s*=\\s*["']${id}["'][^>]*>([\\s\\S]*?)</Package(?:Reference|Version)>`,
       'i',

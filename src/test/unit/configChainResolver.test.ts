@@ -178,6 +178,86 @@ describe('extractSources', () => {
     expect(sources[2].allowInsecureConnections).toBeUndefined();
     expect(sources[2].disableTlsCertificateValidation).toBeUndefined();
   });
+
+  it('reads a source declared with single-quoted attributes (#85)', () => {
+    // Valid XML, just not what dotnet/Visual Studio ever write themselves —
+    // a hand-edited nuget.config could use either quote style.
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key='nexus' value='https://nexus.example/index.json' />
+  </packageSources>
+</configuration>`;
+    const sources = extractSources(xml, '/p/nuget.config');
+    expect(sources).toEqual([expect.objectContaining({ name: 'nexus', url: 'https://nexus.example/index.json' })]);
+  });
+
+  it('is unaffected by a comment mentioning "<add>" near a self-closing entry (#85)', () => {
+    // Self-closing `<add ... />` entries have no separate closing tag to
+    // lazily search past, so they're immune to the "swallow through to a
+    // distant closing tag" shape that hit the paired <packageSource>/
+    // <SourceName> tags in #85. But a comment can still contain a complete,
+    // self-contained fake `<add .../>` match on its own — this asserted
+    // "assumed safe" originally, then a run of this exact test caught a
+    // real phantom-source bug (now fixed by masking here too).
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <!-- one <add key="..." value="..." /> per source -->
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+</configuration>`;
+    const sources = extractSources(xml, '/p/nuget.config');
+    expect(sources).toEqual([
+      expect.objectContaining({ name: 'nuget.org' }),
+      expect.objectContaining({ name: 'nexus' }),
+    ]);
+  });
+
+  it('does not read a commented-out source as a real, active entry', () => {
+    // A very common real nuget.config habit — commenting out a source to
+    // disable it — which a bare `<add .../>` regex scan can't distinguish
+    // from a real entry unless comments are masked first.
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <!-- <add key="internal-legacy" value="https://old.internal/v3/index.json" /> -->
+  </packageSources>
+</configuration>`;
+    const sources = extractSources(xml, '/p/nuget.config');
+    expect(sources).toEqual([expect.objectContaining({ name: 'nuget.org' })]);
+  });
+
+  it('does not lose a section to a preceding comment mentioning its tag, even with an unrelated section in between', () => {
+    // Same shape as the original #85 repro, but at the *section* level:
+    // extractSection/replaceSection/removeSection are shared by every
+    // section in the file, and a naive lazy regex here would swallow
+    // through an entirely unrelated sibling section (packageRestore here)
+    // sitting between the comment and the real closing tag.
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <!-- <packageSources> lists all sources; add one per project feed -->
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+  <packageRestore>
+    <add key="enabled" value="True" />
+  </packageRestore>
+  <packageSourceMapping>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>`;
+    expect(extractSources(xml, '/p/nuget.config')).toEqual([
+      expect.objectContaining({ name: 'nuget.org' }),
+    ]);
+    expect(extractPackageSourceMapping(xml).mappings).toEqual([
+      { sourceName: 'nuget.org', patterns: ['*'] },
+    ]);
+  });
 });
 
 describe('extractAuditSources', () => {
@@ -374,6 +454,21 @@ describe('disabledPackageSources chain merge', () => {
 });
 
 describe('packageSourceMapping', () => {
+  it('parses a source and pattern declared with single-quoted attributes (#85)', () => {
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSourceMapping>
+    <packageSource key='nexus'>
+      <package pattern='Contoso.*' />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>`;
+    expect(extractPackageSourceMapping(xml)).toEqual({
+      cleared: false,
+      mappings: [{ sourceName: 'nexus', patterns: ['Contoso.*'] }],
+    });
+  });
+
   it('parses patterns per source', () => {
     const xml = `<?xml version="1.0"?>
 <configuration>
@@ -392,6 +487,59 @@ describe('packageSourceMapping', () => {
       mappings: [
         { sourceName: 'nuget.org', patterns: ['*'] },
         { sourceName: 'nexus', patterns: ['Contoso.*', 'Nexus.*'] },
+      ],
+    });
+  });
+
+  it('does not lose the first source when a preceding comment contains bare tag-like text (#85)', () => {
+    // The exact repro from #85: a comment mentioning `<packageSource>` in its
+    // own text, right before the real first entry. A naive `[\s\S]*?` body
+    // capture treats that bare mention as a fake opening tag and swallows
+    // through to the real </packageSource> closing tag that follows it.
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSourceMapping>
+    <!-- key value for <packageSource> should match key values from <packageSources> element -->
+    <packageSource key="N">
+      <package pattern="*" />
+    </packageSource>
+    <packageSource key="N1">
+      <package pattern="D.*" />
+      <package pattern="A.S.*" />
+    </packageSource>
+    <packageSource key="NS">
+      <package pattern="D.*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>`;
+    expect(extractPackageSourceMapping(xml)).toEqual({
+      cleared: false,
+      mappings: [
+        { sourceName: 'N', patterns: ['*'] },
+        { sourceName: 'N1', patterns: ['D.*', 'A.S.*'] },
+        { sourceName: 'NS', patterns: ['D.*'] },
+      ],
+    });
+  });
+
+  it('does not lose an entry when a comment sits between two real blocks, not only before the first (#85)', () => {
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSourceMapping>
+    <packageSource key="N">
+      <package pattern="*" />
+    </packageSource>
+    <!-- another <packageSource> below -->
+    <packageSource key="N1">
+      <package pattern="D.*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>`;
+    expect(extractPackageSourceMapping(xml)).toEqual({
+      cleared: false,
+      mappings: [
+        { sourceName: 'N', patterns: ['*'] },
+        { sourceName: 'N1', patterns: ['D.*'] },
       ],
     });
   });

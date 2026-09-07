@@ -23,6 +23,18 @@ describe('projectFileSnapshot', () => {
     expect(readPackageVersionFromXml(xml, 'Newtonsoft.Json')).toBe('13.0.3');
   });
 
+  it('does not read a version out of a comment mentioning the same package id (#85)', () => {
+    // The block fallback's `[\s\S]*?` body capture could otherwise swallow
+    // through a comment mentioning `Include="Pkg"` to a real, unrelated
+    // closing tag, or a phantom self-closing match could be read straight
+    // out of the comment text.
+    const xml = `<Project><ItemGroup>
+      <!-- was <PackageReference Include="Pkg" Version="0.9.0" /> -->
+      <PackageReference Include="Pkg" Version="1.0.0" />
+    </ItemGroup></Project>`;
+    expect(readPackageVersionFromXml(xml, 'Pkg')).toBe('1.0.0');
+  });
+
   it('snapshots csproj and restores previous content', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nuget-snap-'));
     const csproj = path.join(dir, 'App.csproj');

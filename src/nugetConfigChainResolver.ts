@@ -5,6 +5,7 @@ import type { NuGetConfigFile, PackageSource, PackageSourceMapping } from './typ
 import { normalizeFsPath } from './pathCompare';
 import { extractApiKeyUrls, extractCredentialUsernames, unescapeXml } from './nugetConfigEdit';
 import { decodeXmlLocalName } from './nugetConfigXmlName';
+import { extractSection, maskXmlComments } from './nugetConfigXmlSections';
 
 /**
  * Returns the platform-specific directory where the global NuGet.Config lives.
@@ -249,12 +250,16 @@ export function parseNuGetConfigXml(filePath: string, content: string): NuGetCon
  * Extract package sources from the XML content of a nuget.config file.
  * Uses regex-based parsing (no DOM dependency in the extension host).
  */
+// Matches either quote style XML allows for an attribute value — a
+// single-quoted `<add key='Foo' value='bar' />` is valid XML too, and
+// dotnet/Visual Studio only ever write double quotes, so this only ever
+// matters for a hand-edited file.
 function parseAddAttributes(tagInner: string): Record<string, string> {
   const out: Record<string, string> = {};
-  const re = /([A-Za-z_][\w.\-]*)\s*=\s*"([^"]*)"/g;
+  const re = /([A-Za-z_][\w.\-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(tagInner)) !== null) {
-    out[m[1].toLowerCase()] = unescapeXml(m[2]);
+    out[m[1].toLowerCase()] = unescapeXml(m[2] ?? m[3] ?? '');
   }
   return out;
 }
@@ -289,8 +294,9 @@ function sourceFromAddTag(tagInner: string, filePath: string, disabledSet: Set<s
 function extractSourceAdds(section: string, filePath: string, disabledSet: Set<string>): PackageSource[] {
   const sources: PackageSource[] = [];
   const tagRe = /<add\b([^>]*?)\s*\/?>/gi;
+  const masked = maskXmlComments(section);
   let m: RegExpExecArray | null;
-  while ((m = tagRe.exec(section)) !== null) {
+  while ((m = tagRe.exec(masked)) !== null) {
     const src = sourceFromAddTag(m[1], filePath, disabledSet);
     if (src) sources.push(src);
   }
@@ -309,7 +315,7 @@ function disabledPackageSourceKeys(xml: string): Set<string> {
 export function extractDisabledPackageSources(
   xml: string,
 ): { entries: Array<{ name: string; disabled: boolean }>; cleared: boolean } {
-  const section = extractSection(xml, 'disabledPackageSources');
+  const section = maskXmlComments(extractSection(xml, 'disabledPackageSources'));
   const entries: Array<{ name: string; disabled: boolean }> = [];
   const tagRe = /<add\b([^>]*?)\s*\/?>/gi;
   let m: RegExpExecArray | null;
@@ -326,7 +332,7 @@ export function extractDisabledPackageSources(
 export function extractPackageSourceMapping(
   xml: string,
 ): { mappings: PackageSourceMapping[]; cleared: boolean } {
-  const section = extractSection(xml, 'packageSourceMapping');
+  const section = maskXmlComments(extractSection(xml, 'packageSourceMapping'));
   const byKey = new Map<string, PackageSourceMapping>();
   const blockRe = /<packageSource\b([^>]*)>([\s\S]*?)<\/packageSource>/gi;
   let m: RegExpExecArray | null;
@@ -404,7 +410,7 @@ export function extractSources(xml: string, filePath: string): PackageSource[] {
 
 /** Source keys that have a credentials block. Never returns password values. */
 export function extractCredentialKeys(xml: string): string[] {
-  const section = extractSection(xml, 'packageSourceCredentials');
+  const section = maskXmlComments(extractSection(xml, 'packageSourceCredentials'));
   if (!section) return [];
   const keys: string[] = [];
   const seen = new Set<string>();
@@ -524,14 +530,4 @@ export function uniqueAuditSources(chain: NuGetConfigFile[]): PackageSource[] {
 /** Nearest-first enabled audit sources; `<clear />` stops walking farther files. */
 export function uniqueEnabledAuditSources(chain: NuGetConfigFile[]): PackageSource[] {
   return uniqueAuditSourcesFromChain(chain, true);
-}
-
-/**
- * Extract the inner content of an XML section by tag name.
- * Returns an empty string if the section is absent.
- */
-function extractSection(xml: string, tagName: string): string {
-  const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i');
-  const m = regex.exec(xml);
-  return m ? m[1] : '';
 }

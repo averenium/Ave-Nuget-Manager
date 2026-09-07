@@ -9,6 +9,13 @@ import type { CliResult } from './types';
 import { encodeXmlLocalName, decodeXmlLocalName } from './nugetConfigXmlName';
 import { encryptNuGetConfigPassword, supportsEncryptedNuGetPasswords } from './nugetConfigDpapi';
 import { pathsEqual } from './pathCompare';
+import {
+  extractSection,
+  findSectionBounds,
+  maskXmlComments,
+  removeSection,
+  replaceSection,
+} from './nugetConfigXmlSections';
 
 export function escapeXml(value: string): string {
   return value
@@ -30,46 +37,80 @@ export function isXmlElementName(name: string): boolean {
   return /^[\p{L}_][\p{L}\p{Nd}._\-]*$/u.test(name);
 }
 
-function extractSection(xml: string, tagName: string): string {
-  const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i');
-  const m = regex.exec(xml);
-  return m ? m[1] : '';
+/** First (comment-safe) match of a non-global `regex` against `text`. */
+function execMasked(text: string, regex: RegExp): RegExpExecArray | null {
+  return regex.exec(maskXmlComments(text));
 }
 
-function eolOf(xml: string): '\r\n' | '\n' {
-  return xml.includes('\r\n') ? '\r\n' : '\n';
+/** Removes the first (comment-safe) match of a non-global `regex`. */
+function removeMaskedMatch(text: string, regex: RegExp): string {
+  const m = execMasked(text, regex);
+  if (!m) return text;
+  return text.slice(0, m.index) + text.slice(m.index + m[0].length);
 }
 
-/** Child markup between tags: no extra blank lines, one trailing EOL before `</tag>`. */
-function normalizeSectionInner(inner: string, eol: '\r\n' | '\n'): string {
-  const stripped = inner
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/^\n+/, '')
-    .replace(/[ \t\n]+$/, '');
-  if (!stripped) return '';
-  return `${stripped.replace(/\n/g, eol)}${eol}`;
-}
-
-function replaceSection(xml: string, tagName: string, inner: string): string {
-  const eol = eolOf(xml);
-  const block = `  <${tagName}>${eol}${normalizeSectionInner(inner, eol)}  </${tagName}>`;
-  const regex = new RegExp(`<[ \t]*${tagName}[^>]*>[\\s\\S]*?<\\/${tagName}>`, 'i');
-  if (regex.test(xml)) return xml.replace(regex, block.trimStart());
-  if (/<\/configuration>/i.test(xml)) {
-    return xml.replace(/<\/configuration>/i, `${block}${eol}</configuration>`);
+/**
+ * Removes every (comment-safe) match of a global `regex` whose captured
+ * attrs (group 1) satisfy `shouldRemove` — comment-safe equivalent of
+ * `text.replace(regex, cb)` for a paired open/close tag, where matching
+ * (and thus replacing) directly against a masked copy would also blank out
+ * any real comment elsewhere in the string once written back to disk.
+ */
+function removeMaskedMatches(
+  text: string,
+  regex: RegExp,
+  shouldRemove: (attrs: string) => boolean,
+): string {
+  const masked = maskXmlComments(text);
+  const spans: Array<[number, number]> = [];
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(masked)) !== null) {
+    if (shouldRemove(m[1] ?? '')) spans.push([m.index, m.index + m[0].length]);
   }
-  return `${xml.replace(/[ \t\r\n]+$/, '')}${eol}${block}${eol}`;
+  if (spans.length === 0) return text;
+  let out = '';
+  let cursor = 0;
+  for (const [start, end] of spans) {
+    out += text.slice(cursor, start);
+    cursor = end;
+  }
+  return out + text.slice(cursor);
 }
 
-function removeSection(xml: string, tagName: string): string {
-  return xml.replace(new RegExp(`\\s*<${tagName}[^>]*>[\\s\\S]*?<\\/${tagName}>`, 'i'), '\n');
+/**
+ * Comment-safe equivalent of `text.replace(globalRegex, replacer)`: matches
+ * against a masked copy (so a comment mentioning e.g. `<add ...>` can't be
+ * treated as, or silently rewritten as, a real entry), but splices the
+ * replacer's output into the real, untouched text at the same offsets.
+ * `replacer` gets the same `(full, ...groups)` shape as `String.replace`.
+ */
+function replaceMaskedMatches(
+  text: string,
+  regex: RegExp,
+  replacer: (full: string, ...groups: string[]) => string,
+): string {
+  const masked = maskXmlComments(text);
+  const spans: Array<{ start: number; end: number; replacement: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(masked)) !== null) {
+    const full = m[0];
+    const replacement = replacer(full, ...(m.slice(1) as string[]));
+    if (replacement !== full) spans.push({ start: m.index, end: m.index + full.length, replacement });
+  }
+  if (spans.length === 0) return text;
+  let out = '';
+  let cursor = 0;
+  for (const { start, end, replacement } of spans) {
+    out += text.slice(cursor, start) + replacement;
+    cursor = end;
+  }
+  return out + text.slice(cursor);
 }
 
 function upsertAdd(section: string, key: string, value: string): string {
   const addRe = /<add\b([^>]*?)\s*(\/?)>/gi;
   let found = false;
-  const next = section.replace(addRe, (full, attrInner: string, slash: string) => {
+  const next = replaceMaskedMatches(section, addRe, (full, attrInner, slash) => {
     const attrs = parseAddAttrList(attrInner);
     const ki = attrIndex(attrs, 'key');
     if (ki < 0 || attrs[ki].value.toLowerCase() !== key.toLowerCase()) return full;
@@ -93,8 +134,9 @@ function escapeRegExp(value: string): string {
 function listAdds(section: string): Array<{ key: string; value: string }> {
   const out: Array<{ key: string; value: string }> = [];
   const re = /<add\b([^>]*?)\s*\/?>/gi;
+  const masked = maskXmlComments(section);
   let m: RegExpExecArray | null;
-  while ((m = re.exec(section)) !== null) {
+  while ((m = re.exec(masked)) !== null) {
     const attrs = parseAddAttrList(m[1]);
     const key = attrs[attrIndex(attrs, 'key')]?.value;
     const value = attrs[attrIndex(attrs, 'value')]?.value;
@@ -124,12 +166,13 @@ export function setPackageSourceDisabled(xml: string, sourceName: string, disabl
  */
 function removeAddByDecodedKey(section: string, key: string): string {
   const want = key.toLowerCase();
-  return section.replace(
+  return removeMaskedMatches(
+    section,
     /\s*<add\b([^>]*?)(?:\/>|>\s*<\/add\s*>)/gi,
-    (full, attrInner: string) => {
+    (attrInner) => {
       const attrs = parseAddAttrList(attrInner);
       const k = attrs[attrIndex(attrs, 'key')]?.value;
-      return k !== undefined && k.toLowerCase() === want ? '' : full;
+      return k !== undefined && k.toLowerCase() === want;
     },
   );
 }
@@ -163,12 +206,18 @@ export function upsertAuditSource(xml: string, sourceName: string, url: string):
 
 type AddAttr = { name: string; value: string };
 
+// Matches either quote style XML allows for an attribute value — a
+// single-quoted `<add key='Foo' value='bar' />` is valid XML too, and
+// dotnet/Visual Studio only ever write double quotes, so this only ever
+// matters for a hand-edited file.
+const ATTR_RE = /([A-Za-z_][\w.\-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+
 function parseAddAttrList(inner: string): AddAttr[] {
   const out: AddAttr[] = [];
-  const re = /([A-Za-z_][\w.\-]*)\s*=\s*"([^"]*)"/g;
+  const re = new RegExp(ATTR_RE.source, ATTR_RE.flags);
   let m: RegExpExecArray | null;
   while ((m = re.exec(inner)) !== null) {
-    out.push({ name: m[1], value: unescapeXml(m[2]) });
+    out.push({ name: m[1], value: unescapeXml(m[2] ?? m[3] ?? '') });
   }
   return out;
 }
@@ -198,18 +247,18 @@ function rewriteSourceAddsInSection(
   sourceName: string,
   patch: (attrs: AddAttr[]) => void,
 ): string {
-  const blockRe = new RegExp(`(<${sectionName}[^>]*>)([\\s\\S]*?)(</${sectionName}>)`, 'i');
-  return xml.replace(blockRe, (_full, open: string, inner: string, close: string) => {
-    const next = inner.replace(/<add\b([^>]*?)\s*(\/?)>/gi, (full, attrInner: string, slash: string) => {
-      const attrs = parseAddAttrList(attrInner);
-      const key = attrs[attrIndex(attrs, 'key')]?.value;
-      if (!key || key.toLowerCase() !== sourceName.toLowerCase()) return full;
-      patch(attrs);
-      const body = attrs.map((a) => `${a.name}="${escapeXml(a.value)}"`).join(' ');
-      return `<add ${body}${slash ? ' />' : '>'}`;
-    });
-    return `${open}${next}${close}`;
+  const bounds = findSectionBounds(xml, sectionName);
+  if (!bounds) return xml;
+  const inner = xml.slice(bounds.innerStart, bounds.innerEnd);
+  const nextInner = replaceMaskedMatches(inner, /<add\b([^>]*?)\s*(\/?)>/gi, (full, attrInner, slash) => {
+    const attrs = parseAddAttrList(attrInner);
+    const key = attrs[attrIndex(attrs, 'key')]?.value;
+    if (!key || key.toLowerCase() !== sourceName.toLowerCase()) return full;
+    patch(attrs);
+    const body = attrs.map((a) => `${a.name}="${escapeXml(a.value)}"`).join(' ');
+    return `<add ${body}${slash ? ' />' : '>'}`;
   });
+  return xml.slice(0, bounds.innerStart) + nextInner + xml.slice(bounds.innerEnd);
 }
 
 /** Set or clear `allowInsecureConnections` / `disableTLSCertificateValidation` on a source `<add>`. */
@@ -276,7 +325,7 @@ export function removePackageSourceEntry(xml: string, name: string): string {
 }
 
 export function extractCredentialUsernames(xml: string): Record<string, string> {
-  const section = extractSection(xml, 'packageSourceCredentials');
+  const section = maskXmlComments(extractSection(xml, 'packageSourceCredentials'));
   const out: Record<string, string> = {};
   const blockRe = /<([^\s/>]+)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi;
   let m: RegExpExecArray | null;
@@ -284,14 +333,14 @@ export function extractCredentialUsernames(xml: string): Record<string, string> 
     const raw = m[1];
     if (raw.toLowerCase() === 'add') continue;
     const name = decodeXmlLocalName(raw);
-    const user = /<add\s+key\s*=\s*"Username"\s+value\s*=\s*"([^"]*)"/i.exec(m[2]);
-    if (user) out[name] = unescapeXml(user[1]);
+    const user = /<add\s+key\s*=\s*["']Username["']\s+value\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(m[2]);
+    if (user) out[name] = unescapeXml(user[1] ?? user[2] ?? '');
   }
   return out;
 }
 
 function credentialBlockInner(xml: string, sourceName: string): string | undefined {
-  const section = extractSection(xml, 'packageSourceCredentials');
+  const section = maskXmlComments(extractSection(xml, 'packageSourceCredentials'));
   const elementName = encodeXmlLocalName(sourceName);
   const blockRe = new RegExp(
     `<${escapeRegExp(elementName)}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${escapeRegExp(elementName)}>`,
@@ -307,10 +356,10 @@ function extractStoredPassword(
 ): { value: string; encrypted: boolean } | undefined {
   const inner = credentialBlockInner(xml, sourceName);
   if (!inner) return undefined;
-  const enc = /<add\s+key\s*=\s*"Password"\s+value\s*=\s*"([^"]*)"/i.exec(inner);
-  if (enc) return { value: unescapeXml(enc[1]), encrypted: true };
-  const clear = /<add\s+key\s*=\s*"ClearTextPassword"\s+value\s*=\s*"([^"]*)"/i.exec(inner);
-  if (clear) return { value: unescapeXml(clear[1]), encrypted: false };
+  const enc = /<add\s+key\s*=\s*["']Password["']\s+value\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(inner);
+  if (enc) return { value: unescapeXml(enc[1] ?? enc[2] ?? ''), encrypted: true };
+  const clear = /<add\s+key\s*=\s*["']ClearTextPassword["']\s+value\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(inner);
+  if (clear) return { value: unescapeXml(clear[1] ?? clear[2] ?? ''), encrypted: false };
   return undefined;
 }
 
@@ -375,7 +424,7 @@ export function setPackageSourceCredentials(
     `\\s*<${escapeRegExp(elementName)}(?:\\s[^>]*)?>[\\s\\S]*?<\\/${escapeRegExp(elementName)}>`,
     'i',
   );
-  section = section.replace(blockRe, '');
+  section = removeMaskedMatch(section, blockRe);
   if (creds) {
     const passKey = creds.encrypted ? 'Password' : 'ClearTextPassword';
     const block =
@@ -406,8 +455,9 @@ export function findPackageSourceLine(xml: string, sourceName: string): number |
     else if (/<\/packageSources>/i.test(line)) section = null;
     else if (/<auditSources[\s>]/i.test(line)) section = 'audit';
     else if (/<\/auditSources>/i.test(line)) section = null;
-    const key = /<add\b[^>]*\bkey\s*=\s*"([^"]*)"/i.exec(line);
-    if (!key || key[1].toLowerCase() !== want) continue;
+    const key = /<add\b[^>]*\bkey\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(line);
+    const keyValue = key?.[1] ?? key?.[2];
+    if (keyValue === undefined || keyValue.toLowerCase() !== want) continue;
     if (section === 'package' && packageHit === undefined) packageHit = i;
     if (section === 'audit' && auditHit === undefined) auditHit = i;
   }
@@ -458,12 +508,13 @@ export function setPackageSourceMappingPatterns(
   // old block for such a name is never matched and a stale duplicate
   // <packageSource> is left behind. Same approach as rewriteSourceAddsInSection.
   const wantKey = sourceName.toLowerCase();
-  section = section.replace(
+  section = removeMaskedMatches(
+    section,
     /\s*<packageSource\b([^>]*)>[\s\S]*?<\/packageSource>/gi,
-    (full, attrs: string) => {
+    (attrs) => {
       const parsed = parseAddAttrList(attrs);
       const key = parsed[attrIndex(parsed, 'key')]?.value;
-      return key !== undefined && key.toLowerCase() === wantKey ? '' : full;
+      return key !== undefined && key.toLowerCase() === wantKey;
     },
   );
   const unique = [...new Set(patterns.map((p) => p.trim()).filter(Boolean))];

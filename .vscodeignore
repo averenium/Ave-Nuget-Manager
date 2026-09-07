@@ -17,6 +17,8 @@ jest.config.ts
 docs/**
 docker/**
 demo/**
+media/**
+!media/icon.png
 *.md
 !README.md
 !CHANGELOG.md

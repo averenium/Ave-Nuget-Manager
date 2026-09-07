@@ -41,6 +41,25 @@ describe('setPackageSourceDisabled', () => {
     expect(on).toContain('nuget.org');
   });
 
+  it('does not mistake a same-key <add> inside a comment for the real entry (#85)', () => {
+    // Editing a key that only exists inside a comment must never silently
+    // mutate the commented-out copy in place — it has to create a real,
+    // active entry instead, leaving the comment's own text untouched.
+    const withComment = `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+  <disabledPackageSources>
+    <!-- disable a source with <add key="nexus" value="false" /> -->
+  </disabledPackageSources>
+</configuration>`;
+    const next = setPackageSourceDisabled(withComment, 'nexus', true);
+    expect(next).toContain('<!-- disable a source with <add key="nexus" value="false" /> -->');
+    expect(next.match(/<add key="nexus" value="true"/gi)).toHaveLength(1);
+  });
+
   it('does not accumulate blank lines around the add when toggling enable', () => {
     let xml = BASE;
     for (let i = 0; i < 6; i++) {
@@ -116,6 +135,22 @@ describe('auditSources XML', () => {
 });
 
 describe('credentials', () => {
+  it('reads a username and password declared with single-quoted attributes (#85)', () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+  <packageSourceCredentials>
+    <nexus>
+      <add key='Username' value='ci' />
+      <add key='ClearTextPassword' value='hunter2' />
+    </nexus>
+  </packageSourceCredentials>
+</configuration>`;
+    expect(extractCredentialUsernames(xml)).toEqual({ nexus: 'ci' });
+  });
+
   it('writes username and ClearTextPassword, never required in extract usernames as password', () => {
     const xml = setPackageSourceCredentials(BASE, 'nexus', {
       username: 'ci',
@@ -131,6 +166,24 @@ describe('credentials', () => {
       username: 'old',
       password: 'hunter2',
     });
+    const merged = mergePackageSourceCredentials(withPass, 'nexus', { username: 'new' });
+    expect(extractCredentialUsernames(merged).nexus).toBe('new');
+    expect(merged).toContain('hunter2');
+  });
+
+  it('keeps a single-quoted stored password when only the username changes (#85)', () => {
+    const withPass = `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+  <packageSourceCredentials>
+    <nexus>
+      <add key='Username' value='old' />
+      <add key='ClearTextPassword' value='hunter2' />
+    </nexus>
+  </packageSourceCredentials>
+</configuration>`;
     const merged = mergePackageSourceCredentials(withPass, 'nexus', { username: 'new' });
     expect(extractCredentialUsernames(merged).nexus).toBe('new');
     expect(merged).toContain('hunter2');
@@ -191,6 +244,46 @@ describe('credentials', () => {
     expect(extractCredentialUsernames(merged).nexus).toBe('ci');
     expect(merged).toContain('hunter2');
     expect(JSON.stringify(extractCredentialUsernames(merged))).not.toContain('hunter2');
+  });
+
+  it('reads a source\'s username past a comment mentioning its own element name (#85)', () => {
+    // Same swallow-through shape as the packageSourceMapping repro, but for
+    // packageSourceCredentials' dynamic per-source element name.
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+  <packageSourceCredentials>
+    <!-- one <nexus> element per source with saved credentials -->
+    <nexus>
+      <add key="Username" value="ci" />
+      <add key="ClearTextPassword" value="hunter2" />
+    </nexus>
+  </packageSourceCredentials>
+</configuration>`;
+    expect(extractCredentialUsernames(xml)).toEqual({ nexus: 'ci' });
+  });
+
+  it('replaces (not duplicates) a source\'s credentials past a comment mentioning its own element name (#85)', () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+  <packageSourceCredentials>
+    <!-- one <nexus> element per source with saved credentials -->
+    <nexus>
+      <add key="Username" value="old" />
+      <add key="ClearTextPassword" value="hunter2" />
+    </nexus>
+  </packageSourceCredentials>
+</configuration>`;
+    const next = setPackageSourceCredentials(xml, 'nexus', { username: 'new', password: 'new-pass' });
+    expect(next.match(/<nexus>/gi)).toHaveLength(1);
+    expect(extractCredentialUsernames(next)).toEqual({ nexus: 'new' });
   });
 });
 
@@ -310,6 +403,22 @@ describe('setPackageSourceConnectionFlags', () => {
     expect(next).toMatch(/<add key="nexus-group" value="http:\/\/localhost\/index.json" allowInsecureConnections="true" \/>/);
     expect(next).not.toMatch(/nuget.org[^>]*allowInsecureConnections/);
   });
+
+  it('is not fooled by a same-key <add> inside a comment, nor by a comment mentioning the section tag (#85)', () => {
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <!-- <packageSources> lists all sources -->
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <!-- old entry, was <add key="nexus" value="http://old.example/index.json" /> -->
+    <add key="nexus" value="http://nexus.example/index.json" />
+  </packageSources>
+</configuration>`;
+    const next = setPackageSourceConnectionFlags(xml, 'nexus', { allowInsecureConnections: true });
+    expect(next).toContain('<!-- old entry, was <add key="nexus" value="http://old.example/index.json" /> -->');
+    expect(next).toMatch(/<add key="nexus" value="http:\/\/nexus.example\/index.json" allowInsecureConnections="true" \/>/);
+    expect(next).not.toMatch(/nuget\.org[^>]*allowInsecureConnections/);
+  });
 });
 
 describe('setPackageSourceMappingPatterns', () => {
@@ -373,6 +482,29 @@ describe('setPackageSourceMappingPatterns', () => {
     const next = setPackageSourceMappingPatterns(MAPPING_BASE, 'NEXUS', ['A.*', 'A.*', ' B.* ']);
     const { mappings } = extractPackageSourceMapping(next);
     expect(mappings).toEqual([{ sourceName: 'NEXUS', patterns: ['A.*', 'B.*'] }]);
+  });
+
+  it('replaces the existing block instead of duplicating it when a preceding comment contains bare tag-like text (#85)', () => {
+    // Exact repro from #85: re-saving "N"'s patterns used to leave the real
+    // block untouched (its key was never seen because a fake match, born
+    // from the comment's own `<packageSource>` mention, swallowed through
+    // to its closing tag) and unconditionally append a second `key="N"`
+    // block — which NuGet then rejects on restore as a duplicate key.
+    const xml = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <add key="N" value="https://one.example/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <!-- key value for <packageSource> should match key values from <packageSources> element -->
+    <packageSource key="N">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>`;
+    const next = setPackageSourceMappingPatterns(xml, 'N', ['D.*']);
+    expect(next.match(/<packageSource\b/gi)).toHaveLength(1);
+    expect(extractPackageSourceMapping(next).mappings).toEqual([{ sourceName: 'N', patterns: ['D.*'] }]);
   });
 
   it('replaces the old block for a source name with XML special characters, not duplicates it', () => {
@@ -451,6 +583,20 @@ describe('removePackageSourceEntry', () => {
   it('is a no-op for a name that is not declared', () => {
     const next = removePackageSourceEntry(BASE, 'does-not-exist');
     expect(extractSources(next, '/nuget.config')).toHaveLength(2);
+  });
+
+  it('does not delete a comment containing a same-key <add> in place of the real entry (#85)', () => {
+    const withComment = `<?xml version="1.0"?>
+<configuration>
+  <packageSources>
+    <!-- kept for reference: <add key="nexus" value="https://old.example/index.json" /> -->
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="nexus" value="https://nexus.example/index.json" />
+  </packageSources>
+</configuration>`;
+    const next = removePackageSourceEntry(withComment, 'nexus');
+    expect(next).toContain('<!-- kept for reference: <add key="nexus" value="https://old.example/index.json" /> -->');
+    expect(extractSources(next, '/nuget.config').map((s) => s.name)).toEqual(['nuget.org']);
   });
 
   it('removes the whole packageSources section once the last source is gone (no <clear/>)', () => {

@@ -40,8 +40,24 @@ import {
   isSolutionFile,
   NUGET_CONFIG_GLOB,
 } from './dotnetWorkspace';
-import { readProjectAssets } from './projectAssets';
+import { readProjectAssets, readPackageFolders, readAssetsJson } from './projectAssets';
 import { computeEntangledCluster } from './batchUpdates';
+import { findNuspecFile, listRuntimeIdentifiers } from './nuspecLocator';
+import { parseNuspec } from './nuspecParser';
+import { searchedMetadataToPackageMetadata } from './searchMetadataMapping';
+import { resolvePackageDependencyTree, packageSupportedFrameworks } from './packageDependencyTree';
+import { promises as fs } from 'fs';
+
+/** Which target framework in `assetsJson` actually resolved `packageId`@`resolvedVersion` — a package can appear under only one TFM per project, but a multi-targeted project's assets.json has one `targets` entry per TFM. */
+function findFrameworkForPackage(assetsJson: unknown, packageId: string, resolvedVersion: string): string | undefined {
+  const targets = (assetsJson as { targets?: Record<string, Record<string, unknown>> })?.targets;
+  if (!targets) return undefined;
+  const want = `${packageId}/${resolvedVersion}`.toLowerCase();
+  for (const [tfm, target] of Object.entries(targets)) {
+    if (Object.keys(target).some((k) => k.toLowerCase() === want)) return tfm;
+  }
+  return undefined;
+}
 
 /** Absolute path uniquely identifying a scope — solution/folder path, or the single project. */
 function scopeIdentityPath(scope: WorkspaceScope): string {
@@ -169,6 +185,8 @@ interface CacheEntry {
   fetchedAt: number;
   /** Full sorted version list — cached for instant detail panel population */
   versions: string[];
+  /** Per-version description/projectUrl/etc. from the same detailed search that built `versions` (#86) — absent when this entry only came from the lighter `getAllVersions` path. */
+  metadataByVersion?: Record<string, import('./types').SearchedVersionMetadata>;
 }
 
 type RefreshOpts = {
@@ -402,7 +420,7 @@ export class WebviewMessageBroker {
         break;
 
       case 'GET_PACKAGE_METADATA':
-        await this._handleGetMetadata(msg.packageId, msg.version, msg.configFiles);
+        await this._handleGetMetadata(msg.packageId, msg.version, msg.configFiles, msg.projectPath);
         break;
 
       case 'GET_ALL_VERSIONS':
@@ -839,13 +857,25 @@ export class WebviewMessageBroker {
     }
   }
 
+  /**
+   * Installed, at exactly `version` → the local `.nuspec` (offline,
+   * complete: authors, license, tags, per-framework dependencies — none of
+   * which `dotnet package search` can produce). Anything else (not
+   * installed, or a different version picked in the dropdown) falls back to
+   * the search response, preferring an already-cached detailed-search
+   * result over paying for a fresh CLI call (#86).
+   */
   private async _handleGetMetadata(
     packageId: string,
     version: string | undefined,
     configFiles: string[],
+    projectPath: string | undefined,
   ): Promise<void> {
     try {
-      const metadata = await this.backend.getMetadata(packageId, version ?? '', configFiles);
+      const nuspecMetadata = projectPath && version
+        ? await this._tryReadNuspecMetadata(projectPath, packageId, version)
+        : undefined;
+      const metadata = nuspecMetadata ?? await this._getSearchMetadata(packageId, version, configFiles);
       this.provider.postMessage({ type: 'PACKAGE_METADATA', metadata });
     } catch (err) {
       this.provider.postMessage({
@@ -854,6 +884,87 @@ export class WebviewMessageBroker {
         details: String(err),
       });
     }
+  }
+
+  /** Undefined on any failure (missing packageFolders, pruned cache, unparsable nuspec) — caller falls back to search. */
+  private async _tryReadNuspecMetadata(
+    projectPath: string,
+    packageId: string,
+    version: string,
+  ): Promise<import('./types').PackageMetadata | undefined> {
+    try {
+      const packageFolders = await readPackageFolders(projectPath);
+      if (packageFolders.length === 0) return undefined;
+      const nuspecPath = await findNuspecFile(packageFolders, packageId, version);
+      if (!nuspecPath) return undefined;
+      const xml = await fs.readFile(nuspecPath, 'utf8');
+      const parsed = parseNuspec(xml);
+      if (!parsed) return undefined;
+
+      // Everything below is derived from the restore graph (project.assets.json),
+      // not the nuspec — declared-vs-resolved dependency ranges, the full
+      // supported-framework list, and which asset was selected all live
+      // there instead (#86 design pass). Best-effort: if assets.json is
+      // missing or the package isn't in it under this exact version (a
+      // stale/pruned obj folder), these fields are simply absent.
+      const assetsJson = await readAssetsJson(projectPath);
+      const framework = assetsJson ? findFrameworkForPackage(assetsJson, packageId, version) : undefined;
+      const dependencyTree = assetsJson && framework
+        ? resolvePackageDependencyTree(assetsJson, packageId, version, framework)
+        : undefined;
+      const supportedFrameworks = assetsJson ? packageSupportedFrameworks(assetsJson, packageId, version) : undefined;
+      const runtimeIdentifiers = await listRuntimeIdentifiers(nuspecPath);
+
+      return {
+        id: parsed.id,
+        version: parsed.version,
+        authors: parsed.authors,
+        owners: parsed.owners,
+        projectUrl: parsed.projectUrl,
+        licenseUrl: parsed.licenseUrl,
+        license: parsed.license,
+        copyright: parsed.copyright,
+        repository: parsed.repository,
+        description: parsed.description,
+        tags: parsed.tags,
+        supportedFrameworks: supportedFrameworks?.length ? supportedFrameworks : undefined,
+        runtimeIdentifiers: runtimeIdentifiers.length > 0 ? runtimeIdentifiers : undefined,
+        dependencyTree,
+        // `published` is a feed property, never derived from a local file (#86).
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** A fresh enrich-detailed-search cache hit for `version`, else a new CLI call. */
+  private async _getSearchMetadata(
+    packageId: string,
+    version: string | undefined,
+    configFiles: string[],
+  ): Promise<import('./types').PackageMetadata> {
+    const cached = this._cache.get(packageId.toLowerCase());
+    const ttl = getConfig().cacheTtlMs;
+    const cacheFresh = !!(cached && Date.now() - cached.fetchedAt < ttl);
+    const wantVersion = version || cached?.latestVersion;
+    const cachedEntry = cacheFresh && wantVersion ? cached?.metadataByVersion?.[wantVersion] : undefined;
+
+    if (cachedEntry && wantVersion) {
+      return searchedMetadataToPackageMetadata(packageId, wantVersion, cachedEntry);
+    }
+    return this.backend.getMetadata(packageId, version ?? '', configFiles);
+  }
+
+  /** Vulnerable/deprecated marks for the version dropdown (#86) — undefined when nothing is flagged, so the message stays lean in the common case. */
+  private _versionFlagsFor(
+    entry: CacheEntry | undefined,
+  ): Record<string, { vulnerable?: boolean; deprecation?: string }> | undefined {
+    if (!entry?.metadataByVersion) return undefined;
+    const out: Record<string, { vulnerable?: boolean; deprecation?: string }> = {};
+    for (const [v, m] of Object.entries(entry.metadataByVersion)) {
+      if (m.vulnerable || m.deprecation) out[v] = { vulnerable: m.vulnerable, deprecation: m.deprecation };
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
   }
 
   private async _handleGetAllVersions(
@@ -867,28 +978,56 @@ export class WebviewMessageBroker {
     const cacheIsFresh = !!(cached?.versions?.length && (Date.now() - cached.fetchedAt < ttl));
 
     if (cached?.versions?.length) {
-      this.provider.postMessage({ type: 'ALL_VERSIONS', packageId, versions: cached.versions });
+      this.provider.postMessage({
+        type: 'ALL_VERSIONS',
+        packageId,
+        versions: cached.versions,
+        versionFlags: this._versionFlagsFor(cached),
+      });
     }
     if (cacheIsFresh) return;
     try {
       const prev = cached?.versions ?? [];
-      const versions = await this.backend.getAllVersions(packageId, configFiles, prerelease);
+      const { versions, versionFlags } = await this.backend.getAllVersions(packageId, configFiles, prerelease);
 
       if (cached) {
         cached.versions = versions;
         cached.fetchedAt = Date.now();
+        // Only enrich a version's metadata this call already has a richer
+        // entry for (from `enrichPackage`) — never fabricate a flags-only
+        // `{ vulnerable, deprecation }` entry here. `_getSearchMetadata`'s
+        // cache-hit check treats any `metadataByVersion[v]` entry as a
+        // complete search result and skips a real detailed lookup; a
+        // flags-only entry created here would silently lose that version's
+        // description/projectUrl the next time metadata is requested (#86).
+        const metadataByVersion: Record<string, import('./types').SearchedVersionMetadata> = { ...cached.metadataByVersion };
+        for (const [v, flags] of Object.entries(versionFlags)) {
+          metadataByVersion[v] = { ...metadataByVersion[v], ...flags };
+        }
+        cached.metadataByVersion = metadataByVersion;
       } else {
-        this._cache.set(key, {
-          latestVersion: versions[0] ?? '',
-          sourceName: '',
-          versions,
-          fetchedAt: Date.now(),
-        });
+        this._cache.set(key, { latestVersion: versions[0] ?? '', sourceName: '', versions, fetchedAt: Date.now() });
       }
 
       const changed = versions.length !== prev.length || versions.some((v, i) => v !== prev[i]);
       if (changed || prev.length === 0) {
-        this.provider.postMessage({ type: 'ALL_VERSIONS', packageId, versions });
+        // The outgoing message's marks combine any richer cached flags with
+        // this call's own fresh ones — but that merge is never written back
+        // into `metadataByVersion` (see above), only sent on the wire.
+        const mergedFlags: Record<string, { vulnerable?: boolean; deprecation?: string }> = {
+          ...this._versionFlagsFor(this._cache.get(key)),
+        };
+        for (const [v, flags] of Object.entries(versionFlags)) {
+          if (flags.vulnerable || flags.deprecation) {
+            mergedFlags[v] = { vulnerable: flags.vulnerable, deprecation: flags.deprecation };
+          }
+        }
+        this.provider.postMessage({
+          type: 'ALL_VERSIONS',
+          packageId,
+          versions,
+          versionFlags: Object.keys(mergedFlags).length > 0 ? mergedFlags : undefined,
+        });
       }
     } catch {
       // If fetch fails and we already sent cached — that's fine, no error needed
@@ -2178,13 +2317,13 @@ export class WebviewMessageBroker {
     signal: AbortSignal,
   ): Promise<boolean> {
     try {
-      const { latestVersion, sourceName, versions } = await this.backend.enrichPackage(
+      const { latestVersion, sourceName, versions, metadataByVersion } = await this.backend.enrichPackage(
         id, configFiles, getConfig().includePrerelease,
       );
       if (signal.aborted) return false;
       if (!latestVersion && !sourceName) return false;
 
-      this._cache.set(id.toLowerCase(), { latestVersion, sourceName, versions, fetchedAt: Date.now() });
+      this._cache.set(id.toLowerCase(), { latestVersion, sourceName, versions, metadataByVersion, fetchedAt: Date.now() });
       this.provider.postMessage({
         type: 'PACKAGE_INFO_UPDATE',
         packageId: id,

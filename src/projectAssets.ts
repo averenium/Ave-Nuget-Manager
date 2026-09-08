@@ -7,8 +7,12 @@ function assetsPathFor(projectPath: string): string {
   return path.join(path.dirname(projectPath), 'obj', 'project.assets.json');
 }
 
-/** Reads + parses `project.assets.json` once; `null` when missing or invalid. */
-async function readAssetsJson(projectPath: string): Promise<unknown | null> {
+/**
+ * Reads + parses `project.assets.json` once; `null` when missing or
+ * invalid. Exported for callers (the Dependencies section, #86) that need
+ * the raw structure itself rather than one of the derived maps below.
+ */
+export async function readAssetsJson(projectPath: string): Promise<unknown | null> {
   try {
     const raw = await fs.readFile(assetsPathFor(projectPath), 'utf8');
     return JSON.parse(raw) as unknown;
@@ -28,6 +32,21 @@ export async function readProjectPackageDependencies(
 export async function readProjectFloors(projectPath: string): Promise<Map<string, string>> {
   const json = await readAssetsJson(projectPath);
   return json ? parseAssetsFloors(json) : new Map();
+}
+
+/**
+ * The NuGet cache folders `dotnet restore` resolved packages from for this
+ * project — usually just `~/.nuget/packages/`, but a machine with the
+ * Visual Studio fallback folder configured (or a custom `globalPackagesFolder`)
+ * can have more than one. Used to locate a package's extracted `.nuspec`
+ * for the Info panel (#86) without needing any network call.
+ */
+export async function readPackageFolders(projectPath: string): Promise<string[]> {
+  const json = await readAssetsJson(projectPath);
+  if (!json || typeof json !== 'object') return [];
+  const folders = (json as { packageFolders?: Record<string, unknown> }).packageFolders;
+  if (!folders || typeof folders !== 'object') return [];
+  return Object.keys(folders);
 }
 
 export interface ProjectAssetsGraphs {

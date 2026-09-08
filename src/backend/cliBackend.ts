@@ -5,16 +5,18 @@ import type {
   ImplicitPackage,
   AvailablePackage,
   PackageMetadata,
-  FrameworkDependencies,
   CliResult,
   PackageListResult,
   VulnerabilityFinding,
+  EnrichedPackageInfo,
+  SearchedVersionMetadata,
 } from '../types';
 import type { INuGetBackend } from './INuGetBackend';
 import { extractJsonObject, summarizeDotnetFailure, summarizeListProblems } from '../dotnetOutput';
 import { stampListedDependencies, attachAssetsDependencies } from '../projectAssets';
 import { parseDotnetVulnerableJson } from '../vulnerabilities';
 import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS } from '../cliRetry';
+import { searchedMetadataToPackageMetadata } from '../searchMetadataMapping';
 
 // ─── dotnet JSON output shapes ────────────────────────────────────────────────
 
@@ -57,6 +59,11 @@ interface DotnetSearchOutput {
       projectUrl?: string;
       licenseUrl?: string;
       tags?: string;
+      // `--verbosity detailed` only — a feed answer (deprecation status,
+      // whether this exact version is flagged vulnerable), never present in
+      // a nuspec. Present per version at `--exact-match`, not just latest.
+      vulnerable?: boolean;
+      deprecation?: string;
       // Older SDK format: nested versions array
       versions?: Array<{ version: string }>;
     }>;
@@ -231,76 +238,50 @@ export class CliBackend implements INuGetBackend {
 
   // ── getAllVersions ─────────────────────────────────────────────────────────
 
-  async getAllVersions(packageId: string, configFiles: string[], prerelease = false): Promise<string[]> {
-    const versionSets = await Promise.all(
+  async getAllVersions(
+    packageId: string,
+    configFiles: string[],
+    prerelease = false,
+  ): Promise<{ versions: string[]; versionFlags: Record<string, SearchedVersionMetadata> }> {
+    const perFile = await Promise.all(
       configFiles.map((cf) => this._fetchVersionsFromConfigFile(packageId, cf, prerelease)),
     );
 
     const seen = new Set<string>();
     const all: string[] = [];
-    for (const vs of versionSets) {
-      for (const v of vs) {
+    const versionFlags: Record<string, SearchedVersionMetadata> = {};
+    for (const { versions, versionFlags: flags } of perFile) {
+      for (const v of versions) {
         if (!seen.has(v)) {
           seen.add(v);
           all.push(v);
         }
       }
+      Object.assign(versionFlags, flags);
     }
 
     // Sort descending by SemVer
-    return all.sort((a, b) => compareSemVerDesc(a, b));
+    return { versions: all.sort((a, b) => compareSemVerDesc(a, b)), versionFlags };
   }
 
-  // ── getMetadata ────────────────────────────────────────────────────────────
+  // ── search (shared by getMetadata + enrichPackage) ──────────────────────────
 
-  async getMetadata(
-    packageId: string,
-    version: string,
-    configFiles: string[],
-  ): Promise<PackageMetadata> {
-    // dotnet package search returns limited metadata; use first config file
-    // that yields a result for the exact package+version.
-    for (const cf of configFiles) {
-      const result = await this.runner.run({
-        args: [
-          'package', 'search', packageId,
-          '--exact-match',
-          '--prerelease',
-          '--configfile', cf,
-          '--format', 'json',
-        ],
-        cwd: path.dirname(cf),
-        timeoutMs: TIMEOUT_MS,
-      });
-
-      if (result.timedOut || result.exitCode !== 0) continue;
-
-      const metadata = this._parseMetadata(result.stdout, packageId, version);
-      if (metadata) return metadata;
-    }
-
-    // Fallback: return a minimal metadata object
-    return {
-      id: packageId,
-      version,
-      authors: '',
-      description: '',
-      tags: [],
-      dependencies: [],
-      targetFrameworks: [],
-    };
-  }
-
-  // ── enrichPackage ─────────────────────────────────────────────────────────
-
-  async enrichPackage(
+  /**
+   * `dotnet package search <id> --exact-match [--prerelease] --configfile <cf>
+   * [--verbosity detailed] --format json`, tried against each config file in
+   * order, stopping at the first one that returns at least one entry for
+   * this exact id. `--exact-match` returns one entry per published version;
+   * `--verbosity detailed` adds `description`/`projectUrl` to each at no
+   * extra round trip (#86 Part 1) — `enrichPackage` already pays for this
+   * call to build the version list, so `getMetadata` reuses the identical
+   * command instead of being a separate, lighter, wasted second call.
+   */
+  private async _searchExactMatch(
     packageId: string,
     configFiles: string[],
-    prerelease = false,
-  ): Promise<{ latestVersion: string; sourceName: string; versions: string[] }> {
-    // `dotnet package search` has no TFM: latest is feed-highest, not
-    // "restores on this project". `dotnet list --outdated` would be
-    // framework-aware; this CLI path does not call it.
+    prerelease: boolean,
+    detailed: boolean,
+  ): Promise<{ sourceName: string; entries: Array<SearchedVersionMetadata & { version: string }> } | null> {
     for (const cf of configFiles) {
       const args = [
         'package', 'search', packageId,
@@ -309,6 +290,7 @@ export class CliBackend implements INuGetBackend {
         '--format', 'json',
       ];
       if (prerelease) args.push('--prerelease');
+      if (detailed) args.push('--verbosity', 'detailed');
 
       const result = await this.runner.run({
         args,
@@ -322,29 +304,87 @@ export class CliBackend implements INuGetBackend {
       try { output = JSON.parse(result.stdout) as DotnetSearchOutput; }
       catch { continue; }
 
-      // Collect all versions from this response, find the highest
-      const versions: string[] = [];
       let sourceName = '';
-
+      const entries: Array<SearchedVersionMetadata & { version: string }> = [];
       for (const sourceResult of output.searchResult ?? []) {
         for (const pkg of sourceResult.packages ?? []) {
           if (pkg.id.toLowerCase() !== packageId.toLowerCase()) continue;
           // Each entry is one version (--exact-match format)
-          const v = pkg.version ?? pkg.latestVersion ?? '';
-          if (v && !versions.includes(v)) versions.push(v);
-          if (!sourceName && sourceResult.sourceName) {
-            sourceName = sourceResult.sourceName;
-          }
+          const version = pkg.version ?? pkg.latestVersion ?? '';
+          if (!version) continue;
+          entries.push({
+            version,
+            description: pkg.description,
+            projectUrl: pkg.projectUrl,
+            authors: pkg.authors,
+            licenseUrl: pkg.licenseUrl,
+            tags: pkg.tags,
+            vulnerable: pkg.vulnerable,
+            deprecation: pkg.deprecation,
+          });
+          if (!sourceName && sourceResult.sourceName) sourceName = sourceResult.sourceName;
         }
       }
 
-      if (versions.length > 0) {
-        const sorted = versions.sort((a, b) => compareSemVerDesc(a, b));
-        return { latestVersion: sorted[0], sourceName, versions: sorted };
-      }
+      if (entries.length > 0) return { sourceName, entries };
     }
+    return null;
+  }
 
-    return { latestVersion: '', sourceName: '', versions: [] };
+  // ── getMetadata ────────────────────────────────────────────────────────────
+
+  async getMetadata(
+    packageId: string,
+    version: string,
+    configFiles: string[],
+  ): Promise<PackageMetadata> {
+    const fallback: PackageMetadata = {
+      id: packageId,
+      version,
+      authors: '',
+      description: '',
+      tags: [],
+    };
+
+    const result = await this._searchExactMatch(packageId, configFiles, true, true);
+    if (!result || result.entries.length === 0) return fallback;
+
+    // Pick the entry matching the requested version; if none was requested,
+    // pick the newest — never "whichever happens to come first in dotnet's
+    // own JSON output", which for --exact-match is oldest-first.
+    const sorted = [...result.entries].sort((a, b) => compareSemVerDesc(a.version, b.version));
+    const entry = (version ? sorted.find((e) => e.version === version) : undefined) ?? sorted[0];
+
+    return searchedMetadataToPackageMetadata(packageId, entry.version, entry);
+  }
+
+  // ── enrichPackage ─────────────────────────────────────────────────────────
+
+  async enrichPackage(
+    packageId: string,
+    configFiles: string[],
+    prerelease = false,
+  ): Promise<EnrichedPackageInfo> {
+    // `dotnet package search` has no TFM: latest is feed-highest, not
+    // "restores on this project". `dotnet list --outdated` would be
+    // framework-aware; this CLI path does not call it.
+    const result = await this._searchExactMatch(packageId, configFiles, prerelease, true);
+    if (!result) return { latestVersion: '', sourceName: '', versions: [], metadataByVersion: {} };
+
+    const versions = [...new Set(result.entries.map((e) => e.version))].sort(compareSemVerDesc);
+    const metadataByVersion: Record<string, SearchedVersionMetadata> = {};
+    for (const e of result.entries) {
+      metadataByVersion[e.version] = {
+        description: e.description,
+        projectUrl: e.projectUrl,
+        authors: e.authors,
+        licenseUrl: e.licenseUrl,
+        tags: e.tags,
+        vulnerable: e.vulnerable,
+        deprecation: e.deprecation,
+      };
+    }
+    return { latestVersion: versions[0] ?? '', sourceName: result.sourceName, versions, metadataByVersion };
   }
 
   // ── installPackage ─────────────────────────────────────────────────────────
@@ -590,31 +630,37 @@ export class CliBackend implements INuGetBackend {
     packageId: string,
     configFile: string,
     prerelease = false,
-  ): Promise<string[]> {
+  ): Promise<{ versions: string[]; versionFlags: Record<string, SearchedVersionMetadata> }> {
     const args = [
       'package', 'search', packageId,
       '--exact-match',
       '--configfile', configFile,
+      // A version the feed already flags vulnerable/deprecated is worth
+      // marking right in this dropdown, before it's even chosen (#86) — the
+      // same free-with-`--verbosity detailed` fields Part 1 uses.
+      '--verbosity', 'detailed',
       '--format', 'json',
     ];
     if (prerelease) args.push('--prerelease');
 
+    const empty = { versions: [] as string[], versionFlags: {} as Record<string, SearchedVersionMetadata> };
     const result = await this.runner.run({
       args,
       cwd: path.dirname(configFile),
       timeoutMs: TIMEOUT_MS,
     });
 
-    if (result.timedOut || result.exitCode !== 0) return [];
+    if (result.timedOut || result.exitCode !== 0) return empty;
 
     let output: DotnetSearchOutput;
     try {
       output = JSON.parse(result.stdout) as DotnetSearchOutput;
     } catch {
-      return [];
+      return empty;
     }
 
     const versions: string[] = [];
+    const versionFlags: Record<string, SearchedVersionMetadata> = {};
     for (const sourceResult of output.searchResult ?? []) {
       for (const pkg of sourceResult.packages ?? []) {
         if (pkg.id.toLowerCase() !== packageId.toLowerCase()) continue;
@@ -622,8 +668,11 @@ export class CliBackend implements INuGetBackend {
         // Format 1 (--exact-match): each package object = one version, field is "version"
         if (pkg.version) {
           if (!versions.includes(pkg.version)) versions.push(pkg.version);
+          if (pkg.vulnerable || pkg.deprecation) {
+            versionFlags[pkg.version] = { vulnerable: pkg.vulnerable, deprecation: pkg.deprecation };
+          }
         }
-        // Format 2 (regular search, nested array): versions: [{version: "x.y.z"}]
+        // Format 2 (regular search, nested array): versions: [{version: "x.y.z"}] — no per-version flags in this shape
         for (const v of pkg.versions ?? []) {
           if (!versions.includes(v.version)) versions.push(v.version);
         }
@@ -633,50 +682,9 @@ export class CliBackend implements INuGetBackend {
         }
       }
     }
-    return versions;
+    return { versions, versionFlags };
   }
 
-  private _parseMetadata(
-    stdout: string,
-    packageId: string,
-    _version: string,
-  ): PackageMetadata | null {
-    let output: DotnetSearchOutput;
-    try {
-      output = JSON.parse(stdout) as DotnetSearchOutput;
-    } catch {
-      return null;
-    }
-
-    for (const sourceResult of output.searchResult ?? []) {
-      for (const pkg of sourceResult.packages ?? []) {
-        if (pkg.id.toLowerCase() !== packageId.toLowerCase()) continue;
-
-        const tags = pkg.tags
-          ? pkg.tags.split(/[\s,]+/).filter(Boolean)
-          : [];
-
-        // dotnet package search doesn't return per-framework dependencies;
-        // we return an empty dependency list here. A future HttpBackend will
-        // populate this from the NuGet v3 registration API.
-        const dependencies: FrameworkDependencies[] = [];
-        const targetFrameworks: string[] = [];
-
-        return {
-          id: pkg.id,
-          version: pkg.latestVersion ?? pkg.version ?? _version,
-          authors: pkg.authors ?? '',
-          projectUrl: pkg.projectUrl,
-          licenseUrl: pkg.licenseUrl,
-          description: pkg.description ?? '',
-          tags,
-          dependencies,
-          targetFrameworks,
-        };
-      }
-    }
-    return null;
-  }
 }
 
 // ─── SemVer comparison helpers ────────────────────────────────────────────────

@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
+
+### Added
+
+- **Package details**: the **Info** panel is built from the local `.nuspec` and `project.assets.json` instead of a feed search — authors, licence, source and commit links and target frameworks beside the description, and a **Dependencies** list showing each declared range against the version actually resolved (#86)
 
 ### Fixed
 

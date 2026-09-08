@@ -12,7 +12,8 @@ export type ProblemTone = 'error' | 'warning';
 export type ProblemDescriptor =
   | { kind: 'vulnerability'; key: string; tone: ProblemTone; label: string; via?: string; finding: VulnerabilityFinding }
   | { kind: 'mapping'; key: 'mapping'; tone: ProblemTone; label: string; mappedSourceNames: string[] }
-  | { kind: 'blocked'; key: 'blocked'; tone: ProblemTone; label: string };
+  | { kind: 'blocked'; key: 'blocked'; tone: ProblemTone; label: string }
+  | { kind: 'deprecation'; key: 'deprecation'; tone: ProblemTone; label: string; message: string };
 
 function vulnerabilityProblems(
   findings: VulnerabilityFinding[],
@@ -39,10 +40,16 @@ export function buildPackageProblems(opts: {
   isInstalled: boolean;
   packageSourceMapping: PackageSourceMapping[];
   updatesBlocked: boolean;
+  /** Feed deprecation notice for the version currently shown in the Info panel (#86) — never from a nuspec. */
+  deprecation?: string;
 }): ProblemDescriptor[] {
-  const { packageId, findings, viaFindings, isInstalled, packageSourceMapping, updatesBlocked } = opts;
+  const { packageId, findings, viaFindings, isInstalled, packageSourceMapping, updatesBlocked, deprecation } = opts;
 
   const problems: ProblemDescriptor[] = [...vulnerabilityProblems(findings, viaFindings)];
+
+  if (deprecation) {
+    problems.push({ kind: 'deprecation', key: 'deprecation', tone: 'warning', label: 'deprecated', message: deprecation });
+  }
 
   const mappingActive = isInstalled && packageSourceMapping.length > 0;
   if (mappingActive && !packageMatchesAnyMapping(packageId, packageSourceMapping)) {

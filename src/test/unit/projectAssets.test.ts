@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import { attachAssetsDependencies, stampListedDependencies, readProjectFloors, readProjectAssets } from '../../projectAssets';
+import { attachAssetsDependencies, stampListedDependencies, readProjectFloors, readProjectAssets, readPackageFolders } from '../../projectAssets';
 
 describe('attachAssetsDependencies', () => {
   afterEach(() => {
@@ -117,6 +117,35 @@ describe('readProjectAssets', () => {
     const { dependencies, floors } = await readProjectAssets('/p/App.csproj');
     expect(dependencies.size).toBe(0);
     expect(floors.size).toBe(0);
+  });
+});
+
+describe('readPackageFolders', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('reads the NuGet cache folder names dotnet restore resolved from (#86)', async () => {
+    jest.spyOn(fs, 'readFile').mockResolvedValue(JSON.stringify({
+      packageFolders: {
+        'C:\\Users\\me\\.nuget\\packages\\': {},
+        'C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages': {},
+      },
+    }) as never);
+
+    const folders = await readPackageFolders('/p/App.csproj');
+    expect(folders).toEqual([
+      'C:\\Users\\me\\.nuget\\packages\\',
+      'C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages',
+    ]);
+  });
+
+  it('returns an empty array when assets.json is missing or has no packageFolders', async () => {
+    jest.spyOn(fs, 'readFile').mockRejectedValue(new Error('ENOENT'));
+    expect(await readPackageFolders('/p/App.csproj')).toEqual([]);
+
+    jest.spyOn(fs, 'readFile').mockResolvedValue(JSON.stringify({ targets: {} }) as never);
+    expect(await readPackageFolders('/p/App.csproj')).toEqual([]);
   });
 });
 

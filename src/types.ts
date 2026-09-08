@@ -87,23 +87,81 @@ export interface AvailablePackage {
   description?: string;
 }
 
-export interface FrameworkDependencies {
+/** Search-derived fields for one specific version, as returned alongside `enrichPackage`'s version list (#86 Part 1) — not the full `PackageMetadata` shape, since search never has authors/license/tags/dependencies. */
+export interface SearchedVersionMetadata {
+  description?: string;
+  projectUrl?: string;
+  authors?: string;
+  licenseUrl?: string;
+  tags?: string;
+  /** This exact version, as flagged by the feed at search time — not from the restore-graph vulnerability scan (`dotnet list --vulnerable`), which stays the source of severity/advisory-id detail and the only thing that catches a transitive package. */
+  vulnerable?: boolean;
+  /** Feed answer, present only when the package (as of this version) is deprecated — the upstream text usually names the replacement. Never in a nuspec. */
+  deprecation?: string;
+}
+
+export interface EnrichedPackageInfo {
+  latestVersion: string;
+  sourceName: string;
+  versions: string[];
+  /** Keyed by exact version string — `--verbosity detailed` returns these per version at no extra round trip, since `enrichPackage` already fetches the version list this way (#86). Optional so existing callers/mocks that only care about the version list need not construct it. */
+  metadataByVersion?: Record<string, SearchedVersionMetadata>;
+}
+
+/** One row in the Dependencies section (#86), resolved from `project.assets.json` — declared range plus what actually resolved, recursively. */
+export interface DependencyRow {
+  id: string;
+  /** Absent only for a dependency whose own library entry wasn't found in this target (e.g. a project reference). */
+  resolvedVersion?: string;
+  declaredRange: string;
+  status: 'ok' | 'outside-range' | 'major-lifted';
+  showDeclared: boolean;
+  children: DependencyRow[];
+}
+
+export interface PackageDependencyInfo {
   framework: string;
-  packages: Array<{ id: string; versionRange: string }>;
+  /** The TFM folder actually selected under `lib/`, e.g. "net10.0" — from `compile`/`runtime` asset paths. */
+  selectedAsset?: string;
+  rows: DependencyRow[];
+}
+
+export interface PackageLicense {
+  /** `expression` = SPDX string (e.g. "MIT"), nothing to link. `file` = a relative path to a license file bundled in the package — also nothing to link unless `licenseUrl` is present too. */
+  type: 'expression' | 'file';
+  value: string;
+}
+
+export interface PackageRepository {
+  url: string;
+  /** Commit hash the package was built from, when the publisher included one. */
+  commit?: string;
 }
 
 export interface PackageMetadata {
   id: string;
   version: string;
   authors: string;
+  /** Comma-separated in the source `.nuspec`/feed field; kept as one string like `authors`. */
+  owners?: string;
   projectUrl?: string;
+  /** Deprecated by NuGet; kept as a fallback link when `license` is absent or is a `file` reference. */
   licenseUrl?: string;
+  license?: PackageLicense;
+  copyright?: string;
+  repository?: PackageRepository;
   description: string;
   tags: string[];
-  /** ISO 8601 publication date */
+  /** ISO 8601 publication date. Feed-only — never derived from a local file timestamp. */
   published?: string;
-  dependencies: FrameworkDependencies[];
-  targetFrameworks: string[];
+  /** Feed-only deprecation notice for this exact version (usually names the replacement package). A nuspec never has this — same as `published`. */
+  deprecation?: string;
+  /** `lib/<tfm>/` folders the resolved package declares support for, from `project.assets.json`'s `libraries[id/version].files` — installed packages only (#86); absent for a not-installed / search-only package, which search cannot supply this for. */
+  supportedFrameworks?: string[];
+  /** RIDs the package ships native assets for — directory names under the extracted package folder's `runtimes/`. Installed packages only. */
+  runtimeIdentifiers?: string[];
+  /** This package's own dependency tree (declared range vs. resolved version), from `project.assets.json`. Installed packages only — a not-yet-installed package has no restore graph to read one from. */
+  dependencyTree?: PackageDependencyInfo;
 }
 
 // ─────────────────────────────────────────────

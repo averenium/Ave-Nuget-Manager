@@ -135,12 +135,17 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
     <div className={`project-row${flashTone ? ` project-row--flash-${flashTone}` : ''}`}>
       <span className="project-row__name" title={p}>{project.name}</span>
 
+      {/* Same feed flags as the panel-level selector: these rows pick a version
+          to install just as directly, so a vulnerable or deprecated one has to
+          be marked here too (#86). `state.detail.versionFlags` belongs to the
+          selected package, which is the package these rows are about. */}
       <VersionSelect
         versions={allVersions}
         selected={localVersion}
         disabled={isLoading}
         label={`Version for ${project.name}`}
         onChange={setLocalVersion}
+        versionFlags={state.detail.versionFlags}
       />
 
       <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>

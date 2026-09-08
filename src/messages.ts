@@ -28,7 +28,10 @@ export type WebviewMessage =
   // Packages tab
   | { type: 'SEARCH_PACKAGES'; query: string; enabledSourceNames: string[]; prerelease: boolean }
   | { type: 'SET_PRERELEASE_SETTING'; prerelease: boolean }
-  | { type: 'GET_PACKAGE_METADATA'; packageId: string; version?: string; configFiles: string[] }
+  // `projectPath` is sent only when `version` is exactly the version already
+  // installed there — it lets the host prefer that project's local .nuspec
+  // (offline, complete) over the search response for the Info panel (#86).
+  | { type: 'GET_PACKAGE_METADATA'; packageId: string; version?: string; configFiles: string[]; projectPath?: string }
   | { type: 'GET_ALL_VERSIONS'; packageId: string; configFiles: string[]; prerelease: boolean }
 
   // Install / Remove — Project scope (single project)
@@ -160,7 +163,16 @@ export type ExtensionMessage =
   | { type: 'BLOCKED_PACKAGES'; packageIds: string[] }
   | { type: 'SEARCH_RESULTS'; query: string; packages: AvailablePackage[] }
   | { type: 'PACKAGE_METADATA'; metadata: PackageMetadata }
-  | { type: 'ALL_VERSIONS'; packageId: string; versions: string[] }
+  // `versionFlags` marks versions the feed already reports as vulnerable or
+  // deprecated, keyed by exact version string — best-effort (only present
+  // for versions a detailed search actually returned flags for) so the
+  // version dropdown can warn before a version is even chosen (#86).
+  | {
+    type: 'ALL_VERSIONS';
+    packageId: string;
+    versions: string[];
+    versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
+  }
 
   /** Restore / Force refresh re-read of the SDK compiler. */
   | { type: 'ROSLYN_CAP'; cap: RoslynCap | null }

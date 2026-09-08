@@ -3,6 +3,7 @@ import { Logger } from '../../logger';
 import * as vscode from 'vscode';
 import * as projectFiles from '../../projectFileSnapshot';
 import * as projectAssets from '../../projectAssets';
+import * as nuspecLocator from '../../nuspecLocator';
 import * as nugetHttpCacheVdb from '../../nugetHttpCacheVdb';
 import { promises as fsPromises } from 'fs';
 import * as config from '../../config';
@@ -55,8 +56,6 @@ function makeMetadata(id: string): PackageMetadata {
     authors: 'Author',
     description: 'Desc',
     tags: [],
-    dependencies: [],
-    targetFrameworks: [],
   };
 }
 
@@ -91,7 +90,7 @@ function makeBackend(): jest.Mocked<INuGetBackend> {
     listAllForSolution: jest.fn().mockResolvedValue({ installed: [], implicit: [] }),
     listAllForProject: jest.fn().mockResolvedValue({ installed: [], implicit: [] }),
     searchPackages: jest.fn().mockResolvedValue([]),
-    getAllVersions: jest.fn().mockResolvedValue([]),
+    getAllVersions: jest.fn().mockResolvedValue({ versions: [], versionFlags: {} }),
     getMetadata: jest.fn().mockResolvedValue(makeMetadata('Pkg')),
     installPackage: jest.fn().mockResolvedValue(makeCliResult()),
     installPackageNoRestore: jest.fn().mockResolvedValue(makeCliResult()),
@@ -858,7 +857,7 @@ describe('WebviewMessageBroker', () => {
       sourceName: 'nuget.org',
       versions: ['13.0.3', '13.0.1'],
     });
-    backend.getAllVersions.mockResolvedValue(['14.0.0']);
+    backend.getAllVersions.mockResolvedValue({ versions: ['14.0.0'], versionFlags: {} });
     const resolver = makeConfigResolver();
     resolver.resolve.mockResolvedValue([{
       filePath: '/p/nuget.config',
@@ -892,7 +891,7 @@ describe('WebviewMessageBroker', () => {
   it('GET_ALL_VERSIONS fetches when the cache is empty', async () => {
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
-    backend.getAllVersions.mockResolvedValue(['2.0.0', '1.0.0']);
+    backend.getAllVersions.mockResolvedValue({ versions: ['2.0.0', '1.0.0'], versionFlags: {} });
 
     const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
     broker.attach();
@@ -907,6 +906,278 @@ describe('WebviewMessageBroker', () => {
     expect(backend.getAllVersions).toHaveBeenCalledWith('Pkg', ['/p/nuget.config'], false);
     const msg = posted.find((m) => m.type === 'ALL_VERSIONS') as { versions?: string[] } | undefined;
     expect(msg?.versions).toEqual(['2.0.0', '1.0.0']);
+  });
+
+  it('ALL_VERSIONS carries feed vulnerable/deprecated marks so the dropdown can warn before a version is chosen (#86)', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.getAllVersions.mockResolvedValue({
+      versions: ['13.0.3', '12.0.3'],
+      versionFlags: { '12.0.3': { vulnerable: true } },
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({
+      type: 'GET_ALL_VERSIONS',
+      packageId: 'Newtonsoft.Json',
+      configFiles: ['/p/nuget.config'],
+      prerelease: false,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const msg = posted.find((m) => m.type === 'ALL_VERSIONS') as
+      { versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }> } | undefined;
+    expect(msg?.versionFlags).toEqual({ '12.0.3': { vulnerable: true, deprecation: undefined } });
+  });
+
+  // ── GET_PACKAGE_METADATA (#86) ─────────────────────────────────────────────
+
+  describe('GET_PACKAGE_METADATA (#86)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('does not lose description/projectUrl when GET_ALL_VERSIONS races ahead and only knows vulnerable/deprecation', async () => {
+    // Real repro: VersionSelector's mount effect fires GET_ALL_VERSIONS and
+    // GET_PACKAGE_METADATA together for a package never enriched before.
+    // GET_ALL_VERSIONS resolving first must not leave behind a
+    // "vulnerable/deprecation only" cache entry that GET_PACKAGE_METADATA
+    // then mistakes for a complete search result.
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.getAllVersions.mockResolvedValue({
+      versions: ['7.17.5'],
+      versionFlags: { '7.17.5': { deprecation: 'EOL notice' } },
+    });
+    backend.getMetadata.mockResolvedValue({
+      id: 'Elasticsearch.Net',
+      version: '7.17.5',
+      authors: '',
+      description: 'Real description',
+      projectUrl: 'https://example.com',
+      tags: [],
+      deprecation: 'EOL notice',
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'GET_ALL_VERSIONS',
+      packageId: 'Elasticsearch.Net',
+      configFiles: ['/p/nuget.config'],
+      prerelease: false,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    simulateMessage({
+      type: 'GET_PACKAGE_METADATA',
+      packageId: 'Elasticsearch.Net',
+      version: '7.17.5',
+      configFiles: ['/p/nuget.config'],
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.getMetadata).toHaveBeenCalled();
+    const msg = posted.find((m) => m.type === 'PACKAGE_METADATA') as { metadata?: PackageMetadata } | undefined;
+    expect(msg?.metadata?.description).toBe('Real description');
+    expect(msg?.metadata?.projectUrl).toBe('https://example.com');
+    expect(msg?.metadata?.deprecation).toBe('EOL notice');
+  });
+
+  const DAPPER_NUSPEC = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Dapper</id>
+    <version>2.0.123</version>
+    <authors>Sam Saffron,Marc Gravell,Nick Craver</authors>
+    <license type="expression">Apache-2.0</license>
+    <licenseUrl>https://licenses.nuget.org/Apache-2.0</licenseUrl>
+    <projectUrl>https://github.com/DapperLib/Dapper</projectUrl>
+    <description>A high performance Micro-ORM</description>
+    <tags>orm sql micro-orm</tags>
+    <dependencies>
+      <group targetFramework=".NETStandard2.0">
+        <dependency id="System.Reflection.Emit.Lightweight" version="4.7.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>`;
+
+  it('GET_PACKAGE_METADATA uses the local .nuspec when projectPath is given for the installed version', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    jest.spyOn(projectAssets, 'readPackageFolders').mockResolvedValue(['/cache']);
+    jest.spyOn(nuspecLocator, 'findNuspecFile').mockResolvedValue('/cache/dapper/2.0.123/dapper.nuspec');
+    jest.spyOn(fsPromises, 'readFile').mockResolvedValue(DAPPER_NUSPEC as any);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'GET_PACKAGE_METADATA',
+      packageId: 'Dapper',
+      version: '2.0.123',
+      configFiles: ['/p/nuget.config'],
+      projectPath: '/p/App.csproj',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.getMetadata).not.toHaveBeenCalled();
+    const msg = posted.find((m) => m.type === 'PACKAGE_METADATA') as { metadata?: PackageMetadata } | undefined;
+    expect(msg?.metadata).toEqual(expect.objectContaining({
+      authors: 'Sam Saffron, Marc Gravell, Nick Craver',
+      license: { type: 'expression', value: 'Apache-2.0' },
+      tags: ['orm', 'sql', 'micro-orm'],
+    }));
+  });
+
+  it('GET_PACKAGE_METADATA fills dependencyTree/supportedFrameworks from project.assets.json alongside the nuspec fields (#86 design pass)', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    jest.spyOn(projectAssets, 'readPackageFolders').mockResolvedValue(['/cache']);
+    jest.spyOn(nuspecLocator, 'findNuspecFile').mockResolvedValue('/cache/dapper/2.0.123/dapper.nuspec');
+
+    const assetsJson = JSON.stringify({
+      targets: {
+        'net10.0': {
+          'Dapper/2.0.123': {
+            type: 'package',
+            dependencies: { 'System.Reflection.Emit.Lightweight': '4.7.0' },
+            compile: { 'lib/net5.0/Dapper.dll': {} },
+          },
+          'System.Reflection.Emit.Lightweight/4.7.0': { type: 'package' },
+        },
+      },
+      libraries: {
+        'Dapper/2.0.123': { files: ['lib/net461/Dapper.dll', 'lib/net5.0/Dapper.dll', 'lib/netstandard2.0/Dapper.dll'] },
+      },
+    });
+    jest.spyOn(fsPromises, 'readFile').mockImplementation((p: any) => {
+      if (String(p).includes('project.assets.json')) return Promise.resolve(assetsJson as any);
+      return Promise.resolve(DAPPER_NUSPEC as any);
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'GET_PACKAGE_METADATA',
+      packageId: 'Dapper',
+      version: '2.0.123',
+      configFiles: ['/p/nuget.config'],
+      projectPath: '/p/App.csproj',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const msg = posted.find((m) => m.type === 'PACKAGE_METADATA') as { metadata?: PackageMetadata } | undefined;
+    expect(msg?.metadata?.supportedFrameworks).toEqual(['net5.0', 'netstandard2.0', 'net461']);
+    expect(msg?.metadata?.dependencyTree).toEqual({
+      framework: 'net10.0',
+      selectedAsset: 'net5.0',
+      rows: [{
+        id: 'System.Reflection.Emit.Lightweight',
+        resolvedVersion: '4.7.0',
+        declaredRange: '4.7.0',
+        status: 'ok',
+        showDeclared: false,
+        children: [],
+      }],
+    });
+  });
+
+  it('GET_PACKAGE_METADATA falls back to search when no nuspec is found in any package folder', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.getMetadata.mockResolvedValue(makeMetadata('Dapper'));
+    jest.spyOn(projectAssets, 'readPackageFolders').mockResolvedValue(['/cache']);
+    jest.spyOn(nuspecLocator, 'findNuspecFile').mockResolvedValue(undefined);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'GET_PACKAGE_METADATA',
+      packageId: 'Dapper',
+      version: '2.0.123',
+      configFiles: ['/p/nuget.config'],
+      projectPath: '/p/App.csproj',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.getMetadata).toHaveBeenCalledWith('Dapper', '2.0.123', ['/p/nuget.config']);
+    const msg = posted.find((m) => m.type === 'PACKAGE_METADATA') as { metadata?: PackageMetadata } | undefined;
+    expect(msg?.metadata?.id).toBe('Dapper');
+  });
+
+  it('GET_PACKAGE_METADATA without a projectPath never touches the nuspec path', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.getMetadata.mockResolvedValue(makeMetadata('Pkg'));
+    const foldersSpy = jest.spyOn(projectAssets, 'readPackageFolders');
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'GET_PACKAGE_METADATA',
+      packageId: 'Pkg',
+      version: '2.0.0',
+      configFiles: ['/p/nuget.config'],
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(foldersSpy).not.toHaveBeenCalled();
+    expect(backend.getMetadata).toHaveBeenCalledWith('Pkg', '2.0.0', ['/p/nuget.config']);
+    expect(posted.some((m) => m.type === 'PACKAGE_METADATA')).toBe(true);
+  });
+
+  it('GET_PACKAGE_METADATA reuses the enrich cache instead of a second search call', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '13.0.3',
+      sourceName: 'nuget.org',
+      versions: ['13.0.3', '13.0.1'],
+      metadataByVersion: {
+        '13.0.3': { description: 'Json.NET', projectUrl: 'https://newtonsoft.example', authors: 'James' },
+      },
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{ name: 'nuget.org', url: 'https://api.nuget.org', enabled: true, configFilePath: '/p/nuget.config' }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    posted.length = 0;
+    simulateMessage({
+      type: 'GET_PACKAGE_METADATA',
+      packageId: 'Newtonsoft.Json',
+      version: '13.0.3',
+      configFiles: ['/p/nuget.config'],
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.getMetadata).not.toHaveBeenCalled();
+    const msg = posted.find((m) => m.type === 'PACKAGE_METADATA') as { metadata?: PackageMetadata } | undefined;
+    expect(msg?.metadata).toEqual(expect.objectContaining({
+      id: 'Newtonsoft.Json',
+      version: '13.0.3',
+      description: 'Json.NET',
+      projectUrl: 'https://newtonsoft.example',
+      authors: 'James',
+    }));
+  });
   });
 
   // ── INSTALL_PACKAGE ────────────────────────────────────────────────────────

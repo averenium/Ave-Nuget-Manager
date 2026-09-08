@@ -117,6 +117,8 @@ export interface AppState {
     selectedPackageId: string | null;
     metadata: PackageMetadata | null;
     allVersions: string[];
+    /** Vulnerable/deprecated marks per version, from the feed — for the version dropdown, before a version is even chosen (#86). */
+    versionFlags: Record<string, { vulnerable?: boolean; deprecation?: string }>;
     isLoading: boolean;
     error: string | null;
     projectVersions: Record<string, string>;
@@ -160,6 +162,7 @@ const initialState: AppState = {
     selectedPackageId: null,
     metadata: null,
     allVersions: [],
+    versionFlags: {},
     isLoading: false,
     error: null,
     projectVersions: {},
@@ -257,6 +260,7 @@ function reduceAppState(state: AppState, action: Action): AppState {
           selectedPackageId: action.packageId,
           metadata: null,
           allVersions: seededVersions,
+          versionFlags: {},
           isLoading: seededVersions.length === 0,
           error: null,
           projectVersions: {},
@@ -506,7 +510,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           },
         },
         detail: !selected || matchesDetail
-          ? { ...state.detail, allVersions: msg.versions }
+          ? { ...state.detail, allVersions: msg.versions, versionFlags: msg.versionFlags ?? {} }
           : state.detail,
       };
     }

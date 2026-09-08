@@ -56,7 +56,17 @@ describe('buildPackageProblems', () => {
     ]);
   });
 
-  it('combines all three kinds together', () => {
+  it('adds a deprecation problem with the feed message when the version shown is deprecated (#86)', () => {
+    expect(buildPackageProblems({ ...NO_MAPPING, deprecation: 'Please upgrade to Azure.Storage.Common.' })).toEqual([
+      expect.objectContaining({ kind: 'deprecation', tone: 'warning', message: 'Please upgrade to Azure.Storage.Common.' }),
+    ]);
+  });
+
+  it('reports no deprecation problem when the field is absent', () => {
+    expect(buildPackageProblems(NO_MAPPING)).toEqual([]);
+  });
+
+  it('combines all kinds together', () => {
     const mapping = [{ sourceName: 'contoso', patterns: ['Contoso.*'] }];
     const problems = buildPackageProblems({
       packageId: 'Pkg',
@@ -65,7 +75,8 @@ describe('buildPackageProblems', () => {
       isInstalled: true,
       packageSourceMapping: mapping,
       updatesBlocked: true,
+      deprecation: 'Deprecated notice',
     });
-    expect(problems.map((p) => p.kind)).toEqual(['vulnerability', 'mapping', 'blocked']);
+    expect(problems.map((p) => p.kind)).toEqual(['vulnerability', 'deprecation', 'mapping', 'blocked']);
   });
 });

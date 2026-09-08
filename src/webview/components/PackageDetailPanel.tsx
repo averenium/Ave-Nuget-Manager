@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { VersionSelector } from './VersionSelector';
 import { ProjectSelectionPopup } from './ProjectSelectionPopup';
 import { ProjectListSection } from './ProjectListSection';
-import { CurrentDependenciesSection } from './CurrentDependenciesSection';
+import { PackageAttributeColumn } from './PackageAttributeColumn';
+import { PackageDependenciesSection } from './PackageDependenciesSection';
 import { DetailHeader } from './DetailHeader';
 import { RoslynCapPopup } from './RoslynCapPopup';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
@@ -33,13 +34,36 @@ export function PackageDetailPanel() {
   const [selectedVersion, setSelectedVersion] = useState<string>('');
   const [showPopup, setShowPopup] = useState<'install' | 'remove' | null>(null);
   const [showRoslynWarning, setShowRoslynWarning] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
+  const descRef = useRef<HTMLDivElement>(null);
+  const [descClamped, setDescClamped] = useState(false);
 
   // A version picked for the previously selected package must not leak into
   // a newly selected one — `effectiveVersion` checks `selectedVersion` first,
   // so without this reset it would win over the new package's own latest (#59).
   useEffect(() => {
     setSelectedVersion('');
+    setDescExpanded(false);
   }, [selectedPackageId]);
+
+  // "more" only appears when the two-line clamp actually hides something.
+  // Whether it does depends on the pane width and the theme's font, so it is
+  // measured rather than assumed — hence the observer, which watches just this
+  // one element. Skipped while expanded: there scrollHeight equals clientHeight
+  // and the toggle would take itself away instead of offering "less".
+  //
+  // Deliberately not reset when the selection changes: a reset lands after the
+  // paint, so the row would blink out and back in on every package switch. The
+  // measurement below runs before the next paint instead, and simply overwrites.
+  useLayoutEffect(() => {
+    const el = descRef.current;
+    if (!el || descExpanded) return;
+    const check = () => setDescClamped(el.scrollHeight > el.clientHeight + 1);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [metadata?.description, descExpanded]);
 
   if (!selectedPackageId) {
     return <div className="detail-panel__empty">Select a package to see details</div>;
@@ -52,10 +76,16 @@ export function PackageDetailPanel() {
   const updatesBlocked = isInstalled && isPackageBlocked(selectedPackageId, state.packages.blockedPackages);
 
   const effectiveVersion = selectedVersion || allVersions[0] || metadata?.version || '';
-  const installedVersions = state.packages.installed
-    .filter((p) => packageIdsEqual(p.id, selectedPackageId))
-    .map((p) => p.resolvedVersion);
+  const installedEntries = state.packages.installed.filter((p) => packageIdsEqual(p.id, selectedPackageId));
+  const installedVersions = installedEntries.map((p) => p.resolvedVersion);
   const installedFrom = installedVersions[0] ?? '';
+  // The local .nuspec and the restore graph (#86) are readable for anything the
+  // restore put on disk, and a transitive package's folder and its entry in
+  // project.assets.json are as present as a direct one's. Deliberately not
+  // folded into `installedEntries`, which decides what the action buttons and
+  // the Roslyn cap do and has to stay direct-only.
+  const restoredEntry = installedEntries[0]
+    ?? state.packages.implicit.find((p) => packageIdsEqual(p.id, selectedPackageId));
   // Only meaningful once installed — Install (not yet installed) has no
   // "from" version to compare against, so it keeps its own glyph (#55).
   const updateTone = isInstalled ? versionTone(installedFrom, effectiveVersion) : undefined;
@@ -80,7 +110,13 @@ export function PackageDetailPanel() {
     isInstalled,
     packageSourceMapping,
     updatesBlocked,
+    deprecation: metadata?.deprecation,
   });
+
+  // Metadata arrives a moment after the selection does. Sections that don't
+  // depend on it must not paint in that gap, or they land in their final place
+  // only to be pushed down when the Info section is inserted above them.
+  const metadataSettled = metadata !== null || error !== null;
 
   const proceedInstall = () => {
     if (!effectiveVersion || updatesBlocked) return;
@@ -188,144 +224,122 @@ export function PackageDetailPanel() {
           versions={allVersions}
           selected={effectiveVersion}
           onChange={setSelectedVersion}
+          restoredVersion={restoredEntry?.resolvedVersion ?? ''}
+          restoredProjectPath={restoredEntry?.projectPath ?? ''}
         />
       </DetailHeader>
 
-      {(error || isLoading) && (
+      {(error || isLoading || !metadataSettled) && (
         <div className="detail-panel__status">
           {error && <span className="detail-panel__error" role="alert">{error}</span>}
-          {isLoading && <span style={{ color: 'var(--color-tab-inactive)', fontSize: 11 }}>Loading…</span>}
+          {(isLoading || !metadataSettled) && (
+            <span style={{ color: 'var(--color-tab-inactive)', fontSize: 11 }}>Loading…</span>
+          )}
         </div>
       )}
 
-      {problems.length > 0 && (
-        <div className="detail-section">
-          <div className="detail-section__title">Problems</div>
-          <ul className="vuln-list">
-            {problems.map((p) => {
-              const via = p.kind === 'vulnerability' ? p.via : undefined;
-              return (
-              <li key={p.key} className={`vuln-item vuln-item--${p.tone}${via ? ' vuln-item--via' : ''}`}>
-                <span className="vuln-item__sev">{p.label}</span>
-                <span className="vuln-item__body">
-                  {via ? (
-                    <>
-                      <button
-                        type="button"
-                        className="vuln-item__via"
-                        onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: via })}
-                        title={`Open ${via}`}
-                      >
-                        via {via}
-                      </button>
-                      {' · '}
-                    </>
-                  ) : null}
-                  {p.kind === 'vulnerability' ? (
-                    <>
-                      {p.finding.url ? (
-                        <a href={p.finding.url} target="_blank" rel="noopener noreferrer">
-                          {p.finding.id ?? p.finding.title ?? p.finding.url}
-                        </a>
-                      ) : (
-                        p.finding.id ?? p.finding.title ?? 'Advisory'
-                      )}
-                      {p.finding.version ? ` · ${p.finding.version}` : ''}
-                      {p.finding.source ? ` · ${p.finding.source}` : ''}
-                    </>
-                  ) : p.kind === 'mapping' ? (
-                    <>
-                      No <code>packageSourceMapping</code> pattern matches <strong>{selectedPackageId}</strong> — restore
-                      will not be able to find it.
-                      {' '}Mapped sources: {p.mappedSourceNames.join(', ')}.
-                    </>
-                  ) : (
-                    <>
-                      Updates are blocked for this package in this workspace. Right-click the row and choose{' '}
-                      <strong>Unblock updates</strong> to allow a version change.
-                    </>
-                  )}
-                </span>
-              </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-
-      {/* ── Section 2: Metadata ── */}
+      {/* ── Description + Problems (left) / attribute column (right) ── */}
       {metadata && (
-        <div className="detail-section">
-          <div className="detail-section__title">Info</div>
-          <dl className="metadata-grid">
-            {metadata.authors && (
-              <>
-                <dt>Authors</dt>
-                <dd>{metadata.authors}</dd>
-              </>
-            )}
+        <div className="detail-section pkg-info">
+          <div className="pkg-info__main">
             {metadata.description && (
               <>
-                <dt>Description</dt>
-                <dd>{metadata.description}</dd>
-              </>
-            )}
-            {metadata.projectUrl && (
-              <>
-                <dt>Project</dt>
-                <dd><a href={metadata.projectUrl} target="_blank" rel="noopener noreferrer">{metadata.projectUrl}</a></dd>
-              </>
-            )}
-            {metadata.licenseUrl && (
-              <>
-                <dt>License</dt>
-                <dd><a href={metadata.licenseUrl} target="_blank" rel="noopener noreferrer">{metadata.licenseUrl}</a></dd>
-              </>
-            )}
-            {metadata.published && (
-              <>
-                <dt>Published</dt>
-                <dd>{new Date(metadata.published).toLocaleDateString()}</dd>
-              </>
-            )}
-          </dl>
-
-          {metadata.tags.length > 0 && (
-            <div className="tag-list" aria-label="Tags">
-              {metadata.tags.map((t) => <span key={t} className="tag">{t}</span>)}
-            </div>
-          )}
-
-          {metadata.targetFrameworks.length > 0 && (
-            <div>
-              <div className="detail-section__title" style={{ marginBottom: 4 }}>Target Frameworks</div>
-              <div className="tag-list">
-                {metadata.targetFrameworks.map((f) => <span key={f} className="tag">{f}</span>)}
-              </div>
-            </div>
-          )}
-
-          {metadata.dependencies.length > 0 && (
-            <div>
-              <div className="detail-section__title" style={{ marginBottom: 4 }}>Dependencies</div>
-              {metadata.dependencies.map((group) => (
-                <div key={group.framework} className="dependency-group">
-                  <div className="dependency-group__title">{group.framework}</div>
-                  {group.packages.map((dep) => (
-                    <div key={dep.id} className="dependency-row">
-                      <span>{dep.id}</span>
-                      <span style={{ color: 'var(--color-tab-inactive)' }}>{dep.versionRange}</span>
-                    </div>
-                  ))}
+                <div
+                  ref={descRef}
+                  className={descExpanded ? 'pkg-info__desc pkg-info__desc--expanded' : 'pkg-info__desc'}
+                >
+                  {metadata.description}
                 </div>
-              ))}
-            </div>
-          )}
+                {(descClamped || metadata.authors) && (
+                  <div className="pkg-info__sub">
+                    {descClamped && (
+                      <button
+                        type="button"
+                        className="pkg-info__more"
+                        onClick={() => setDescExpanded(!descExpanded)}
+                      >{descExpanded ? 'less' : 'more'}</button>
+                    )}
+                    {metadata.authors && (
+                      <span className="pkg-info__authors" title={metadata.authors}>
+                        {descClamped ? '· ' : ''}{metadata.authors}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {problems.length > 0 && (
+              <div className="problems-band">
+                <div className="detail-section__title">Problems</div>
+                <ul className="vuln-list">
+                  {problems.map((p) => {
+                    const via = p.kind === 'vulnerability' ? p.via : undefined;
+                    return (
+                    <li key={p.key} className={`vuln-item vuln-item--${p.tone}${via ? ' vuln-item--via' : ''}`}>
+                      <span className="vuln-item__sev">{p.label}</span>
+                      <span className="vuln-item__body">
+                        {via ? (
+                          <>
+                            <button
+                              type="button"
+                              className="vuln-item__via"
+                              onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: via })}
+                              title={`Open ${via}`}
+                            >
+                              via {via}
+                            </button>
+                            {' · '}
+                          </>
+                        ) : null}
+                        {p.kind === 'vulnerability' ? (
+                          <>
+                            {p.finding.url ? (
+                              <a href={p.finding.url} target="_blank" rel="noopener noreferrer">
+                                {p.finding.id ?? p.finding.title ?? p.finding.url}
+                              </a>
+                            ) : (
+                              p.finding.id ?? p.finding.title ?? 'Advisory'
+                            )}
+                            {p.finding.version ? ` · ${p.finding.version}` : ''}
+                            {p.finding.source ? ` · ${p.finding.source}` : ''}
+                          </>
+                        ) : p.kind === 'mapping' ? (
+                          <>
+                            No <code>packageSourceMapping</code> pattern matches <strong>{selectedPackageId}</strong> — restore
+                            will not be able to find it.
+                            {' '}Mapped sources: {p.mappedSourceNames.join(', ')}.
+                          </>
+                        ) : p.kind === 'deprecation' ? (
+                          p.message
+                        ) : (
+                          <>
+                            Updates are blocked for this package in this workspace. Right-click the row and choose{' '}
+                            <strong>Unblock updates</strong> to allow a version change.
+                          </>
+                        )}
+                      </span>
+                    </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <PackageAttributeColumn
+            license={metadata.license}
+            licenseUrl={metadata.licenseUrl}
+            projectUrl={metadata.projectUrl}
+            repository={metadata.repository}
+            supportedFrameworks={metadata.supportedFrameworks}
+            runtimeIdentifiers={metadata.runtimeIdentifiers}
+          />
         </div>
       )}
 
       {/* ── Section 3: Projects (solution/folder scope only) ── */}
-      {isMultiProject && scope && (scope.kind === 'solution' || scope.kind === 'folder') && (
+      {metadataSettled && isMultiProject && scope && (scope.kind === 'solution' || scope.kind === 'folder') && (
         <div className="detail-section">
           <div className="detail-section__title">Projects</div>
           <ProjectListSection
@@ -337,7 +351,7 @@ export function PackageDetailPanel() {
         </div>
       )}
 
-      <CurrentDependenciesSection packageId={selectedPackageId} />
+      {metadata?.dependencyTree && <PackageDependenciesSection info={metadata.dependencyTree} />}
 
       {/* ── Popup ── */}
       {showRoslynWarning && state.roslynCap && (

@@ -6,6 +6,8 @@ import type {
   CliResult,
   PackageListResult,
   VulnerabilityFinding,
+  EnrichedPackageInfo,
+  SearchedVersionMetadata,
 } from '../types';
 
 /**
@@ -61,17 +63,29 @@ export interface INuGetBackend {
   ): Promise<AvailablePackage[]>;
 
   /**
-   * Get all available versions of a package.
-   * CLI: `dotnet package search <id> --exact-match --prerelease --configfile <path> --format json`
-   * Results are merged across all config files and sorted descending by SemVer.
+   * Get all available versions of a package, plus any per-version feed
+   * flags (vulnerable/deprecated) the same call already returns (#86).
+   * CLI: `dotnet package search <id> --exact-match --prerelease --configfile <path> --verbosity detailed --format json`
+   * Results are merged across all config files and sorted descending by SemVer —
+   * unlike `enrichPackage`/`getMetadata`, which stop at the first config file
+   * that has the package, this deliberately unions every source's version set.
    */
-  getAllVersions(packageId: string, configFiles: string[], prerelease?: boolean): Promise<string[]>;
+  getAllVersions(
+    packageId: string,
+    configFiles: string[],
+    prerelease?: boolean,
+  ): Promise<{ versions: string[]; versionFlags: Record<string, SearchedVersionMetadata> }>;
 
   /**
-   * Retrieve rich metadata for a specific package version.
-   * CLI: `dotnet package search <id> --exact-match --prerelease --configfile <path> --format json`
-   * Metadata beyond what dotnet CLI exposes (dependencies, frameworks) is
-   * parsed from the NuGet v3 registration endpoint if needed.
+   * Search-derived metadata for a specific package version (authors,
+   * description, projectUrl, licenseUrl, tags — never dependencies or
+   * target frameworks, which `dotnet package search` cannot produce).
+   * CLI: `dotnet package search <id> --exact-match --prerelease --configfile <path> --verbosity detailed --format json`
+   * — the identical command `enrichPackage` already runs, reused here
+   * rather than a separate, lighter call (#86 Part 1). Callers wanting the
+   * complete Info panel for an *installed* package at its current resolved
+   * version should prefer its local `.nuspec` (see `nuspecParser.ts` /
+   * `nuspecLocator.ts`) and fall back to this only when that's unavailable.
    */
   getMetadata(
     packageId: string,
@@ -80,17 +94,18 @@ export interface INuGetBackend {
   ): Promise<PackageMetadata>;
 
   /**
-   * Fetch latest version and source name for a single package in one CLI call.
-   * CLI: `dotnet package search <id> --exact-match --prerelease --configfile <path> --format json`
+   * Fetch the version list, latest version, source name, and per-version
+   * search metadata (description/projectUrl/…) for a single package in one
+   * CLI call.
+   * CLI: `dotnet package search <id> --exact-match --prerelease --configfile <path> --verbosity detailed --format json`
    * Called once per configFile; results are merged across the chain.
    * Latest is feed-highest (search has no TFM), not "compatible with this project".
-   * Returns { latestVersion, sourceName } — used for enriching installed packages.
    */
   enrichPackage(
     packageId: string,
     configFiles: string[],
     prerelease?: boolean,
-  ): Promise<{ latestVersion: string; sourceName: string; versions: string[] }>;
+  ): Promise<EnrichedPackageInfo>;
 
   /**
    * Install or update a package in a project.

@@ -233,7 +233,20 @@ html { height: 100vh; }
   overflow: hidden; flex: 0 0 auto; min-height: 0;
 }
 .packages-left__scroll { flex: 1; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; }
-.packages-right { flex: 1; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+/* Query container for the detail pane's own responsive rules (e.g. .pkg-info's
+   two-column layout): this pane is resizable via the splitter and sits next to
+   a content-sized list, so its width is unrelated to the webview's — a viewport
+   media query would ask the wrong element how much room there is. */
+.packages-right {
+  flex: 1; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto;
+  container-type: inline-size;
+  /* The gutter is reserved whether or not a scrollbar is showing: otherwise
+     selecting a taller package narrows the pane by the scrollbar's width and
+     the whole panel shifts sideways. It also keeps the width this container
+     query is measured against from flipping across the breakpoint below when
+     a scrollbar appears. */
+  scrollbar-gutter: stable;
+}
 .pkg-split {
   flex-shrink: 0; width: 5px; margin: 0 -1px;
   cursor: col-resize; z-index: 2;
@@ -547,6 +560,8 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   background: var(--color-list-active);
   color: var(--color-list-active-fg);
 }
+/* Feed-reported vulnerable/deprecated mark on a version, before it's even chosen (#86). */
+.version-select__warn { color: var(--color-warning); }
 
 /* ── Global select style — VSCode-themed, same height as btn--icon ───────────── */
 select {
@@ -600,35 +615,170 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 .btn--primary[aria-disabled='true']:hover { background: var(--color-btn-bg); }
 
-/* ── Metadata ───────────────────────────────────────────────────────────────── */
-.metadata-grid { display: grid; grid-template-columns: minmax(0, 7em) minmax(0, 1fr); gap: var(--spacing-xs) var(--spacing-md); font-size: 12px; min-width: 0; }
-.metadata-grid dt { color: var(--color-tab-inactive); }
-.metadata-grid dd a { color: var(--color-link); text-decoration: none; }
-.metadata-grid dd a:hover { text-decoration: underline; }
-.dependency-group { margin-bottom: var(--spacing-sm); }
-.dependency-group__title { font-size: 11px; font-weight: 600; color: var(--color-tab-inactive); margin-bottom: var(--spacing-xs); }
-.dependency-row { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
-.current-deps { list-style: none; margin: 0; padding: 0; }
-.current-deps .current-deps { padding-left: 12px; }
-.current-deps__row {
-  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
-  font-size: 12px; padding: 2px 0; min-width: 0;
+/* ── Package Info: two-column layout (#86 design pass) ───────────────────────── */
+/* Metadata gets no heading of its own — Problems is state that changes with the
+   version, the attributes are properties of the package; they're separated
+   structurally, not by styling. */
+/* `flex-direction` is spelled out because this element also carries
+   .detail-section, which sets `column` — without it the two columns stack and
+   .pkg-attrs' `flex: 0 0 150px` lands on the block axis as a 150px *height*.
+   `stretch` (not flex-start) is what runs the hairline the full row height. */
+.pkg-info {
+  display: flex; flex-direction: row;
+  gap: var(--spacing-md); align-items: stretch;
 }
-.current-deps__id {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px;
-  flex: 1; min-width: 0;
+.pkg-info__main { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--spacing-sm); }
+/* Six lines, not the design's two: the attribute column beside this one runs
+   up to 110px tall (three 23px rows plus the 41px tag block), and at a 12px
+   font on a 1.4 line-height six lines is ~101px — so the description fills the
+   space that column already claims instead of leaving most of it blank, and
+   "more" only appears for a description that genuinely does not fit. */
+.pkg-info__desc {
+  font-size: 12px; color: var(--color-input-fg);
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
 }
-.current-deps__name {
+.pkg-info__desc--expanded { -webkit-line-clamp: unset; overflow: visible; }
+.pkg-info__sub {
+  font-size: 11px; color: var(--color-tab-inactive);
+  display: flex; align-items: baseline; gap: 4px; min-width: 0;
+}
+/* One line: some packages list a dozen authors, which otherwise wraps into a
+   paragraph under the description. The full list stays in the tooltip. */
+.pkg-info__authors { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pkg-info__more {
   padding: 0; border: 0; background: none;
-  color: inherit; font: inherit; cursor: pointer; text-align: left;
-  min-width: 0; overflow-wrap: anywhere;
+  color: var(--color-link); font: inherit; font-size: 11px; cursor: pointer;
 }
-.current-deps__name:hover { text-decoration: underline; }
-.current-deps__name--implicit { color: var(--color-tab-inactive); }
-.current-deps__ver,
-.current-deps__tfm { color: var(--color-tab-inactive); flex-shrink: 0; }
-.tag-list { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
-.tag { background: var(--color-badge-bg); color: var(--color-badge-fg); border-radius: var(--radius); padding: 1px var(--spacing-xs); font-size: 11px; }
+.pkg-info__more:hover { text-decoration: underline; }
+
+/* Problems band: border + text colour carry the meaning (HC/forced-colors
+   discards backgrounds, same correction #68 applied elsewhere), the tint is
+   a bonus, not the only cue. */
+.problems-band {
+  border-left: 2px solid var(--color-error);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  display: flex; flex-direction: column; gap: var(--spacing-xs);
+}
+
+/* Fixed-basis attribute column: never grows sideways, gets taller instead —
+   a long licence or link wraps/clips inside it rather than squeezing Problems. */
+.pkg-attrs {
+  flex: 0 0 150px;
+  border-left: 1px solid var(--color-border);
+  padding-left: var(--spacing-md);
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.pkg-attrs__core { display: flex; flex-direction: column; }
+/* Fixed row pitch, so the optional tier's clip height below is a whole number
+   of rows rather than a value that can slice one in half. */
+.pkg-attrs__row { display: flex; align-items: center; gap: 5px; height: 23px; }
+.pkg-attrs__op { color: var(--color-tab-inactive); font-size: 11px; }
+.pkg-attrs__link {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--color-link); text-decoration: none; font-size: 12px;
+}
+.pkg-attrs__link:hover { text-decoration: underline; }
+/* Muted even as a link (it follows .pkg-attrs__link here, so this colour wins):
+   the revision is secondary to the repository it belongs to, and hover plus the
+   commit icon already say it is clickable. */
+.pkg-attrs__commit { color: var(--color-tab-inactive); font-size: 11px; flex: 0 1 auto; min-width: 0; }
+/* Target frameworks: three rows at most. A package like HtmlAgilityPack ships
+   ten framework folders and System.Linq fourteen, which turns the column into
+   a wall of badges; the list is trimmed to fit and ends in a `…` badge so the
+   trim is visible rather than silent. */
+.pkg-attrs__frameworks {
+  display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start;
+  padding-top: 5px;
+  max-height: 66px; overflow: hidden; /* 5 + 17 + 5 + 17 + 5 + 17 — three rows */
+}
+/* Measured, never seen — see .pkg-attrs__optional--probe for why this exists. */
+.pkg-attrs__frameworks--probe {
+  height: 0; padding-top: 0; max-height: none;
+  visibility: hidden; pointer-events: none;
+}
+/* Runtime identifiers, capped at two rows — only 119 of 1,175 cached packages
+   have any and those have a handful, so the cap is a backstop rather than a
+   routine trim. Tags used to share this tier and were taken out: they only ever
+   made the column taller than the description beside it. */
+.pkg-attrs__optional {
+  display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start;
+  /* Twice the row gap, so this tier reads as a separate group rather than as
+     more framework badges — at an equal gap the two runs merge into one pile. */
+  padding-top: 10px;
+  max-height: 49px; overflow: hidden; /* 10 + 17 + 5 + 17 — two badge rows exactly */
+}
+/* Quiet metadata tag: a subtle neutral surface, per the design. Deliberately
+   not --color-badge-bg — that token is an accent ("set/active", e.g.
+   .sources-badge--set) and renders these plain facts as clickable pills.
+   --color-list-hover is the theme's neutral raised surface and stays neutral
+   in light themes too. */
+/* 10px rather than the 11px used elsewhere: at 11px a `net10.0` badge is 48px
+   wide and only two fit the 138px of usable width in the attribute column, so
+   a seven-framework package took four rows. At 10px it is 43px and three fit.
+   Fixed height, so the optional tier's clip below is an exact number of rows
+   whatever the theme's font metrics do to the line box. */
+.badge {
+  background: var(--color-list-hover);
+  color: var(--color-fg);
+  border-radius: var(--radius); padding: 0 5px; font-size: 10px;
+  height: 17px; line-height: 17px; display: inline-block;
+  text-decoration: none; white-space: nowrap;
+  /* `portable-net45+netcore45+wpa81+wp8+MonoAndroid+MonoTouch` is a real
+     framework folder and is wider than the whole column: truncate it rather
+     than let one badge push the column's contents out of it. `inline-block`
+     rather than `inline-flex` so `text-overflow` applies at all. */
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+/* An `<a class="badge">` (SPDX/licenseUrl) is clickable but stays a badge —
+   the design shows the licence as a plain tag, so only hover reveals the link. */
+a.badge:hover { text-decoration: underline; }
+.badge--dim { color: var(--color-tab-inactive); }
+.badge--dimmer { color: var(--color-tab-inactive); opacity: 0.8; }
+
+/* Below ~360px of detail-pane width (a narrow sidebar, or the splitter dragged
+   right — the common case) the attribute column wraps under the description as
+   an inline row instead of sitting beside it, and the vertical hairline becomes
+   horizontal. The query container is `.packages-right`, deliberately not
+   `.pkg-info` itself: an element is never its own query container, so declaring
+   `container-type` here would leave the `.pkg-info` rule below permanently
+   unmatched while the `.pkg-attrs` one (a descendant, so genuinely contained)
+   still applied — a half-switched layout where `flex: 0 0 150px` lands on the
+   wrong axis. */
+@container (max-width: 360px) {
+  .pkg-info { flex-direction: column; }
+  /* Everything collapses into one wrapped inline strip under the description,
+     as the vertical variant of the design shows — licence, links and tags on
+     the same line rather than a stack of one-item rows. */
+  .pkg-attrs {
+    flex: 1 1 auto; width: 100%;
+    flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px;
+    border-left: none; border-top: 1px solid var(--color-border);
+    padding-left: 0; padding-top: var(--spacing-sm);
+  }
+  .pkg-attrs__core { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .pkg-attrs__row { height: auto; }
+}
+
+/* ── Dependencies section (#86) — declared range vs. resolved version, from project.assets.json ── */
+.dep-section__header { display: flex; justify-content: space-between; align-items: baseline; gap: var(--spacing-sm); }
+.dep-section__context { font-size: 11px; color: var(--color-tab-inactive); }
+/* Own container: the rows are a dense list, so they must not inherit the
+   section's gap between every one of them. */
+.dep-list { display: flex; flex-direction: column; }
+.dep-row {
+  display: flex; justify-content: space-between; align-items: center; gap: var(--spacing-sm);
+  font-size: 12px; padding: 3px 0; min-width: 0;
+}
+.dep-row--nested { padding-left: 14px; color: var(--color-tab-inactive); }
+.dep-row--nested .dep-row__id::before { content: '↳ '; }
+.dep-row__id { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dep-row__meta { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.dep-row__hint { color: var(--color-warning); font-size: 11px; }
+.dep-row__range { color: var(--color-tab-inactive); font-size: 11px; }
+.dep-row__bad { display: inline-flex; color: var(--color-error); }
+.dep-row__version--bad { color: var(--color-error); }
 
 /* ── Project list section ───────────────────────────────────────────────────── */
 .project-list { display: flex; flex-direction: column; gap: 2px; }

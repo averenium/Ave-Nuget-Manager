@@ -121,6 +121,38 @@ export function IconMarkSlash() {
   );
 }
 
+/** Source-control branch — by destination kind (source repo), not by forge vendor, so it reads the same for GitHub/GitLab/Bitbucket/Azure DevOps (#86). */
+export function IconBranch() {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="7" cy="6" r="2" />
+      <circle cx="7" cy="18" r="2" />
+      <circle cx="17" cy="9" r="2" />
+      <path d="M7 8v8M17 11v1a3 3 0 0 1-3 3H7" />
+    </svg>
+  );
+}
+
+/** One commit on the branch line — the exact revision the package was built from (#86). */
+export function IconCommit() {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M2 12h6.5M15.5 12H22" />
+    </svg>
+  );
+}
+
+/** A project's own site — by destination kind, distinct from a source-control link (#86). */
+export function IconGlobe() {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+    </svg>
+  );
+}
+
 export function IconMarkWarning() {
   return (
     <svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true">

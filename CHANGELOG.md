@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **Updates**: the family target selector marks vulnerable and deprecated versions like the other version pickers do, and names the family members each mark came from — a version is often flagged for only some of them (#92)
 - Package search no longer launches `dotnet` for a config file that cannot answer — one declaring no package sources, or one whose folder sources plainly do not hold the package. On a typical Windows install that was two of the three processes spent on every package of every refresh (#91)
 - **Install** has its own icon instead of the downgrade arrow, and the action buttons now answer the pointer — an inset ring on hover in every theme, a thicker outline in High Contrast (#88)
 - The development-only hot-reload watcher no longer runs in an installed extension, where it could fail activation on Linux by exhausting the inotify watch limit (#95)

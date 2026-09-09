@@ -1,14 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { searchableConfigFiles } from '../../searchConfigFiles';
+import type { VersionFlag } from '../utils/familyVersionFlags';
 
 /** Tooltip text for a version the feed flags — vulnerable and/or deprecated (#86); undefined when neither applies. */
-function versionWarningTitle(flags: { vulnerable?: boolean; deprecation?: string } | undefined): string | undefined {
+function versionWarningTitle(flags: VersionFlag | undefined): string | undefined {
   if (!flags) return undefined;
   const parts: string[] = [];
   if (flags.vulnerable) parts.push('Flagged vulnerable by the feed');
   if (flags.deprecation) parts.push(`Deprecated: ${flags.deprecation}`);
-  return parts.length > 0 ? parts.join(' — ') : undefined;
+  if (parts.length === 0) return undefined;
+  // A family target applies to several packages at once and is usually flagged
+  // for only some of them, so the mark has to say which (#92).
+  if (flags.packages?.length) parts.push(flags.packages.join(', '));
+  return parts.join(' — ');
 }
 
 export function VersionSelect({
@@ -25,7 +30,7 @@ export function VersionSelect({
   disabled?: boolean;
   label: string;
   /** Vulnerable/deprecated marks per version, from the feed — shown before a version is even chosen (#86). */
-  versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
+  versionFlags?: Record<string, VersionFlag>;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);

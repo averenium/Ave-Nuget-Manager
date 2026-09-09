@@ -3,6 +3,7 @@ import { useNugetManager } from '../context/NugetManagerContext';
 import { summarizeDotnetFailure, summarizeListProblems } from '../../dotnetOutput';
 import { IconCopy, IconBroom, IconShieldBadge, IconOutputPanel, IconRecordDot, IconStopSquare } from '../utils/icons';
 import type { LogEntry, LogEntryKind } from '../../types';
+import { useFocusSearchOnFind } from '../utils/useFocusSearchOnFind';
 
 type KindFilter = 'all' | 'error' | 'cli' | 'edit';
 
@@ -130,6 +131,8 @@ export function LogTab() {
   const { entries } = state.log;
   const recording = state.traceRecording;
   const listRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useFocusSearchOnFind(searchRef);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [pendingCount, setPendingCount] = useState(0);
@@ -228,6 +231,7 @@ export function LogTab() {
           </button>
         )}
         <input
+          ref={searchRef}
           type="search"
           className="pkg-toolbar__search"
           placeholder="Search commands, args, output…"

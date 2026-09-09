@@ -10,6 +10,7 @@ import { measureTextWidth } from '../utils/measureText';
 import { PrereleaseToggle } from './PrereleaseToggle';
 import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
 import { ActivityStrip } from './ActivityStrip';
+import { useFocusSearchOnFind } from '../utils/useFocusSearchOnFind';
 
 const DEBOUNCE_MS = 300;
 const MIN_QUERY_LEN = 2;
@@ -25,6 +26,8 @@ export function PackagesTab() {
   const { allSources } = state.sources;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useFocusSearchOnFind(searchRef);
   const [autoListWidthPx, setAutoListWidthPx] = useState<number | null>(null);
 
   const titleRows = useMemo(() => {
@@ -113,6 +116,7 @@ export function PackagesTab() {
         <ToolbarRestoreRefresh />
 
         <input
+          ref={searchRef}
           type="search"
           className="pkg-toolbar__search"
           placeholder="Search packages… (min 2 chars)"

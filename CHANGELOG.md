@@ -1,20 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.7.5
 
 ### Added
 
-- **Packages** and **Log**: Ctrl+F (Cmd+F) focuses that tab's search box and selects what is already in it — a sidebar view cannot use VS Code's own find widget, which is why these tabs carry a search box at all (#93)
-- **Package details**: a transitive package now lists the projects that pull it in, each with a one-click direct reference at the version already restored there; when those versions differ across projects, the panel names the one it is describing (#90)
+- **Package details**: a transitive package lists the projects that pull it in, each with a one-click direct reference at the restored version (#90)
+- **Packages** and **Log**: Ctrl+F (Cmd+F) focuses that tab's search box and selects what is already in it (#93)
+- Install and remove show progress beside the **Projects** heading, held through the refresh that follows (#104)
 
 ### Fixed
 
-- A package some project already references directly no longer lists every other project that merely inherits it, each offering to add a second declaration — those rows are kept for a package nothing references, where pinning one is how it becomes managed at all (#90)
-- Every version picker shows a dropdown arrow, and every input and dropdown answers hover, focus and being open the same way — the states had drifted apart control by control, leaving some fields with no focus at all and every dropdown looking untouched while its list was open (#99)
-- **Updates**: the family target selector marks vulnerable and deprecated versions like the other version pickers do, and names the family members each mark came from — a version is often flagged for only some of them (#92)
-- Package search no longer launches `dotnet` for a config file that cannot answer — one declaring no package sources, or one whose folder sources plainly do not hold the package. On a typical Windows install that was two of the three processes spent on every package of every refresh (#91)
-- **Install** has its own icon instead of the downgrade arrow, and the action buttons now answer the pointer — an inset ring on hover in every theme, a thicker outline in High Contrast (#88)
-- The development-only hot-reload watcher no longer runs in an installed extension, where it could fail activation on Linux by exhausting the inotify watch limit (#95)
+- Every version picker shows a dropdown arrow, and inputs and dropdowns answer hover, focus and being open the same way (#99)
+- **Updates**: the family target selector marks vulnerable and deprecated versions, naming the members each mark came from (#92)
+- Package search no longer launches `dotnet` for a config file that cannot answer — no sources, or folder sources without the package (#91)
+- **Install** has its own icon instead of the downgrade arrow, and the action buttons answer the pointer (#88)
+- The development-only hot-reload watcher no longer runs in an installed extension, where it could fail activation on Linux (#95)
 
 ## 0.7.0
 

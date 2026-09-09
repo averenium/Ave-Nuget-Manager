@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
+import { searchableConfigFiles } from '../../searchConfigFiles';
 
 const DEBOUNCE_MS = 300;
 const MIN_QUERY_LEN = 2;
@@ -9,7 +10,7 @@ export function SearchBar() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const query = state.packages.searchQuery;
   const selectedSources = state.packages.selectedSources;
-  const configFiles = state.sources.configChain.map((c) => c.filePath);
+  const configFiles = searchableConfigFiles(state.sources.configChain);
 
   const doSearch = useCallback(
     (q: string, sources: string[]) => {

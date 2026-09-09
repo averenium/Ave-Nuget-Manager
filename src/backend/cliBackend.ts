@@ -1,3 +1,4 @@
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { CliRunner } from '../cliRunner';
 import type {
@@ -17,6 +18,7 @@ import { stampListedDependencies, attachAssetsDependencies } from '../projectAss
 import { parseDotnetVulnerableJson } from '../vulnerabilities';
 import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS } from '../cliRetry';
 import { searchedMetadataToPackageMetadata } from '../searchMetadataMapping';
+import { classifyConfigSources } from '../localPackageSources';
 
 // ─── dotnet JSON output shapes ────────────────────────────────────────────────
 
@@ -264,6 +266,35 @@ export class CliBackend implements INuGetBackend {
     return { versions: all.sort((a, b) => compareSemVerDesc(a, b)), versionFlags };
   }
 
+  /**
+   * True when this config file provably cannot answer for `packageId`: every
+   * source it enables is a local folder, and none of those folders holds a
+   * directory by that id — which is how a folder source stores what it serves
+   * (#91). Skipping it saves a ~250ms process launch per package.
+   *
+   * Not cached: reading the config and listing a folder costs well under a
+   * millisecond against that, and staying stateless means a package dropped
+   * into the folder is picked up at once instead of after a cache expiry.
+   * Anything unexpected — an unreadable config, a feed among the sources —
+   * answers false, because a wasted call is cheaper than a package the panel
+   * wrongly reports as missing.
+   */
+  private async _configCannotAnswer(configFile: string, packageId: string): Promise<boolean> {
+    try {
+      const { folders, hasNonLocal } = classifyConfigSources(await fs.readFile(configFile, 'utf8'), configFile);
+      if (hasNonLocal || folders.length === 0) return false;
+
+      const wanted = packageId.toLowerCase();
+      for (const folder of folders) {
+        const entries = await fs.readdir(folder).catch(() => [] as string[]);
+        if (entries.some((entry) => entry.toLowerCase() === wanted)) return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // ── search (shared by getMetadata + enrichPackage) ──────────────────────────
 
   /**
@@ -283,6 +314,7 @@ export class CliBackend implements INuGetBackend {
     detailed: boolean,
   ): Promise<{ sourceName: string; entries: Array<SearchedVersionMetadata & { version: string }> } | null> {
     for (const cf of configFiles) {
+      if (await this._configCannotAnswer(cf, packageId)) continue;
       const args = [
         'package', 'search', packageId,
         '--exact-match',
@@ -644,6 +676,11 @@ export class CliBackend implements INuGetBackend {
     if (prerelease) args.push('--prerelease');
 
     const empty = { versions: [] as string[], versionFlags: {} as Record<string, SearchedVersionMetadata> };
+    // The version list asks every config file in the chain rather than stopping
+    // at the first hit, so this is where a folder source that cannot hold the
+    // package costs a process launch for every package (#91).
+    if (await this._configCannotAnswer(configFile, packageId)) return empty;
+
     const result = await this.runner.run({
       args,
       cwd: path.dirname(configFile),

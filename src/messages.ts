@@ -177,6 +177,15 @@ export type ExtensionMessage =
   /** Restore / Force refresh re-read of the SDK compiler. */
   | { type: 'ROSLYN_CAP'; cap: RoslynCap | null }
 
+  /** One project of a multi-project install/remove finished — the rest are still running (#104). */
+  | {
+      type: 'PROJECT_OPERATION_DONE';
+      operation: 'install' | 'remove';
+      packageId: string;
+      projectPath: string;
+      ok: boolean;
+    }
+
   // Operation results
   | {
       type: 'OPERATION_SUCCESS';

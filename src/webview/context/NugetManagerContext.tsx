@@ -126,6 +126,18 @@ export interface AppState {
     projectVersions: Record<string, string>;
     projectErrors: Record<string, string>;
     projectLoadingSet: Set<string>;
+    /**
+     * An install/remove in flight, counted as each project lands (#104). Held
+     * through `refresh` — the CLI is done but the list it changed has not come
+     * back yet, and dropping the bar there would leave a gap between "finished"
+     * and "you can see what changed".
+     */
+    projectOperation: {
+      operation: 'install' | 'remove';
+      done: number;
+      total: number;
+      phase: 'work' | 'refresh';
+    } | null;
   };
   dotnetMissing: boolean;
   globalError: string | null;
@@ -170,6 +182,7 @@ const initialState: AppState = {
     projectVersions: {},
     projectErrors: {},
     projectLoadingSet: new Set(),
+    projectOperation: null,
   },
   dotnetMissing: false,
   globalError: null,
@@ -191,6 +204,7 @@ export type Action =
   | { type: 'SELECT_PACKAGE'; packageId: string }
   | { type: 'SET_DETAIL_LOADING'; loading: boolean }
   | { type: 'SET_PROJECT_VERSION'; projectPath: string; version: string }
+  | { type: 'START_PROJECT_OPERATION'; operation: 'install' | 'remove'; total: number }
   | { type: 'SET_PROJECT_LOADING'; projectPath: string; loading: boolean }
   | { type: 'SET_PROJECT_ERROR'; projectPath: string; error: string | null }
   | { type: 'DISMISS_GLOBAL_ERROR' };
@@ -268,6 +282,7 @@ function reduceAppState(state: AppState, action: Action): AppState {
           projectVersions: {},
           projectErrors: {},
           projectLoadingSet: new Set(),
+    projectOperation: null,
         },
       };
     }
@@ -284,6 +299,15 @@ function reduceAppState(state: AppState, action: Action): AppState {
             ...state.detail.projectVersions,
             [action.projectPath]: action.version,
           },
+        },
+      };
+
+    case 'START_PROJECT_OPERATION':
+      return {
+        ...state,
+        detail: {
+          ...state.detail,
+          projectOperation: { operation: action.operation, done: 0, total: action.total, phase: 'work' },
         },
       };
 
@@ -384,7 +408,9 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
             ? null
             : { done: withLatest.size, total: uniqueIds.size },
         },
-        detail: { ...state.detail, projectVersions },
+        // The list the operation was waiting on has arrived, so the bar it left
+        // running in `refresh` has nothing left to cover (#104).
+        detail: { ...state.detail, projectVersions, projectOperation: null },
       };
     }
 
@@ -583,6 +609,20 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       };
     }
 
+    case 'PROJECT_OPERATION_DONE': {
+      const set = new Set(state.detail.projectLoadingSet);
+      set.delete(msg.projectPath);
+      const op = state.detail.projectOperation;
+      return {
+        ...state,
+        detail: {
+          ...state.detail,
+          projectLoadingSet: set,
+          projectOperation: op ? { ...op, done: Math.min(op.done + 1, op.total) } : op,
+        },
+      };
+    }
+
     case 'OPERATION_SUCCESS':
       return {
         ...state,
@@ -593,6 +633,9 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           ...state.detail,
           projectErrors: withoutPaths(state.detail.projectErrors, msg.affectedProjects),
           projectLoadingSet: withoutLoading(state.detail.projectLoadingSet, msg.affectedProjects),
+          projectOperation: state.detail.projectOperation
+            ? { ...state.detail.projectOperation, done: state.detail.projectOperation.total, phase: 'refresh' }
+            : null,
         },
       };
 
@@ -614,6 +657,9 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           ...state.detail,
           projectErrors,
           projectLoadingSet: withoutLoading(state.detail.projectLoadingSet, affected),
+          projectOperation: state.detail.projectOperation
+            ? { ...state.detail.projectOperation, done: state.detail.projectOperation.total, phase: 'refresh' }
+            : null,
         },
       };
     }
@@ -707,6 +753,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         workspaceActivity: keepEnrich
           ? { kind: 'refresh', phase: 'enrich' }
           : null,
+        detail: { ...state.detail, projectOperation: null },
       };
     }
 

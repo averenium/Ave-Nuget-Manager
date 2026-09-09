@@ -134,12 +134,17 @@ html { height: 100vh; }
 }
 .activity-strip__track {
   position: relative;
+  /* Also used on a <span> outside the app-wide strip (#104), where the height
+     below would otherwise be ignored. */
+  display: block;
   height: 3px;
   overflow: hidden;
   border-radius: 1px;
   background: color-mix(in srgb, var(--color-tab-inactive) 16%, transparent);
 }
-.activity-strip--busy:not(.activity-strip--determinate) .activity-strip__track {
+.activity-strip--busy:not(.activity-strip--determinate) .activity-strip__track,
+/* Same shimmer, for a track that lives outside the app-wide strip (#104). */
+.activity-strip__track--indeterminate {
   background-color: color-mix(in srgb, var(--color-tab-inactive) 22%, transparent);
   background-image: linear-gradient(
     90deg,
@@ -468,6 +473,7 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
 .detail-panel__error { color: var(--color-error); font-size: 12px; }
 
 .detail-header {
+  position: relative;
   display: flex; flex-direction: column; align-items: stretch;
   gap: var(--spacing-xs);
   padding-bottom: var(--spacing-sm); min-width: 0;
@@ -488,6 +494,7 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
 
 .detail-section { display: flex; flex-direction: column; gap: var(--spacing-sm); border-bottom: 1px solid var(--color-border); padding-bottom: var(--spacing-md); }
 .detail-section:last-child { border-bottom: none; }
+.detail-section__title--strip { display: flex; align-items: center; gap: var(--spacing-sm); }
 .detail-section__title { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-tab-inactive); }
 .vuln-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .vuln-item { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
@@ -884,24 +891,43 @@ a.badge:hover { text-decoration: underline; }
    picker occupies on an installed row so the two line up down the column. */
 .project-row__transitive { font-size: 11px; color: var(--color-tab-inactive); flex-shrink: 0; }
 .project-row__action-gap { width: 24px; flex: 0 0 24px; }
-.project-row__resolved {
-  font-size: 12px; color: var(--color-tab-inactive);
-  flex: 1 1 8em; min-width: 0; text-align: right;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+/* The install/remove sliver (#104) rides in space the layout already has —
+   beside a section title, or on the detail header's bottom border — so it costs
+   no room of its own and starting or finishing an operation moves nothing.
+
+   Only the opacity changes, which is why this needs no mount/unmount dance: the
+   element is always in the tree, so the fade works in both directions. */
+.operation-strip {
+  flex: 1;
+  min-width: 0;
+  opacity: 0;
+  transition: opacity 180ms ease-out;
 }
-/* Brief pulse when a version change actually lands — colored by direction (#56). */
-.project-row--flash-up { animation: project-row-flash-up 850ms ease-out; }
-.project-row--flash-down { animation: project-row-flash-down 850ms ease-out; }
-@keyframes project-row-flash-up {
-  0% { background: color-mix(in srgb, var(--color-success) 30%, transparent); }
-  100% { background: transparent; }
+.operation-strip--busy { opacity: 1; }
+/* Louder than the app-wide strip above the list, and deliberately so: this one
+   runs only while the user's own install or remove is going, where the panel
+   already uses the accent colour for every active state. The app-wide strip
+   keeps its quiet grey — it comes up on its own for restores and refreshes,
+   where it is status, not a thing being waited on. */
+.operation-strip .activity-strip__track {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-tab-inactive) 20%, transparent);
 }
-@keyframes project-row-flash-down {
-  0% { background: color-mix(in srgb, var(--color-warning) 30%, transparent); }
-  100% { background: transparent; }
+.operation-strip .activity-strip__track--indeterminate {
+  background-color: color-mix(in srgb, var(--color-tab-inactive) 24%, transparent);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--color-btn-bg) 50%,
+    transparent 100%
+  );
 }
+.operation-strip .activity-strip__fill { background: var(--color-btn-bg); }
+/* Straddling the 1px border, so it reads as belonging to the header above it. */
+.detail-header__progress { position: absolute; left: 0; right: 0; bottom: -2px; }
 @media (prefers-reduced-motion: reduce) {
-  .project-row--flash-up, .project-row--flash-down { animation: none; }
+  .operation-strip { transition: none; }
 }
 
 /* ── Sources tab ────────────────────────────────────────────────────────────── */
@@ -1569,6 +1595,8 @@ a.badge:hover { text-decoration: underline; }
   .btn--primary, .btn--secondary { forced-color-adjust: none; background: ButtonFace; color: ButtonText; }
   .btn--primary:hover, .btn--secondary:hover { background: Highlight; color: HighlightText; }
   .tab-btn--active { border-bottom-color: Highlight; outline-color: Highlight; }
+  /* The accent the operation strip uses is not available in forced colors (#104). */
+  .operation-strip .activity-strip__fill { background: Highlight; }
   .pkg-row__mark { forced-color-adjust: none; }
   .pkg-row__mark--update { border-color: currentColor; }
   .sources-flag { outline-color: CanvasText; }

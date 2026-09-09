@@ -1057,7 +1057,17 @@ export class WebviewMessageBroker {
     version: string,
   ): Promise<void> {
     if (this._rejectBlockedVersionChange(packageId)) return;
-    const attempts = await this._installOnProjects(packageId, version, projects);
+    // `_installOnProjects` already reports each project as it lands — the batch
+    // flow has used this hook since #58. Without it every selected row sat at
+    // "…" until the whole operation finished (#104).
+    const attempts = await this._installOnProjects(
+      packageId,
+      version,
+      projects,
+      (projectPath, ok) => this.provider.postMessage({
+        type: 'PROJECT_OPERATION_DONE', operation: 'install', packageId, projectPath, ok,
+      }),
+    );
     await this._finishInstallAttempts(packageId, version, attempts);
   }
 
@@ -1819,10 +1829,17 @@ export class WebviewMessageBroker {
       projects.map((p) => async () => {
         this.trace?.noteTouchedProject(p);
         this.trace?.recordBroker('remove', { project: path.basename(p), packageId });
-        return {
+        const result = await this._removeFromProject(p, packageId);
+        // Same incremental signal the install path gets (#104); remove had no
+        // per-project hook at all, so its rows only ever moved once, at the end.
+        this.provider.postMessage({
+          type: 'PROJECT_OPERATION_DONE',
+          operation: 'remove',
+          packageId,
           projectPath: p,
-          result: await this._removeFromProject(p, packageId),
-        };
+          ok: isCliOperationSuccess(result),
+        });
+        return { projectPath: p, result };
       }),
       getConfig().dotnetConcurrency,
     );

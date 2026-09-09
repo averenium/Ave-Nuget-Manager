@@ -6,6 +6,7 @@ import { ProjectListSection } from './ProjectListSection';
 import { PackageAttributeColumn } from './PackageAttributeColumn';
 import { PackageDependenciesSection } from './PackageDependenciesSection';
 import { DetailHeader } from './DetailHeader';
+import { OperationProgressStrip } from './OperationProgressStrip';
 import { RoslynCapPopup } from './RoslynCapPopup';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
 import { findingsAffectingPackage } from '../../vulnerabilities';
@@ -126,6 +127,10 @@ export function PackageDetailPanel() {
     if (isMultiProject) {
       setShowPopup('install');
     } else if (scope?.kind === 'project') {
+      // One project has no per-project rows to watch, so the operation reports
+      // itself here instead — before this it ran with no feedback at all, the
+      // panel's "Loading…" being about metadata rather than the install (#104).
+      dispatch({ type: 'START_PROJECT_OPERATION', operation: 'install', total: 1 });
       send({ type: 'INSTALL_PACKAGE', projectPath: scope.projectPath, packageId: selectedPackageId, version: effectiveVersion });
     }
   };
@@ -148,6 +153,7 @@ export function PackageDetailPanel() {
     if (isMultiProject) {
       setShowPopup('remove');
     } else if (scope?.kind === 'project') {
+      dispatch({ type: 'START_PROJECT_OPERATION', operation: 'remove', total: 1 });
       send({ type: 'REMOVE_PACKAGE', projectPath: scope.projectPath, packageId: selectedPackageId });
     }
   };
@@ -169,6 +175,14 @@ export function PackageDetailPanel() {
       setShowPopup(null);
       return;
     }
+    // The count has to be taken here, before the first project reports back:
+    // once rows start clearing, the loading set no longer says how many there
+    // were (#104).
+    dispatch({
+      type: 'START_PROJECT_OPERATION',
+      operation: showPopup === 'install' ? 'install' : 'remove',
+      total: projects.length,
+    });
     for (const p of projects) {
       dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
       dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
@@ -185,6 +199,9 @@ export function PackageDetailPanel() {
     <div className="detail-panel">
       <DetailHeader
         name={selectedPackageId}
+        // In solution scope the Projects section's own title carries the strip,
+        // beside the rows the operation is changing (#104).
+        progress={isMultiProject ? undefined : <OperationProgressStrip className="detail-header__progress" />}
         actions={isInstalled ? (
           <>
             <button
@@ -357,7 +374,10 @@ export function PackageDetailPanel() {
       {/* ── Section 3: Projects (solution/folder scope only) ── */}
       {metadataSettled && isMultiProject && scope && (scope.kind === 'solution' || scope.kind === 'folder') && (
         <div className="detail-section">
-          <div className="detail-section__title">Projects</div>
+          <div className="detail-section__title detail-section__title--strip">
+            Projects
+            <OperationProgressStrip countProjects />
+          </div>
           <ProjectListSection
             packageId={selectedPackageId}
             projects={scope.projects}

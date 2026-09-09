@@ -43,12 +43,11 @@ export function ProjectListSection({ packageId, projects, installed, allVersions
     }))
     .filter((row): row is { project: ProjectInfo; entry: ImplicitPackage } => row.entry !== undefined);
 
-  if (projectsWithPkg.length === 0 && transitiveRows.length === 0) {
-    return <div className="empty-state">Not installed in any project</div>;
-  }
+  const noRows = projectsWithPkg.length === 0 && transitiveRows.length === 0;
 
   return (
     <div className="project-list" aria-label="Projects with this package">
+      {noRows && <div className="empty-state">Not installed in any project</div>}
       {projectsWithPkg.map((proj) => (
         <ProjectRow
           key={proj.absolutePath}
@@ -106,6 +105,7 @@ function TransitiveProjectRow({
   const error = errorKey ? state.detail.projectErrors[errorKey] : undefined;
 
   const handlePin = () => {
+    dispatch({ type: 'START_PROJECT_OPERATION', operation: 'install', total: 1 });
     dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
     dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
     send({ type: 'INSTALL_PACKAGE', projectPath: p, packageId, version: resolvedVersion });
@@ -189,6 +189,7 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
   const handleApply = async () => {
     if (updatesBlocked) return;
     if (installedVersion && compareSemVer(localVersion, installedVersion) === 0) return;
+    dispatch({ type: 'START_PROJECT_OPERATION', operation: 'install', total: 1 });
     dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
     dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
     send({ type: 'INSTALL_PACKAGE', projectPath: p, packageId, version: localVersion });
@@ -212,6 +213,7 @@ function ProjectRow({ packageId, project, installed, allVersions, updatesBlocked
   };
 
   const handleRemove = () => {
+    dispatch({ type: 'START_PROJECT_OPERATION', operation: 'remove', total: 1 });
     dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
     dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
     send({ type: 'REMOVE_PACKAGE', projectPath: p, packageId });

@@ -112,6 +112,8 @@ export interface AppState {
     jobs: BatchUpdateJob[];
     activeJobId: string | null;
     versionsByPackageId: Record<string, string[]>;
+    /** The same feed flags the details panel keeps, but per package — the family target selector spans several (#92). */
+    flagsByPackageId: Record<string, Record<string, { vulnerable?: boolean; deprecation?: string }>>;
   };
   detail: {
     selectedPackageId: string | null;
@@ -157,7 +159,7 @@ const initialState: AppState = {
   sources: { configChain: [], allSources: [], snapshot: null },
   log: { entries: [] },
   agents: { bundledVersion: '?', detected: [], installs: [] },
-  updates: { jobs: [], activeJobId: null, versionsByPackageId: {} },
+  updates: { jobs: [], activeJobId: null, versionsByPackageId: {}, flagsByPackageId: {} },
   detail: {
     selectedPackageId: null,
     metadata: null,
@@ -235,7 +237,7 @@ function reduceAppState(state: AppState, action: Action): AppState {
           installed,
           enrichProgress: unique > 0 ? { done: 0, total: unique } : null,
         },
-        updates: { ...state.updates, versionsByPackageId: {} },
+        updates: { ...state.updates, versionsByPackageId: {}, flagsByPackageId: {} },
       };
     }
 
@@ -346,7 +348,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           prerelease: msg.includePrerelease,
           vulnHint: null,
         },
-        updates: { ...state.updates, versionsByPackageId: {} },
+        updates: { ...state.updates, versionsByPackageId: {}, flagsByPackageId: {} },
         workspaceActivity: null,
         traceRecording: !!msg.traceRecording,
         agents: {
@@ -507,6 +509,10 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           versionsByPackageId: {
             ...state.updates.versionsByPackageId,
             [key]: msg.versions,
+          },
+          flagsByPackageId: {
+            ...state.updates.flagsByPackageId,
+            [key]: msg.versionFlags ?? {},
           },
         },
         detail: !selected || matchesDetail

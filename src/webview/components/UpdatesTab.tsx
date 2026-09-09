@@ -27,6 +27,7 @@ import { PackagesSkeleton } from './InstalledList';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from '../../blockedPackages';
 import type { BatchUpdateItem, BatchUpdateJob, BatchUpdateItemView } from '../../types';
 import { searchableConfigFiles } from '../../searchConfigFiles';
+import { mergeFamilyVersionFlags } from '../utils/familyVersionFlags';
 
 type Selection =
   | { type: 'all' }
@@ -156,7 +157,7 @@ function GroupRow({
 export function UpdatesTab() {
   const { state, send } = useNugetManager();
   const { installed, prerelease, enrichProgress, isLoadingPackages, blockedPackages } = state.packages;
-  const { jobs, versionsByPackageId = {} } = state.updates;
+  const { jobs, versionsByPackageId = {}, flagsByPackageId = {} } = state.updates;
   const roslynCap = state.roslynCap;
   const configFiles = searchableConfigFiles(state.sources.configChain);
   const batchBusy = jobs.some((j) => !j.finishedAt);
@@ -213,6 +214,18 @@ export function UpdatesTab() {
       send({ type: 'GET_ALL_VERSIONS', packageId, configFiles, prerelease });
     }
   }, [selectedFamily, familyIds.join('|'), prerelease, configFiles.join(','), send]);
+
+  // One target version, applied to every member — so a version any member is
+  // flagged for is flagged here, and the tooltip names which ones (#92).
+  const familyVersionFlags = useMemo(
+    () => (selectedFamily
+      ? mergeFamilyVersionFlags(selectedFamily.members.map((m) => ({
+        packageId: m.packageId,
+        flags: flagsByPackageId[m.packageId.toLowerCase()],
+      })))
+      : {}),
+    [selectedFamily, flagsByPackageId],
+  );
 
   const familyVersions = useMemo(() => {
     if (!selectedFamily) return [];
@@ -459,6 +472,7 @@ export function UpdatesTab() {
                       selected={familyTarget}
                       label="Target version for family"
                       onChange={setFamilyTarget}
+                      versionFlags={familyVersionFlags}
                     />
                   )}
                 </DetailHeader>

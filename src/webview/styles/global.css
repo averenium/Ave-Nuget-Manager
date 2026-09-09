@@ -187,7 +187,6 @@ html { height: 100vh; }
   font-family: var(--font-family); font-size: var(--font-size);
   outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
-.pkg-toolbar__search:focus { outline: 1px solid var(--color-focus-border); border-color: var(--color-btn-bg); }
 .pkg-toolbar__refresh {
   flex-shrink: 0;
   width: 24px; height: 24px; padding: 0;
@@ -435,7 +434,6 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
  * instead — HC-only, since a 1px vs 2px outline of the same near-invisible
  * `transparent` isn't visually different in a normal theme.
  */
-.source-filter__btn:hover { background: var(--color-list-hover); border-color: var(--color-btn-bg); outline-width: 2px; outline-offset: -2px; }
 .source-filter__dropdown {
   position: absolute; right: 0; left: auto; top: calc(100% + 2px); z-index: 100;
   min-width: max(100%, 180px);
@@ -514,15 +512,21 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   min-width: 0;
   contain: inline-size;
 }
+/* A row rather than one text run, so the arrow keeps its place while the
+   version beside it truncates: `1.18.0-preview.3.24172.9` is a real length, and
+   an arrow appended as text would be the first thing the ellipsis swallowed —
+   exactly when the control most needs to look like a dropdown. Same shape as
+   .cmd-main/.cmd-detail in the Log tab. */
 .version-select__btn {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   height: 24px;
   padding: 0 var(--spacing-sm);
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
   background: var(--color-input-bg);
@@ -536,7 +540,6 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   outline-offset: -1px;
 }
 /* Same reasoning as .source-filter__btn:hover above (#68 follow-up). */
-.version-select__btn:hover { background: var(--color-list-hover); border-color: var(--color-btn-bg); outline-width: 2px; outline-offset: -2px; }
 .version-select__btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .version-select__dropdown {
   position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 100;
@@ -561,7 +564,12 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   color: var(--color-list-active-fg);
 }
 /* Feed-reported vulnerable/deprecated mark on a version, before it's even chosen (#86). */
-.version-select__warn { color: var(--color-warning); }
+.version-select__value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The `▾` SourceFilterDropdown already uses, at the button's own size and
+   colour rather than a dimmed variant, so the two dropdown-shaped controls in
+   the panel read as the same kind of thing. */
+.version-select__arrow { flex-shrink: 0; }
+.version-select__warn { color: var(--color-warning); flex-shrink: 0; }
 
 /* ── Global select style — VSCode-themed, same height as btn--icon ───────────── */
 select {
@@ -580,8 +588,62 @@ select {
   outline-offset: -1px;
   cursor: pointer;
 }
-select:focus { border-color: var(--color-btn-bg); }
 select:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ── Field states, in one place (#99) ─────────────────────────────────────────
+   Every field-shaped control already shared a resting style, but the states had
+   drifted: the text inputs answered focus and ignored the pointer, the dropdown
+   buttons did the opposite, .sources-input did neither, and the native select
+   had a weaker focus than the inputs beside it. Keeping the states in one rule
+   rather than six is what stops that happening again.
+
+   Hover thickens the inset outline (invisible outside High Contrast, the only
+   hover feedback inside it — #68) and pulls the border to the accent colour.
+   Focus swaps the outline for the focus colour. Buttons additionally lift their
+   background, which text fields deliberately do not: a field's background is
+   the surface you are about to type on, not a target that lights up. */
+.pkg-toolbar__search:hover,
+.popup__search:hover,
+.sources-input:hover,
+select:hover,
+.version-select__btn:hover,
+.source-filter__btn:hover,
+.log-trace-btn:hover {
+  border-color: var(--color-btn-bg);
+  outline-width: 2px;
+  outline-offset: -2px;
+}
+.version-select__btn:hover,
+.source-filter__btn:hover,
+.log-trace-btn:hover,
+.version-select__btn[aria-expanded='true'],
+.source-filter__btn[aria-expanded='true'] {
+  background: var(--color-list-hover);
+}
+/* While its list is open the control is neither hovered nor focused — the
+   pointer has moved on to the options — so it would otherwise sit there
+   looking untouched with a dropdown hanging off it. `aria-expanded` is already
+   on both buttons for screen readers; this makes it visible too. */
+.version-select__btn[aria-expanded='true'],
+.source-filter__btn[aria-expanded='true'] {
+  border-color: var(--color-btn-bg);
+  outline-width: 2px;
+  outline-offset: -2px;
+}
+/* `:focus-visible` for the buttons so a click does not leave a ring behind;
+   the inputs keep `:focus`, since a focused text field is a keyboard target
+   however it was reached. */
+.pkg-toolbar__search:focus,
+.popup__search:focus,
+.sources-input:focus,
+select:focus,
+.version-select__btn:focus-visible,
+.source-filter__btn:focus-visible,
+.log-trace-btn:focus-visible {
+  outline: 1px solid var(--color-focus-border);
+  outline-offset: -1px;
+  border-color: var(--color-btn-bg);
+}
 
 /* ── Buttons ────────────────────────────────────────────────────────────────── */
 .btn {
@@ -1053,7 +1115,6 @@ a.badge:hover { text-decoration: underline; }
 /* Same reasoning as .source-filter__btn:hover above (#68 follow-up).
    `color` left unchanged — see .pkg-toolbar__refresh:hover's comment on why
    recolouring text/icons to the accent colour is unsafe in HC themes. */
-.log-trace-btn:hover { background: var(--color-list-hover); border-color: var(--color-btn-bg); outline-width: 2px; outline-offset: -2px; }
 .log-trace-btn--recording { border-color: var(--color-error); color: var(--color-error); }
 .log-tab__list-wrap { flex: 1; min-height: 0; position: relative; }
 .log-tab__list { height: 100%; overflow-y: auto; padding: 0 var(--spacing-sm) var(--spacing-xs); }
@@ -1256,7 +1317,6 @@ a.badge:hover { text-decoration: underline; }
   font-family: var(--font-family); font-size: 12px;
   outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
-.popup__search:focus { outline: 1px solid var(--color-focus-border); border-color: var(--color-btn-bg); }
 .popup__bulk { display: flex; gap: var(--spacing-xs); }
 .popup__bulk-btn {
   background: none; border: 1px solid var(--color-border); border-radius: var(--radius);

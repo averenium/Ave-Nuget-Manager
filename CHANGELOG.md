@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Every version picker shows a dropdown arrow, and every input and dropdown answers hover, focus and being open the same way — the states had drifted apart control by control, leaving some fields with no focus at all and every dropdown looking untouched while its list was open (#99)
 - **Updates**: the family target selector marks vulnerable and deprecated versions like the other version pickers do, and names the family members each mark came from — a version is often flagged for only some of them (#92)
 - Package search no longer launches `dotnet` for a config file that cannot answer — one declaring no package sources, or one whose folder sources plainly do not hold the package. On a typical Windows install that was two of the three processes spent on every package of every refresh (#91)
 - **Install** has its own icon instead of the downgrade arrow, and the action buttons now answer the pointer — an inset ring on hover in every theme, a thicker outline in High Contrast (#88)

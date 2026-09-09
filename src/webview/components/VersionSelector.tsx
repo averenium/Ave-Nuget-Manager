@@ -66,8 +66,9 @@ export function VersionSelect({
         title={selectedWarning ? `${selected} — ${selectedWarning}` : (selected || label)}
         onClick={() => setOpen((v) => !v)}
       >
-        {selected || '…'}
-        {selectedWarning && <span className="version-select__warn" aria-hidden="true"> ⚠</span>}
+        <span className="version-select__value">{selected || '…'}</span>
+        {selectedWarning && <span className="version-select__warn" aria-hidden="true">⚠</span>}
+        <span className="version-select__arrow" aria-hidden="true">▾</span>
       </button>
       {open && !empty && (
         <div className="version-select__dropdown" role="listbox" aria-label={label}>

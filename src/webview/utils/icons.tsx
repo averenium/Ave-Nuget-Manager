@@ -97,6 +97,22 @@ export function IconTrash() {
 }
 
 /**
+ * Install — an arrow into a tray, not the bare `↓` this button used to show
+ * (#88). That glyph is the panel's own downgrade mark, so a package that was
+ * never installed appeared to offer a downgrade. The tray is what separates
+ * "put this on disk" from "move to a lower version"; sizes match IconTrash,
+ * its neighbour in the same 24×24 slot.
+ */
+export function IconInstall() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path fill="currentColor" d="M8 9.5 4 4.5h2.4V1h3.2v3.5H12Z" />
+      <path fill="currentColor" d="M3 10v4h10v-4h-1.5v2.5h-7V10H3Z" />
+    </svg>
+  );
+}
+
+/**
  * Fixed-viewBox replacements for the `↑`/`⊘`/`⚠`/`∅` row marks (#60) — plain
  * Unicode glyphs render each symbol at a different natural size and baseline
  * position depending on the platform font, which no amount of CSS centering

@@ -13,7 +13,7 @@ import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages
 import { compareSemVer } from '../../semver';
 import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { versionTone } from '../utils/versionTone';
-import { IconTrash } from '../utils/icons';
+import { IconInstall, IconTrash } from '../utils/icons';
 import { buildPackageProblems } from '../utils/packageProblems';
 import type { VulnerabilityFinding } from '../../types';
 
@@ -216,7 +216,7 @@ export function PackageDetailPanel() {
             disabled={isLoading}
             title="Install selected version"
             aria-label="Install"
-          >↓</button>
+          ><IconInstall /></button>
         )}
       >
         <VersionSelector

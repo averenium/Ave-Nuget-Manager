@@ -120,6 +120,7 @@ import {
 import { encryptNuGetConfigPassword, supportsEncryptedNuGetPasswords } from './nugetConfigDpapi';
 import { ensureNuGetConfigFile, ensureUserNuGetConfigFile, resolveUserNuGetConfigPath, writeSourceSecrets } from './nugetConfigSecretTarget';
 import { planEffectiveAuditToggle } from './auditSourceToggle';
+import { searchableConfigFiles } from './searchConfigFiles';
 
 function cliFailure(
   projectPath: string,
@@ -841,7 +842,7 @@ export class WebviewMessageBroker {
     const startDir = this._scopeStartDir(scope) ?? '';
 
     const configChain = await this.configResolver.resolve(startDir);
-    const configFiles = configChain.map((c) => c.filePath);
+    const configFiles = searchableConfigFiles(configChain);
 
     try {
       const packages = await this.backend.searchPackages(
@@ -2230,7 +2231,7 @@ export class WebviewMessageBroker {
 
     const startDir = this._scopeStartDir(scope) ?? '';
     const configChain = await this.configResolver.resolve(startDir);
-    const configFiles = configChain.map((c) => c.filePath);
+    const configFiles = searchableConfigFiles(configChain);
     if (configFiles.length === 0 || signal.aborted) return;
 
     const uniqueIds = [...new Set(installed.map((p) => p.id))];

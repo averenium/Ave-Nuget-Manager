@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
+import { searchableConfigFiles } from '../../searchConfigFiles';
 
 /** Tooltip text for a version the feed flags — vulnerable and/or deprecated (#86); undefined when neither applies. */
 function versionWarningTitle(flags: { vulnerable?: boolean; deprecation?: string } | undefined): string | undefined {
@@ -113,7 +114,7 @@ export function VersionSelector({
   restoredProjectPath,
 }: Props) {
   const { send, state } = useNugetManager();
-  const configFiles = state.sources.configChain.map((c) => c.filePath);
+  const configFiles = searchableConfigFiles(state.sources.configChain);
   const { prerelease } = state.packages;
   const loadedFor = useRef<string>('');
 

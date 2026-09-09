@@ -1,3 +1,6 @@
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 import { CliBackend } from '../../backend/cliBackend';
 import type { CliRunner } from '../../cliRunner';
 import type { CliCommand, CliResult } from '../../types';
@@ -183,5 +186,64 @@ describe('CliBackend.getAllVersions', () => {
     const backend = new CliBackend(runner);
     const { versionFlags } = await backend.getAllVersions('Dapper', ['/p/nuget.config']);
     expect(versionFlags).toEqual({});
+  });
+});
+
+describe('CliBackend and folder-only config files (#91)', () => {
+  let dir = '';
+  let configFile = '';
+
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ave-nuget-local-source-'));
+    // A folder source stores what it serves as one directory per package id —
+    // the same layout as the real Microsoft Visual Studio Offline Packages folder.
+    await fs.mkdir(path.join(dir, 'packages', 'coverlet.collector', '6.0.0'), { recursive: true });
+    configFile = path.join(dir, 'nuget.config');
+    await fs.writeFile(
+      configFile,
+      '<configuration><packageSources><add key="offline" value="./packages" /></packageSources></configuration>',
+      'utf8',
+    );
+  });
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('does not launch the CLI for a package the folder plainly does not hold', async () => {
+    const runner = fakeRunner(() => ok(SEARCH_JSON));
+    const backend = new CliBackend(runner);
+
+    const { versions } = await backend.getAllVersions('Azure.Core', [configFile]);
+
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(versions).toEqual([]);
+  });
+
+  it('still asks for a package the folder does hold, matching the id case-insensitively', async () => {
+    const runner = fakeRunner(() => ok(SEARCH_JSON));
+    const backend = new CliBackend(runner);
+
+    await backend.getAllVersions('Coverlet.Collector', [configFile]);
+
+    expect(runner.run).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks anyway when the same config also enables a feed, since only folders can be ruled out', async () => {
+    const withFeed = path.join(dir, 'with-feed.config');
+    await fs.writeFile(
+      withFeed,
+      '<configuration><packageSources>'
+      + '<add key="offline" value="./packages" />'
+      + '<add key="nuget.org" value="https://api.nuget.org/v3/index.json" />'
+      + '</packageSources></configuration>',
+      'utf8',
+    );
+    const runner = fakeRunner(() => ok(SEARCH_JSON));
+    const backend = new CliBackend(runner);
+
+    await backend.getAllVersions('Azure.Core', [withFeed]);
+
+    expect(runner.run).toHaveBeenCalledTimes(1);
   });
 });

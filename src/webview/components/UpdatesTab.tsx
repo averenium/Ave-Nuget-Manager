@@ -26,6 +26,7 @@ import { BlockedPackageMenu } from './BlockedPackageMenu';
 import { PackagesSkeleton } from './InstalledList';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from '../../blockedPackages';
 import type { BatchUpdateItem, BatchUpdateJob, BatchUpdateItemView } from '../../types';
+import { searchableConfigFiles } from '../../searchConfigFiles';
 
 type Selection =
   | { type: 'all' }
@@ -157,7 +158,7 @@ export function UpdatesTab() {
   const { installed, prerelease, enrichProgress, isLoadingPackages, blockedPackages } = state.packages;
   const { jobs, versionsByPackageId = {} } = state.updates;
   const roslynCap = state.roslynCap;
-  const configFiles = state.sources.configChain.map((c) => c.filePath);
+  const configFiles = searchableConfigFiles(state.sources.configChain);
   const batchBusy = jobs.some((j) => !j.finishedAt);
   const [menu, setMenu] = useState<{ packageId: string; blocked: boolean; x: number; y: number } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);

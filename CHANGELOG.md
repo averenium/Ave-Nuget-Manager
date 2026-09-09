@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Install** has its own icon instead of the downgrade arrow, and the action buttons now answer the pointer — an inset ring on hover in every theme, a thicker outline in High Contrast (#88)
+- The development-only hot-reload watcher no longer runs in an installed extension, where it could fail activation on Linux by exhausting the inotify watch limit (#95)
+
 ## 0.7.0
 
 ### Added

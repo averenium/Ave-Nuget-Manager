@@ -15,6 +15,7 @@ import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { versionTone } from '../utils/versionTone';
 import { IconInstall, IconTrash } from '../utils/icons';
 import { buildPackageProblems } from '../utils/packageProblems';
+import { resolveVersionSpread } from '../../packageResolvedVersions';
 import type { VulnerabilityFinding } from '../../types';
 
 export function PackageDetailPanel() {
@@ -84,8 +85,10 @@ export function PackageDetailPanel() {
   // project.assets.json are as present as a direct one's. Deliberately not
   // folded into `installedEntries`, which decides what the action buttons and
   // the Roslyn cap do and has to stay direct-only.
-  const restoredEntry = installedEntries[0]
-    ?? state.packages.implicit.find((p) => packageIdsEqual(p.id, selectedPackageId));
+  const implicitEntries = state.packages.implicit.filter((p) => packageIdsEqual(p.id, selectedPackageId));
+  const spread = resolveVersionSpread(installedEntries, implicitEntries);
+  const restoredEntry = [...installedEntries, ...implicitEntries]
+    .find((p) => p.resolvedVersion === spread?.primary);
   // Only meaningful once installed — Install (not yet installed) has no
   // "from" version to compare against, so it keeps its own glyph (#55).
   const updateTone = isInstalled ? versionTone(installedFrom, effectiveVersion) : undefined;
@@ -267,6 +270,19 @@ export function PackageDetailPanel() {
                   </div>
                 )}
               </>
+            )}
+
+            {/* Everything above describes one version, and the solution may be
+                holding several. Naming the rest is what keeps the panel from
+                quietly speaking for a project it is not describing (#90); which
+                project is on what is the Projects section's job, just below. */}
+            {spread && spread.others.length > 0 && (
+              <div className="pkg-info__elsewhere">
+                showing {spread.primary} · also{' '}
+                {spread.others
+                  .map((o) => `${o.version} in ${o.projectCount} project${o.projectCount === 1 ? '' : 's'}`)
+                  .join(', ')}
+              </div>
             )}
 
             {problems.length > 0 && (

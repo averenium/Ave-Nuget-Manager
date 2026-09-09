@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
-import type { InstalledPackage, ProjectInfo } from '../../types';
+import type { ImplicitPackage, InstalledPackage, ProjectInfo } from '../../types';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
 import { VersionSelect } from './VersionSelector';
@@ -8,7 +8,7 @@ import { compareSemVer } from '../../semver';
 import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { RoslynCapPopup } from './RoslynCapPopup';
 import { versionTone } from '../utils/versionTone';
-import { IconTrash } from '../utils/icons';
+import { IconInstall, IconTrash } from '../utils/icons';
 
 interface Props {
   packageId: string;
@@ -26,7 +26,22 @@ export function ProjectListSection({ packageId, projects, installed, allVersions
     installed.some((i) => packageIdsEqual(i.id, packageId) && pathsEqual(i.projectPath, p.absolutePath)),
   );
 
-  if (projectsWithPkg.length === 0) {
+  // The rest of the answer to "which of my projects has this?" (#90): a project
+  // can reach the package through the restore graph without referencing it, and
+  // saying "not installed in any project" there is true but useless. The same
+  // package can be direct in one project and transitive in another, so both
+  // kinds of row are listed together rather than one replacing the other.
+  const transitiveRows = projects
+    .filter((p) => !projectsWithPkg.includes(p))
+    .map((project) => ({
+      project,
+      entry: state.packages.implicit.find(
+        (i) => packageIdsEqual(i.id, packageId) && pathsEqual(i.projectPath, project.absolutePath),
+      ),
+    }))
+    .filter((row): row is { project: ProjectInfo; entry: ImplicitPackage } => row.entry !== undefined);
+
+  if (projectsWithPkg.length === 0 && transitiveRows.length === 0) {
     return <div className="empty-state">Not installed in any project</div>;
   }
 
@@ -45,6 +60,75 @@ export function ProjectListSection({ packageId, projects, installed, allVersions
           send={send}
         />
       ))}
+      {transitiveRows.map(({ project, entry }) => (
+        <TransitiveProjectRow
+          key={project.absolutePath}
+          packageId={packageId}
+          project={project}
+          resolvedVersion={entry.resolvedVersion}
+          state={state}
+          dispatch={dispatch}
+          send={send}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface TransitiveRowProps {
+  packageId: string;
+  project: ProjectInfo;
+  resolvedVersion: string;
+  state: ReturnType<typeof useNugetManager>['state'];
+  dispatch: ReturnType<typeof useNugetManager>['dispatch'];
+  send: ReturnType<typeof useNugetManager>['send'];
+}
+
+/**
+ * A project that only reaches the package through restore. It has no
+ * `PackageReference` to change, so this is a different row rather than the
+ * installed one with its controls disabled: the version is a fact, not a
+ * choice, and the single action makes the reference explicit at the version
+ * already being restored (#90).
+ *
+ * Pinning cannot change what restore resolves, so it needs neither the
+ * Roslyn-cap confirmation nor the blocked-updates gate — both exist to guard a
+ * version change, and this is not one.
+ */
+function TransitiveProjectRow({
+  packageId, project, resolvedVersion, state, dispatch, send,
+}: TransitiveRowProps) {
+  const p = project.absolutePath;
+  const isLoading = [...state.detail.projectLoadingSet].some((k) => pathsEqual(k, p));
+  const errorKey = Object.keys(state.detail.projectErrors).find((k) => pathsEqual(k, p));
+  const error = errorKey ? state.detail.projectErrors[errorKey] : undefined;
+
+  const handlePin = () => {
+    dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
+    dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
+    send({ type: 'INSTALL_PACKAGE', projectPath: p, packageId, version: resolvedVersion });
+  };
+
+  return (
+    <div className="project-row">
+      <span className="project-row__name" title={p}>{project.name}</span>
+      <span className="project-row__transitive">transitive</span>
+      <span className="project-row__resolved">{resolvedVersion}</span>
+
+      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+        <button
+          className="btn btn--icon btn--primary"
+          onClick={handlePin}
+          disabled={isLoading}
+          title={`Reference ${packageId} ${resolvedVersion} directly in ${project.name}`}
+          aria-label={`Add a direct reference in ${project.name}`}
+        >{isLoading ? '…' : <IconInstall />}</button>
+        {/* Holds the slot the installed rows spend on Remove, so the version
+            column lands at the same x whichever kind of row it belongs to. */}
+        <span className="project-row__action-gap" aria-hidden="true" />
+      </div>
+
+      {error && <div className="project-row__error" role="alert">{error}</div>}
     </div>
   );
 }

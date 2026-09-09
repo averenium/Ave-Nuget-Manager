@@ -130,17 +130,25 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
   const webviewDir = path.join(context.extensionPath, 'dist', 'webview');
   const bundleJs = path.join(webviewDir, 'bundle.js');
   log.info(`webview bundle ${fs.existsSync(bundleJs) ? 'ok' : 'MISSING'}: ${bundleJs}`);
+  // Development only. The watcher exists so `vite build --watch` rewriting the
+  // bundle reloads the panel without restarting the host; in an installed
+  // extension the bundle cannot change while the host runs, so the watch is
+  // pure cost — and on Linux it spends an inotify handle that a busy machine
+  // may not have, which surfaced as an activation error (#95).
   let bundleWatcher: fs.FSWatcher | undefined;
-  try {
-    fs.mkdirSync(webviewDir, { recursive: true });
-    bundleWatcher = fs.watch(webviewDir, (_event, filename) => {
-      if (!filename) return;
-      const name = filename.toString();
-      if (name === 'bundle.js' || name === 'bundle.css') scheduleReload();
-    });
-  } catch (err) {
-    log.error('webview bundle watcher failed', err);
-    bundleWatcher = undefined;
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    try {
+      fs.mkdirSync(webviewDir, { recursive: true });
+      bundleWatcher = fs.watch(webviewDir, (_event, filename) => {
+        if (!filename) return;
+        const name = filename.toString();
+        if (name === 'bundle.js' || name === 'bundle.css') scheduleReload();
+      });
+    } catch (err) {
+      // Losing hot reload costs a manual reload, nothing else — not an error.
+      log.info(`webview bundle watcher unavailable, hot reload off: ${formatUnknownError(err)}`);
+      bundleWatcher = undefined;
+    }
   }
 
   const registrar = new CommandRegistrar(viewProvider, broker, solutionParser);

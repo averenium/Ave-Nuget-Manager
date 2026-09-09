@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Package details**: a transitive package now lists the projects that pull it in, each with a one-click direct reference at the version already restored there; when those versions differ across projects, the panel names the one it is describing (#90)
+
 ### Fixed
 
 - **Install** has its own icon instead of the downgrade arrow, and the action buttons now answer the pointer — an inset ring on hover in every theme, a thicker outline in High Contrast (#88)

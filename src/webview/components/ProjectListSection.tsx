@@ -26,13 +26,15 @@ export function ProjectListSection({ packageId, projects, installed, allVersions
     installed.some((i) => packageIdsEqual(i.id, packageId) && pathsEqual(i.projectPath, p.absolutePath)),
   );
 
-  // The rest of the answer to "which of my projects has this?" (#90): a project
-  // can reach the package through the restore graph without referencing it, and
-  // saying "not installed in any project" there is true but useless. The same
-  // package can be direct in one project and transitive in another, so both
-  // kinds of row are listed together rather than one replacing the other.
-  const transitiveRows = projects
-    .filter((p) => !projectsWithPkg.includes(p))
+  // The rest of the answer to "which of my projects has this?" (#90) — but only
+  // for a package nothing references directly. Once some project owns it, this
+  // section is about where it is declared, and every project that merely
+  // inherits it is noise: `Microsoft.EntityFrameworkCore` is transitive in
+  // every project that references any EF package, and offering to pin it there
+  // buries the one row that can actually be changed. A package installed
+  // nowhere is the opposite case — the transitive rows are the only answer
+  // there is, and pinning one is how it becomes managed at all.
+  const transitiveRows = (projectsWithPkg.length > 0 ? [] : projects)
     .map((project) => ({
       project,
       entry: state.packages.implicit.find(

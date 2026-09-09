@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Packages** and **Log**: Ctrl+F (Cmd+F) focuses that tab's search box and selects what is already in it — a sidebar view cannot use VS Code's own find widget, which is why these tabs carry a search box at all (#93)
 - **Package details**: a transitive package now lists the projects that pull it in, each with a one-click direct reference at the version already restored there; when those versions differ across projects, the panel names the one it is describing (#90)
 
 ### Fixed

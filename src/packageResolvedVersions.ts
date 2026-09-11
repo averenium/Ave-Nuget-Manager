@@ -10,16 +10,25 @@
 
 import { compareSemVer } from './semver';
 
-/** Only the field this decision needs, so both InstalledPackage and ImplicitPackage fit. */
+/** Only the fields this decision needs, so both InstalledPackage and ImplicitPackage fit. */
 export interface RestoredEntry {
   resolvedVersion: string;
+  projectPath?: string;
+  /** TFM the entry was reported under, where the CLI gave one (#82). */
+  framework?: string;
 }
 
 export interface ResolvedVersionSpread {
   /** The version the panel's metadata describes. */
   primary: string;
   /** Every other resolved version in the solution, newest first. */
-  others: Array<{ version: string; projectCount: number }>;
+  others: Array<{ version: string; projectCount: number; frameworks?: string[] }>;
+  /**
+   * Every entry belongs to one project, so the spread is between its target
+   * frameworks rather than between projects (#82) — and counting projects would
+   * describe a second project that is not there.
+   */
+  withinOneProject?: boolean;
 }
 
 function highest(entries: readonly RestoredEntry[]): string | undefined {
@@ -41,15 +50,29 @@ export function resolveVersionSpread(
   const primary = highest(direct.length > 0 ? direct : transitive);
   if (primary === undefined) return undefined;
 
+  const all = [...direct, ...transitive];
+  const paths = new Set(all.map((e) => (e.projectPath ?? '').toLowerCase()));
+  const withinOneProject = paths.size === 1
+    && !paths.has('')
+    && all.some((e) => !!e.framework);
+
   const counts = new Map<string, number>();
-  for (const entry of [...direct, ...transitive]) {
+  const frameworks = new Map<string, string[]>();
+  for (const entry of all) {
     if (entry.resolvedVersion === primary) continue;
     counts.set(entry.resolvedVersion, (counts.get(entry.resolvedVersion) ?? 0) + 1);
+    if (!entry.framework) continue;
+    const list = frameworks.get(entry.resolvedVersion) ?? [];
+    if (!list.includes(entry.framework)) list.push(entry.framework);
+    frameworks.set(entry.resolvedVersion, list);
   }
 
   const others = [...counts.entries()]
-    .map(([version, projectCount]) => ({ version, projectCount }))
+    .map(([version, projectCount]) => {
+      const tfms = withinOneProject ? frameworks.get(version) : undefined;
+      return tfms?.length ? { version, projectCount, frameworks: tfms } : { version, projectCount };
+    })
     .sort((a, b) => compareSemVer(b.version, a.version));
 
-  return { primary, others };
+  return withinOneProject ? { primary, others, withinOneProject } : { primary, others };
 }

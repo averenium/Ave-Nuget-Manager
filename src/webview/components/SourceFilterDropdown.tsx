@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useNugetManager } from '../context/NugetManagerContext';
 import type { PackageSource } from '../../types';
 
 interface Props {

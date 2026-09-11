@@ -29,8 +29,10 @@ describe('parseTargetFramework', () => {
   });
 
   it('files netstandard and netcoreapp into their own families', () => {
-    expect(parseTargetFramework('netstandard2.1')).toMatchObject({ family: 2, version: [2, 1] });
-    expect(parseTargetFramework('netcoreapp3.1')).toMatchObject({ family: 1, version: [3, 1] });
+    // netstandard ranks above netcoreapp: it is still what a library ships to
+    // reach everything, while netcoreapp ended at 3.1 and nothing targets it.
+    expect(parseTargetFramework('netstandard2.1')).toMatchObject({ family: 1, version: [2, 1] });
+    expect(parseTargetFramework('netcoreapp3.1')).toMatchObject({ family: 2, version: [3, 1] });
   });
 
   it('puts anything it does not recognise last, without inventing a version', () => {
@@ -68,7 +70,7 @@ describe('sortTargetFrameworksDesc', () => {
     expect(sortTargetFrameworksDesc([
       'net462', 'netstandard2.0', 'net8.0', 'netcoreapp3.1', 'net10.0', 'uap10.0', 'net48',
     ])).toEqual([
-      'net10.0', 'net8.0', 'netcoreapp3.1', 'netstandard2.0', 'net48', 'net462', 'uap10.0',
+      'net10.0', 'net8.0', 'netstandard2.0', 'netcoreapp3.1', 'net48', 'net462', 'uap10.0',
     ]);
   });
 

@@ -7,7 +7,7 @@ import { LogTab } from './components/LogTab';
 import { AgentsTab } from './components/AgentsTab';
 import * as pathUtils from './utils/pathUtils';
 import { snapshotNeedsSourcesWarn } from '../vulnerabilityScanPolicy';
-import type { SourcesSnapshot } from '../types';
+import type { SourcesSnapshot, WorkspaceScope } from '../types';
 
 const TABS = [
   { id: 'packages', label: 'Packages' },
@@ -17,7 +17,7 @@ const TABS = [
   { id: 'agents',   label: 'Agents'  },
 ] as const;
 
-function scopeLabel(scope: import('../../types').WorkspaceScope | null): string {
+function scopeLabel(scope: WorkspaceScope | null): string {
   if (!scope) return '';
   if (scope.kind === 'solution') return pathUtils.fileName(scope.solutionPath);
   if (scope.kind === 'folder') return pathUtils.fileName(scope.folderPath);
@@ -25,7 +25,7 @@ function scopeLabel(scope: import('../../types').WorkspaceScope | null): string 
   return '';
 }
 
-function scopeIcon(scope: import('../../types').WorkspaceScope | null): string {
+function scopeIcon(scope: WorkspaceScope | null): string {
   if (scope?.kind === 'solution') return '📦';
   if (scope?.kind === 'folder') return '🗂️';
   return '📄';

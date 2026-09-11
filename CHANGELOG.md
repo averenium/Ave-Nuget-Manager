@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Update no longer collapses a package pinned per target framework onto one version: each framework gets its own row, target, write and install (#82)
+
 ## 0.7.5
 
 ### Added

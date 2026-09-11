@@ -66,6 +66,16 @@ Marks come from `dotnet list package --vulnerable` and follow the restore graph,
 
 ![Vulnerability details](https://raw.githubusercontent.com/averenium/Ave-Nuget-Manager/main/media/vulnerabilities.png)
 
+### Multi-targeting — a version per framework, not one for all
+
+A project that targets several frameworks can pin a package to a different version in each — `net9.0` held on 9.x while `net10.0` moves through 10.x — whether the condition sits on the `<ItemGroup>` or on the `<PackageReference>` itself. Plain `dotnet add package` cannot respect that: with no `--framework` the CLI rewrites **every** conditional group to the one version, so the `net9.0` pin silently lands on a 10.x package and neither the restore nor the diff says a word.
+
+![Per-framework versions](https://raw.githubusercontent.com/averenium/Ave-Nuget-Manager/main/media/multi-tfm.png)
+
+Here each framework is its own row, with its own current version, its own picker and its own update target computed inside its own major line — the `net9.0` row proposes 9.x even when 10.x is out. Applying one writes that conditional group and nothing else. The picker still lists every version, so crossing a line stays possible; it just asks first and names what it would cross. A framework the package is missing from gets a row too, offering to add it there alone.
+
+If the project holds one **unconditional** reference and you want a single framework moved, that is a split rather than an update — the reference is rebuilt as one conditional group per framework, the one you picked at the new version and the rest exactly where they were.
+
 ### Sources — the whole `nuget.config` chain
 
 Toggle sources on and off, edit credentials, API keys and HTTP flags, and manage `packageSourceMapping` patterns per source (comma-separated, e.g. `Example.*, Internal.*`) — across the machine, user and repository configs at once, without opening any of them.
@@ -124,7 +134,7 @@ The gear on the **NuGet** title bar (or **NuGet: Open Settings**) opens them.
 ## Requirements and limits
 
 - The **.NET SDK** must be on `PATH`; VS Code **1.85** or newer.
-- CLI backend only (no NuGet HTTP catalog yet): **↑**, Groups and the version list use feed latest from `dotnet package search`, not the newest version that restores on this project's target framework. The **Current Dependencies** tree is the restore graph of the *installed* version.
+- CLI backend only (no NuGet HTTP catalog yet): **↑**, Groups and the version list use feed latest from `dotnet package search`, without checking whether that version is compatible with the frameworks the project targets. The **Current Dependencies** tree is the restore graph of the *installed* version.
 - **Groups** will not target `Microsoft.CodeAnalysis.*` above the Roslyn version bundled with the active SDK. **Packages** still lists nuget.org latest and asks before an over-cap upgrade.
 - Scope is `.csproj` / `.fsproj` in the first workspace folder — a solution, a project, or a folder of loose projects.
 - `packages.config` projects are skipped. Legacy non-SDK `.csproj` using `PackageReference` is updated in the XML, then restored.

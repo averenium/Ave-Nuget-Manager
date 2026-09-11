@@ -131,6 +131,14 @@ const FOLDER_SCOPE: WorkspaceScope = {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
+/** Polls until `ready()` holds, so a test waits on the thing it asserts. */
+async function waitFor(ready: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!ready() && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 describe('WebviewMessageBroker', () => {
   let logger: Logger;
 
@@ -1682,9 +1690,16 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     const { stub, posted, simulateMessage } = makeProvider(SOLUTION_SCOPE);
     const backend = makeBackend();
 
-    backend.installPackage
-      .mockResolvedValueOnce(makeCliResult())                           // A succeeds
-      .mockResolvedValueOnce(makeCliResult({ exitCode: 1, stderr: 'fail B' })); // B fails
+    // Keyed by project, not by call order: the two projects go through
+    // runWithConcurrency together, so whichever `dotnet add` resolves first got
+    // whichever mock came first — the reason this test failed about one run in
+    // four regardless of --runInBand, which serialises files and not the
+    // asynchrony inside one.
+    backend.installPackage.mockImplementation(async (projectPath: string) => (
+      projectPath === '/sol/B/B.csproj'
+        ? makeCliResult({ exitCode: 1, stderr: 'fail B' })
+        : makeCliResult()
+    ));
 
     const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
     broker.attach();
@@ -1933,7 +1948,6 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
   // ── OPEN_CONFIG_FILE ───────────────────────────────────────────────────────
 
   it('calls openTextDocument for OPEN_CONFIG_FILE', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const vscode = require('vscode');
     const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
 
@@ -2629,6 +2643,8 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       await new Promise((r) => setTimeout(r, 40));
 
       expect(backend.installPackageNoRestore).toHaveBeenCalledTimes(2);
+      // No framework argument at all: these references are not framework-pinned,
+      // so the call is the plain one this path always made (#82).
       expect(backend.installPackageNoRestore).toHaveBeenCalledWith(
         '/p/App.csproj', 'OpenTelemetry.Extensions.Hosting', '1.18.0', expect.anything(),
       );
@@ -2926,12 +2942,14 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       ],
     });
 
-    await new Promise((r) => setTimeout(r, 20));
+    // Waits for the call rather than guessing how long the batch takes to reach
+    // it — a fixed sleep here lost the race under load.
+    await waitFor(() => backend.installPackage.mock.calls.length > 0);
     expect(backend.installPackage).toHaveBeenCalledTimes(1);
     expect(backend.installPackage.mock.calls[0][3]).toBeInstanceOf(AbortSignal);
 
     simulateMessage({ type: 'CANCEL_BATCH_UPDATE' });
-    await new Promise((r) => setTimeout(r, 40));
+    await waitFor(() => posted.some((m) => m.type === 'BATCH_UPDATE_FINISHED'));
 
     expect(backend.installPackage.mock.calls.map((c: unknown[]) => c[1])).toEqual(['A']);
     const items = posted.filter((m) => m.type === 'BATCH_UPDATE_ITEM') as Array<{
@@ -3081,7 +3099,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
 
   it('rejects INSTALL_PACKAGE for a blocked installed id', async () => {
     const blockedSpy = jest.spyOn(config, 'getBlockedPackages').mockReturnValue(['Pkg']);
-    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
     backend.listAllForProject.mockResolvedValue({
       installed: [makeInstalledPkg('Pkg', '/p/App.csproj')],
@@ -3496,11 +3514,427 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     );
     broker.attach();
     simulateMessage({ type: 'WEBVIEW_READY' });
-    await new Promise((r) => setTimeout(r, 50));
+    // Waits for the message instead of guessing how long the WEBVIEW_READY
+    // pipeline takes: it reads the VDB off disk, and a fixed 50ms lost that
+    // race under load.
+    await waitFor(() => posted.some((m) => m.type === 'VULNERABILITIES'));
 
     expect(backend.listVulnerable).not.toHaveBeenCalled();
     const vuln = posted.find((m) => m.type === 'VULNERABILITIES') as { findings?: Array<{ packageId: string }> } | undefined;
     expect(vuln?.findings?.some((f) => f.packageId === 'SharpCompress')).toBe(true);
     await fs.rm(dir, { recursive: true, force: true });
   });
+  describe('a package pinned per target framework (#82)', () => {
+    // The Core project of demo/multi-tfm, both spellings covered by the
+    // frameworkConditions tests — here it is what the write does that matters.
+    const SPLIT_XML = `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+  </ItemGroup>
+</Project>`;
+
+    const SHARED_XML = `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+  </ItemGroup>
+</Project>`;
+
+    it('passes the framework the row named straight through to dotnet add', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SPLIT_XML as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/App.csproj',
+        packageId: 'Microsoft.Extensions.Http',
+        version: '9.0.20',
+        framework: 'net9.0',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(backend.installPackage).toHaveBeenCalledTimes(1);
+      expect(backend.installPackage).toHaveBeenCalledWith(
+        '/p/App.csproj', 'Microsoft.Extensions.Http', '9.0.20', undefined, 'net9.0',
+      );
+    });
+
+    it('writes only the conditional group in the target version line when no framework is named', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SPLIT_XML as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      // This is what a batch item without a framework used to do: one plain
+      // call, which the CLI applies to every conditional group at once.
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/App.csproj',
+        packageId: 'Microsoft.Extensions.Http',
+        version: '10.0.12',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(backend.installPackage).toHaveBeenCalledTimes(1);
+      expect(backend.installPackage).toHaveBeenCalledWith(
+        '/p/App.csproj', 'Microsoft.Extensions.Http', '10.0.12', undefined, 'net10.0',
+      );
+    });
+
+    it('writes every conditional group when they share the target line', async () => {
+      const bothOn13 = SPLIT_XML
+        .replace('Version="9.0.0"', 'Version="13.0.1"')
+        .replace('Version="10.0.0"', 'Version="13.0.2"');
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(bothOn13 as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/App.csproj',
+        packageId: 'Microsoft.Extensions.Http',
+        version: '13.0.4',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(backend.installPackage.mock.calls.map((c: unknown[]) => c[4]))
+        .toEqual(['net9.0', 'net10.0']);
+    });
+
+    it('leaves an ordinary project on the plain call it always made', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SHARED_XML as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/App.csproj',
+        packageId: 'Newtonsoft.Json',
+        version: '13.0.4',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      // Four arguments, not five: an ordinary reference takes the exact call it
+      // took before any of this existed.
+      expect(backend.installPackage).toHaveBeenCalledTimes(1);
+      expect(backend.installPackage).toHaveBeenCalledWith(
+        '/p/App.csproj', 'Newtonsoft.Json', '13.0.4', undefined,
+      );
+    });
+
+    it('splits a shared reference: remove, then one add per framework, then one restore', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SHARED_XML as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'SPLIT_PACKAGE_REFERENCE',
+        projectPath: '/p/App.csproj',
+        packageId: 'Newtonsoft.Json',
+        frameworks: ['net9.0', 'net10.0'],
+        framework: 'net9.0',
+        version: '13.0.4',
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.removePackage).toHaveBeenCalledWith('/p/App.csproj', 'Newtonsoft.Json');
+      // The picked framework moves; the other keeps the version it had. These
+      // are restoring adds on purpose — `--framework` is ignored alongside
+      // `--no-restore`, which would write both groups at once.
+      expect(backend.installPackage.mock.calls.map((c: unknown[]) => [c[2], c[4]])).toEqual([
+        ['13.0.4', 'net9.0'],
+        ['13.0.1', 'net10.0'],
+      ]);
+      expect(backend.installPackageNoRestore).not.toHaveBeenCalled();
+    });
+
+    it('takes one project into a single framework and leaves the others alone', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SHARED_XML as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE_MULTI',
+        projects: ['/sol/A/A.csproj', '/sol/B/B.csproj'],
+        packageId: 'Dapper',
+        version: '2.1.0',
+        frameworks: { '/sol/A/A.csproj': ['net9.0'] },
+      });
+      await waitFor(() => backend.installPackage.mock.calls.length >= 2);
+
+      const byProject = Object.fromEntries(
+        backend.installPackage.mock.calls.map((c: unknown[]) => [c[0], c[4]]),
+      );
+      expect(byProject['/sol/A/A.csproj']).toBe('net9.0');
+      expect(byProject['/sol/B/B.csproj']).toBeUndefined();
+    });
+
+    it('ends the operation instead of waiting for a refresh that will not come', async () => {
+      // Every conditional group is already where the target wants it, so
+      // nothing is written — and the progress strip has to be told, or it sits
+      // in its refresh phase forever (#82).
+      const ALREADY_THERE = `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Serilog" Version="4.4.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <PackageReference Include="Serilog" Version="3.1.0" />
+  </ItemGroup>
+</Project>`;
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(ALREADY_THERE as never);
+      const backend = makeBackend();
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/App.csproj',
+        packageId: 'Serilog',
+        version: '4.4.0',
+      });
+      await waitFor(() => posted.some((m) => m.type === 'OPERATION_SUCCESS'));
+
+      expect(backend.installPackage).not.toHaveBeenCalled();
+      const ok = posted.find((m) => m.type === 'OPERATION_SUCCESS') as any;
+      expect(ok.refreshing).toBe(false);
+    });
+
+    it('still writes the framework that is behind, whatever the file says first', async () => {
+      const ALREADY_THERE = `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Serilog" Version="4.4.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <PackageReference Include="Serilog" Version="3.1.0" />
+  </ItemGroup>
+</Project>`;
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(ALREADY_THERE as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE',
+        projectPath: '/p/App.csproj',
+        packageId: 'Serilog',
+        version: '3.1.1',
+        framework: 'net8.0',
+      });
+      await waitFor(() => backend.installPackage.mock.calls.length > 0);
+
+      expect(backend.installPackage).toHaveBeenCalledWith(
+        '/p/App.csproj', 'Serilog', '3.1.1', undefined, 'net8.0',
+      );
+    });
+
+    it('writes one call per framework a project was narrowed to', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SHARED_XML as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE_MULTI',
+        projects: ['/sol/A/A.csproj', '/sol/B/B.csproj'],
+        packageId: 'Serilog.AspNetCore',
+        version: '10.0.0',
+        frameworks: { '/sol/A/A.csproj': ['net8.0', 'net10.0'] },
+      });
+      await waitFor(() => backend.installPackage.mock.calls.length >= 3);
+
+      const calls = backend.installPackage.mock.calls
+        .map((c: unknown[]) => [c[0], c[4]]);
+      expect(calls).toEqual(expect.arrayContaining([
+        ['/sol/A/A.csproj', 'net8.0'],
+        ['/sol/A/A.csproj', 'net10.0'],
+        // The project that was not narrowed keeps its plain, framework-less call.
+        ['/sol/B/B.csproj', undefined],
+      ]));
+    });
+
+    it('rebuilds a shared reference the popup narrowed, instead of moving every framework', async () => {
+      // `dotnet add --framework` edits the one unconditional line and takes the
+      // frameworks the user switched off with it — measured, and the reason the
+      // narrowing has to go through the same rebuild the single-row split uses.
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SHARED_XML as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE_MULTI',
+        projects: ['/sol/A/A.csproj'],
+        packageId: 'Newtonsoft.Json',
+        version: '13.0.4',
+        frameworks: { '/sol/A/A.csproj': ['net9.0'] },
+      });
+      await waitFor(() => backend.installPackage.mock.calls.length >= 2);
+
+      expect(backend.removePackage).toHaveBeenCalledWith('/sol/A/A.csproj', 'Newtonsoft.Json');
+      expect(backend.installPackage.mock.calls.map((c: unknown[]) => [c[2], c[4]])).toEqual([
+        ['13.0.4', 'net9.0'],
+        // The framework left out keeps the version it already had.
+        ['13.0.1', 'net10.0'],
+      ]);
+    });
+
+    it('refuses to narrow a shared reference when the project frameworks cannot be read', async () => {
+      // Rebuilding needs the whole set: without it the frameworks left out
+      // would lose the package rather than keep their version.
+      const PROPERTY_TFMS = SHARED_XML.replace('net9.0;net10.0', '$(RepoTargetFrameworks)');
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(PROPERTY_TFMS as never);
+      const backend = makeBackend();
+      const { stub, posted, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE_MULTI',
+        projects: ['/sol/A/A.csproj'],
+        packageId: 'Newtonsoft.Json',
+        version: '13.0.4',
+        frameworks: { '/sol/A/A.csproj': ['net9.0'] },
+      });
+      await waitFor(() => posted.some((m) => m.type === 'OPERATION_ERROR'));
+
+      expect(backend.removePackage).not.toHaveBeenCalled();
+      expect(backend.installPackage).not.toHaveBeenCalled();
+      const failed = posted.find((m) => m.type === 'OPERATION_ERROR') as any;
+      expect(failed.failures[0].stderr).toContain('could not be read');
+    });
+
+    it('leaves a conditional reference to the plain framework write', async () => {
+      // Nothing to rebuild when the groups are already there: `--framework`
+      // edits the matching one and leaves the other alone.
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SPLIT_XML as never);
+      const backend = makeBackend();
+      const { stub, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'INSTALL_PACKAGE_MULTI',
+        projects: ['/sol/A/A.csproj'],
+        packageId: 'Microsoft.Extensions.Http',
+        version: '9.0.20',
+        frameworks: { '/sol/A/A.csproj': ['net9.0'] },
+      });
+      await waitFor(() => backend.installPackage.mock.calls.length > 0);
+
+      expect(backend.removePackage).not.toHaveBeenCalled();
+      expect(backend.installPackage).toHaveBeenCalledWith(
+        '/sol/A/A.csproj', 'Microsoft.Extensions.Http', '9.0.20', undefined, 'net9.0',
+      );
+    });
+
+    it('patches only the framework it wrote, not every one of the project', async () => {
+      // The optimistic patch a batch update posts matched on the project alone,
+      // so every framework of a multi-targeted project jumped to the new
+      // version until the real list arrived and disagreed (#82).
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SPLIT_XML as never);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: [{
+          packageId: 'Microsoft.Extensions.Http',
+          fromVersion: '9.0.0',
+          toVersion: '9.0.20',
+          projects: ['/p/App.csproj'],
+          framework: 'net9.0',
+        }],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'INSTALLED_PACKAGES_PATCH'));
+
+      const patch = posted.find((m) => m.type === 'INSTALLED_PACKAGES_PATCH') as any;
+      expect(patch.packages).toEqual([
+        expect.objectContaining({
+          projectPath: '/p/App.csproj',
+          resolvedVersion: '9.0.20',
+          framework: 'net9.0',
+        }),
+      ]);
+    });
+
+    it('leaves an ordinary reference patched without a framework', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SHARED_XML as never);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'all',
+        includePrerelease: false,
+        items: [{
+          packageId: 'Newtonsoft.Json',
+          fromVersion: '13.0.1',
+          toVersion: '13.0.4',
+          projects: ['/p/App.csproj'],
+        }],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'INSTALLED_PACKAGES_PATCH'));
+
+      const patch = posted.find((m) => m.type === 'INSTALLED_PACKAGES_PATCH') as any;
+      expect(patch.packages).toHaveLength(1);
+      expect(patch.packages[0].framework).toBeUndefined();
+    });
+
+    it('does not add anything back when the remove fails', async () => {
+      jest.spyOn(fsPromises, 'readFile').mockResolvedValue(SHARED_XML as never);
+      const backend = makeBackend();
+      backend.removePackage.mockResolvedValue(makeCliResult({ exitCode: 1, stderr: 'locked' }));
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'SPLIT_PACKAGE_REFERENCE',
+        projectPath: '/p/App.csproj',
+        packageId: 'Newtonsoft.Json',
+        frameworks: ['net9.0', 'net10.0'],
+        framework: 'net9.0',
+        version: '13.0.4',
+      });
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(backend.installPackage).not.toHaveBeenCalled();
+    });
+  });
+
 });

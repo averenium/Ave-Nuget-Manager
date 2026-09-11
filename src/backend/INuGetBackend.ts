@@ -110,12 +110,18 @@ export interface INuGetBackend {
   /**
    * Install or update a package in a project.
    * CLI: `dotnet add <projectPath> package <packageId> --version <version>`
+   *
+   * `framework` adds `--framework <tfm>`, which confines the write to the
+   * conditional `<PackageReference>` group for that target framework (#82).
+   * Without it the CLI rewrites every conditional group for the id to the one
+   * version, so a project pinning a package per framework must always name one.
    */
   installPackage(
     projectPath: string,
     packageId: string,
     version: string,
     signal?: AbortSignal,
+    framework?: string,
   ): Promise<CliResult>;
 
   /**
@@ -129,6 +135,14 @@ export interface INuGetBackend {
     packageId: string,
     version: string,
     signal?: AbortSignal,
+    /**
+     * Accepted for symmetry, but the CLI ignores it here: `--framework` is only
+     * honoured when the compatibility check runs, and with `--no-restore` the
+     * version is written into every conditional group instead — measured on
+     * `demo/multi-tfm` (#82). Callers that need one framework must use
+     * {@link installPackage}.
+     */
+    framework?: string,
   ): Promise<CliResult>;
 
   /**

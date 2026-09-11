@@ -77,6 +77,14 @@ export interface ImplicitPackage {
 export interface PackageListResult {
   installed: InstalledPackage[];
   implicit: ImplicitPackage[];
+  /**
+   * Every target framework each project declares, keyed by project path (#82).
+   * `dotnet list` reports a project's frameworks whether or not any of them
+   * holds a package — measured — so this is the one place the full set is known
+   * without reading the project file, and it is what says a package could be
+   * referenced from a framework it is currently missing from.
+   */
+  projectFrameworks?: Record<string, string[]>;
   error?: string;
 }
 
@@ -383,6 +391,11 @@ export interface BatchUpdateItem {
   fromVersion: string;
   toVersion: string;
   projects: string[];
+  /**
+   * TFM this item is confined to, for a package pinned per target framework
+   * (#82). Absent for every ordinary item, which is nearly all of them.
+   */
+  framework?: string;
 }
 
 export interface BatchUpdateItemView extends BatchUpdateItem {

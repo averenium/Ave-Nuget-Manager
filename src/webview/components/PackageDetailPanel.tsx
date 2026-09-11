@@ -8,13 +8,16 @@ import { PackageDependenciesSection } from './PackageDependenciesSection';
 import { DetailHeader } from './DetailHeader';
 import { OperationProgressStrip } from './OperationProgressStrip';
 import { RoslynCapPopup } from './RoslynCapPopup';
+import { CrossLinePopup } from './CrossLinePopup';
+import { SplitReferencePopup } from './SplitReferencePopup';
+import { narrowingSplitsReference, pinsCrossedBy } from '../../frameworkPins';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
 import { findingsAffectingPackage } from '../../vulnerabilities';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
 import { compareSemVer } from '../../semver';
 import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { versionTone } from '../utils/versionTone';
-import { IconInstall, IconTrash } from '../utils/icons';
+import { IconCheck, IconInstall, IconTrash } from '../utils/icons';
 import { buildPackageProblems } from '../utils/packageProblems';
 import { resolveVersionSpread } from '../../packageResolvedVersions';
 import type { VulnerabilityFinding } from '../../types';
@@ -39,6 +42,26 @@ export function PackageDetailPanel() {
   const [descExpanded, setDescExpanded] = useState(false);
   const descRef = useRef<HTMLDivElement>(null);
   const [descClamped, setDescClamped] = useState(false);
+  /**
+   * A per-package update that would take a framework out of its pinned major
+   * line waits here until the user says yes (#82). Batch updates never reach
+   * this: they stay inside each line by construction.
+   */
+  const [crossLine, setCrossLine] = useState<{
+    projects: string[];
+    frameworks: Array<{ framework: string; version: string }>;
+    frameworksByProject?: Record<string, string[]>;
+  } | null>(null);
+  /**
+   * A narrowing that has to rebuild a project's single reference into one group
+   * per framework waits here until the user says yes (#82). The shape of the
+   * project file changes, which is more than the version change they asked for.
+   */
+  const [splitConfirm, setSplitConfirm] = useState<{
+    projects: string[];
+    frameworksByProject: Record<string, string[]>;
+    splitting: Array<{ name: string; frameworks: string[] }>;
+  } | null>(null);
 
   // A version picked for the previously selected package must not leak into
   // a newly selected one — `effectiveVersion` checks `selectedVersion` first,
@@ -130,9 +153,46 @@ export function PackageDetailPanel() {
       // One project has no per-project rows to watch, so the operation reports
       // itself here instead — before this it ran with no feedback at all, the
       // panel's "Loading…" being about metadata rather than the install (#104).
-      dispatch({ type: 'START_PROJECT_OPERATION', operation: 'install', total: 1 });
-      send({ type: 'INSTALL_PACKAGE', projectPath: scope.projectPath, packageId: selectedPackageId, version: effectiveVersion });
+      const crossed = pinsCrossedBy(
+        state.packages.installed, selectedPackageId, [scope.projectPath], effectiveVersion,
+      );
+      if (crossed.length > 0) {
+        setCrossLine({ projects: [scope.projectPath], frameworks: crossed });
+        return;
+      }
+      startInstall([scope.projectPath]);
     }
+  };
+
+  /** Sends the install itself, once every question has been answered. */
+  const startInstall = (
+    projects: string[],
+    frameworksByProject?: Record<string, string[]>,
+    acrossLines?: boolean,
+  ) => {
+    dispatch({ type: 'START_PROJECT_OPERATION', operation: 'install', total: projects.length });
+    for (const p of projects) {
+      dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
+      dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
+    }
+    if (projects.length === 1 && !isMultiProject) {
+      send({
+        type: 'INSTALL_PACKAGE',
+        projectPath: projects[0],
+        packageId: selectedPackageId,
+        version: effectiveVersion,
+        acrossLines,
+      });
+      return;
+    }
+    send({
+      type: 'INSTALL_PACKAGE_MULTI',
+      projects,
+      packageId: selectedPackageId,
+      version: effectiveVersion,
+      frameworks: frameworksByProject,
+      acrossLines,
+    });
   };
 
   const handleInstallUpdate = () => {
@@ -162,17 +222,86 @@ export function PackageDetailPanel() {
     const map: Record<string, string> = {};
     if (!scope || (scope.kind !== 'solution' && scope.kind !== 'folder')) return map;
     for (const p of scope.projects) {
-      const inst = state.packages.installed.find((i) =>
-        packageIdsEqual(i.id, selectedPackageId) && pathsEqual(i.projectPath, p.absolutePath),
-      );
-      if (inst) map[p.absolutePath] = inst.resolvedVersion;
+      // A project pinning this package per target framework has several entries
+      // here (#82) and the popup has one line per project to say them in — so it
+      // says the newest, which is the one an install would leave alone. Which
+      // framework is on what belongs to the Projects section, where each has a
+      // row of its own.
+      const versions = state.packages.installed
+        .filter((i) => packageIdsEqual(i.id, selectedPackageId) && pathsEqual(i.projectPath, p.absolutePath))
+        .map((i) => i.resolvedVersion)
+        .sort((a, b) => compareSemVer(b, a));
+      if (versions.length > 0) map[p.absolutePath] = versions[0];
     }
     return map;
   })();
 
-  const handlePopupConfirm = (projects: string[]) => {
+  /**
+   * Projects where leaving a framework out would have to rebuild the reference
+   * rather than write through it (#82) — read from the versions, the same way
+   * the Projects section reads them, and re-checked against the project file by
+   * the host before anything is written.
+   */
+  const splitsReference = (() => {
+    if (!scope || (scope.kind !== 'solution' && scope.kind !== 'folder')) return [];
+    return scope.projects
+      .filter((p) => narrowingSplitsReference(
+        state.packages.installed,
+        selectedPackageId,
+        p.absolutePath,
+        state.packages.projectFrameworks[p.absolutePath]
+          ?? Object.entries(state.packages.projectFrameworks)
+            .find(([key]) => pathsEqual(key, p.absolutePath))?.[1],
+      ))
+      .map((p) => p.absolutePath);
+  })();
+
+  /** Those of them the user actually narrowed, named for the confirmation. */
+  const splittingProjects = (frameworks?: Record<string, string[]>) => {
+    if (!frameworks || !scope || (scope.kind !== 'solution' && scope.kind !== 'folder')) return [];
+    return scope.projects
+      .filter((p) => frameworks[p.absolutePath]?.length && splitsReference.includes(p.absolutePath))
+      .map((p) => ({ name: p.name, frameworks: frameworks[p.absolutePath] }));
+  };
+
+  /**
+   * The questions an install from the popup has to ask before it is sent, in
+   * the order a project meets them (#82).
+   */
+  const askThenInstall = (projects: string[], frameworks?: Record<string, string[]>) => {
+    // A framework the chosen version would take out of its line asks first.
+    // A project narrowed to some of its frameworks is exempt: choosing them is
+    // the decision already.
+    const crossed = pinsCrossedBy(
+      state.packages.installed,
+      selectedPackageId,
+      projects.filter((p) => !frameworks?.[p]?.length),
+      effectiveVersion,
+    );
+    if (crossed.length > 0) {
+      setCrossLine({ projects, frameworks: crossed, frameworksByProject: frameworks });
+      return;
+    }
+    startInstall(projects, frameworks);
+  };
+
+  const handlePopupConfirm = (projects: string[], frameworks?: Record<string, string[]>) => {
     if (showPopup === 'install' && updatesBlocked) {
       setShowPopup(null);
+      return;
+    }
+    if (showPopup === 'install') {
+      // A narrowing the project file cannot express as it stands asks before
+      // anything else: it rebuilds the reference, which is a change the user
+      // did not ask for on its own (#82).
+      const splitting = splittingProjects(frameworks);
+      if (splitting.length > 0 && frameworks) {
+        setShowPopup(null);
+        setSplitConfirm({ projects, frameworksByProject: frameworks, splitting });
+        return;
+      }
+      setShowPopup(null);
+      askThenInstall(projects, frameworks);
       return;
     }
     // The count has to be taken here, before the first project reports back:
@@ -180,16 +309,14 @@ export function PackageDetailPanel() {
     // were (#104).
     dispatch({
       type: 'START_PROJECT_OPERATION',
-      operation: showPopup === 'install' ? 'install' : 'remove',
+      operation: 'remove',
       total: projects.length,
     });
     for (const p of projects) {
       dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
       dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
     }
-    if (showPopup === 'install') {
-      send({ type: 'INSTALL_PACKAGE_MULTI', projects, packageId: selectedPackageId, version: effectiveVersion });
-    } else if (showPopup === 'remove') {
+    if (showPopup === 'remove') {
       send({ type: 'REMOVE_PACKAGE_MULTI', projects, packageId: selectedPackageId });
     }
     setShowPopup(null);
@@ -202,51 +329,53 @@ export function PackageDetailPanel() {
         // In solution scope the Projects section's own title carries the strip,
         // beside the rows the operation is changing (#104).
         progress={isMultiProject ? undefined : <OperationProgressStrip className="detail-header__progress" />}
-        actions={isInstalled ? (
-          <>
-            <button
-              className={`btn btn--icon ${updateTone === 'same' ? 'btn--secondary' : 'btn--primary'}`}
-              onClick={() => {
-                if (updatesBlocked) {
-                  send({
-                    type: 'SHOW_TOAST',
-                    message: `${selectedPackageId}: ${BLOCKED_UPDATES_TOOLTIP}`,
-                  });
-                  return;
-                }
-                handleInstallUpdate();
-              }}
-              disabled={isLoading}
-              aria-disabled={updatesBlocked || undefined}
-              title={updateTitle}
-              aria-label="Update"
-            >{updateGlyph}</button>
-            <button
-              className="btn btn--icon pkg-remove-btn"
-              onClick={handleRemove}
-              disabled={isLoading}
-              title="Remove package"
-              aria-label="Remove"
-            ><IconTrash /></button>
-          </>
-        ) : (
-          <button
-            className="btn btn--icon btn--primary"
-            onClick={handleInstallUpdate}
-            disabled={isLoading}
-            title="Install selected version"
-            aria-label="Install"
-          ><IconInstall /></button>
-        )}
+        // The name row carries nothing: the button that applies a version
+        // belongs to the version and is joined to it below, and Remove sits
+        // beside the pair — the same shape the project rows have (#82).
+        actions={null}
       >
-        <VersionSelector
-          packageId={selectedPackageId}
-          versions={allVersions}
-          selected={effectiveVersion}
-          onChange={setSelectedVersion}
-          restoredVersion={restoredEntry?.resolvedVersion ?? ''}
-          restoredProjectPath={restoredEntry?.projectPath ?? ''}
-        />
+        <div className="version-row">
+        <div className="version-apply">
+          <VersionSelector
+            packageId={selectedPackageId}
+            versions={allVersions}
+            selected={effectiveVersion}
+            onChange={setSelectedVersion}
+            restoredVersion={restoredEntry?.resolvedVersion ?? ''}
+            restoredProjectPath={restoredEntry?.projectPath ?? ''}
+          />
+          <button
+            className={`btn btn--icon version-apply__btn ${
+              isInstalled && updateTone === 'same' ? 'btn--secondary' : 'btn--primary'
+            }`}
+            onClick={() => {
+              if (isInstalled && updatesBlocked) {
+                send({
+                  type: 'SHOW_TOAST',
+                  message: `${selectedPackageId}: ${BLOCKED_UPDATES_TOOLTIP}`,
+                });
+                return;
+              }
+              handleInstallUpdate();
+            }}
+            disabled={isLoading}
+            aria-disabled={(isInstalled && updatesBlocked) || undefined}
+            title={isInstalled ? updateTitle : 'Install selected version'}
+            aria-label={isInstalled ? 'Update' : 'Install'}
+          >{isInstalled
+            ? (updateTone === 'same' ? <IconCheck /> : updateGlyph)
+            : <IconInstall />}</button>
+        </div>
+        {isInstalled && (
+          <button
+            className="btn btn--icon pkg-remove-btn"
+            onClick={handleRemove}
+            disabled={isLoading}
+            title="Remove package"
+            aria-label="Remove"
+          ><IconTrash /></button>
+        )}
+        </div>
       </DetailHeader>
 
       {(error || isLoading || !metadataSettled) && (
@@ -297,7 +426,9 @@ export function PackageDetailPanel() {
               <div className="pkg-info__elsewhere">
                 showing {spread.primary} · also{' '}
                 {spread.others
-                  .map((o) => `${o.version} in ${o.projectCount} project${o.projectCount === 1 ? '' : 's'}`)
+                  .map((o) => (o.frameworks?.length
+                    ? `${o.version} in ${o.frameworks.join(', ')}`
+                    : `${o.version} in ${o.projectCount} project${o.projectCount === 1 ? '' : 's'}`))
                   .join(', ')}
               </div>
             )}
@@ -390,6 +521,34 @@ export function PackageDetailPanel() {
       {metadata?.dependencyTree && <PackageDependenciesSection info={metadata.dependencyTree} />}
 
       {/* ── Popup ── */}
+      {splitConfirm && (
+        <SplitReferencePopup
+          packageId={selectedPackageId}
+          projects={splitConfirm.splitting}
+          version={effectiveVersion}
+          onConfirm={() => {
+            const pending = splitConfirm;
+            setSplitConfirm(null);
+            askThenInstall(pending.projects, pending.frameworksByProject);
+          }}
+          onCancel={() => setSplitConfirm(null)}
+        />
+      )}
+
+      {crossLine && (
+        <CrossLinePopup
+          packageId={selectedPackageId}
+          frameworks={crossLine.frameworks}
+          toVersion={effectiveVersion}
+          onConfirm={() => {
+            const pending = crossLine;
+            setCrossLine(null);
+            startInstall(pending.projects, pending.frameworksByProject, true);
+          }}
+          onCancel={() => setCrossLine(null)}
+        />
+      )}
+
       {showRoslynWarning && state.roslynCap && (
         <RoslynCapPopup
           packageId={selectedPackageId}
@@ -424,6 +583,8 @@ export function PackageDetailPanel() {
           }
           currentVersions={currentVersions}
           targetVersion={showPopup === 'install' ? effectiveVersion : undefined}
+          frameworksByProject={showPopup === 'install' ? state.packages.projectFrameworks : undefined}
+          splitsReference={showPopup === 'install' ? splitsReference : undefined}
           onConfirm={handlePopupConfirm}
           onCancel={() => setShowPopup(null)}
         />

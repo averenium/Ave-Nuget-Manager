@@ -133,7 +133,7 @@ async function collectCandidateFiles(root: string): Promise<CacheFile[]> {
       if (entry.isDirectory()) {
         await walk(full, depth + 1);
       } else if (entry.isFile()) {
-        let size = 0;
+        let size: number;
         try {
           size = (await fs.stat(full)).size;
         } catch {

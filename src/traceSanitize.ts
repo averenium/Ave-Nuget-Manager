@@ -357,6 +357,9 @@ export function sanitizeText(text: string, ctx: SanitizeContext): string {
 
   out = out.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '<email>');
   out = out.replace(/\\/g, '/');
+  // NUL is the sentinel the swap below parks `://` under while the run of
+  // slashes beside it is collapsed.
+  // eslint-disable-next-line no-control-regex -- the sentinel is the point
   return out.replace(/:\/\//g, '\u0000').replace(/\/{2,}/g, '/').replace(/\u0000/g, '://');
 }
 

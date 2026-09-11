@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import type { ProjectInfo } from '../../types';
 import { versionTone, versionLabel } from '../utils/versionTone';
 
+
 interface Props {
   title: string;
   projects: ProjectInfo[];
@@ -11,12 +12,26 @@ interface Props {
   currentVersions?: Record<string, string>;
   /** Version that will be installed/updated. Omit for remove. */
   targetVersion?: string;
-  onConfirm: (selected: string[]) => void;
+  /**
+   * Target frameworks each project declares (#82). A project with more than one
+   * shows them as badges and can be narrowed to some of them; a project with one
+   * framework shows nothing new. Omitted for remove: `dotnet remove package` has
+   * no `--framework`, so removal is always project-wide.
+   */
+  frameworksByProject?: Record<string, string[]>;
+  /**
+   * Projects whose single reference would have to be split for a narrowing to
+   * mean anything (#82). Those rows say so as soon as a badge goes off, since
+   * the change is to the shape of the project file and not just to a version.
+   */
+  splitsReference?: string[];
+  onConfirm: (selected: string[], frameworks?: Record<string, string[]>) => void;
   onCancel: () => void;
 }
 
 export function ProjectSelectionPopup({
-  title, projects, initiallySelected, currentVersions, targetVersion, onConfirm, onCancel,
+  title, projects, initiallySelected, currentVersions, targetVersion, frameworksByProject,
+  splitsReference, onConfirm, onCancel,
 }: Props) {
   const installedSet = useMemo(
     () => new Set(Object.keys(currentVersions ?? {})),
@@ -27,6 +42,29 @@ export function ProjectSelectionPopup({
     () => new Set(initiallySelected ?? projects.map((p) => p.absolutePath)),
   );
   const [query, setQuery] = useState('');
+  /**
+   * Frameworks switched off for a project (#82). Empty is the ordinary state —
+   * every framework lit, which writes one plain reference the way it always
+   * did. Kept as what is *off* so a project that never touches these badges
+   * carries nothing at all.
+   */
+  const [offByProject, setOffByProject] = useState<Record<string, string[]>>({});
+
+  const toggleFramework = (projectPath: string, framework: string, all: string[]) => {
+    setOffByProject((current) => {
+      const off = current[projectPath] ?? [];
+      const next = off.includes(framework)
+        ? off.filter((f) => f !== framework)
+        : [...off, framework];
+      // The last one cannot be switched off: a project with no framework at all
+      // is an unchecked project, and the checkbox already says that.
+      if (next.length >= all.length) return current;
+      const updated = { ...current };
+      if (next.length === 0) delete updated[projectPath];
+      else updated[projectPath] = next;
+      return updated;
+    });
+  };
 
   const sorted = useMemo(() => {
     return [...projects].sort((a, b) => {
@@ -53,7 +91,8 @@ export function ProjectSelectionPopup({
   const toggle = (path: string) => {
     setChecked((prev) => {
       const next = new Set(prev);
-      next.has(path) ? next.delete(path) : next.add(path);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
       return next;
     });
   };
@@ -77,7 +116,22 @@ export function ProjectSelectionPopup({
       onCancel();
       return;
     }
-    onConfirm(selected);
+    // Only the projects actually going out carry a framework choice — one made
+    // and then unchecked would otherwise travel with the message (#82).
+    // Only a project narrowed to a subset travels with a framework list; the
+    // rest are written plainly, which is what keeps an ordinary install from
+    // growing conditional groups (#82).
+    const frameworks = Object.fromEntries(
+      selected
+        .map((path) => {
+          const all = frameworksByProject?.[path] ?? [];
+          const off = offByProject[path] ?? [];
+          const on = all.filter((f) => !off.includes(f));
+          return [path, off.length > 0 && on.length > 0 ? on : undefined];
+        })
+        .filter(([, on]) => !!on) as Array<[string, string[]]>,
+    );
+    onConfirm(selected, Object.keys(frameworks).length > 0 ? frameworks : undefined);
   };
 
   return (
@@ -128,11 +182,18 @@ export function ProjectSelectionPopup({
               tone === 'down' ? 'popup__item--down' : '',
             ].filter(Boolean).join(' ');
 
+            const frameworks = frameworksByProject?.[p.absolutePath] ?? [];
+            const off = offByProject[p.absolutePath] ?? [];
+            const showFrameworks = !!targetVersion && frameworks.length > 1;
+            const willSplit = off.length > 0
+              && off.length < frameworks.length
+              && !!splitsReference?.includes(p.absolutePath);
+
             return (
               <label
                 key={p.absolutePath}
                 className={rowClass}
-                title={`${p.name}\n${p.relativePath}${label ? `\n${label}` : ''}`}
+                title={[p.name, p.relativePath, label].filter(Boolean).join('\n')}
               >
                 <input
                   type="checkbox"
@@ -149,6 +210,38 @@ export function ProjectSelectionPopup({
                     )}
                   </span>
                   <span className="popup__item-path">{p.relativePath}</span>
+                  {showFrameworks && (
+                    // Visible rather than hidden behind a right-click: a project
+                    // targeting several frameworks can take the package into
+                    // some of them, and nothing else on screen would say so
+                    // (#82). Every badge lit is the ordinary install.
+                    <span className="popup__item-tfms">
+                      {frameworks.map((framework) => {
+                        const on = !off.includes(framework);
+                        return (
+                          <button
+                            key={framework}
+                            type="button"
+                            className={`popup__tfm${on ? ' popup__tfm--on' : ''}`}
+                            aria-pressed={on}
+                            title={on
+                              ? `Installing into ${framework} — click to leave it out`
+                              : `Not installing into ${framework} — click to put it back`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              toggleFramework(p.absolutePath, framework, frameworks);
+                            }}
+                          >{framework}</button>
+                        );
+                      })}
+                    </span>
+                  )}
+                  {willSplit && (
+                    // Said here, beside the badge that causes it, rather than
+                    // only in the confirmation this row will raise on Apply.
+                    <span className="popup__item-split">splits the shared reference</span>
+                  )}
                 </span>
               </label>
             );
@@ -159,6 +252,8 @@ export function ProjectSelectionPopup({
           <button className="btn btn--secondary" onClick={onCancel}>Cancel</button>
           <button className="btn btn--primary" onClick={handleConfirm}>Apply</button>
         </div>
+
+
       </div>
     </div>
   );

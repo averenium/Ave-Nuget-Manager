@@ -72,7 +72,7 @@ export function ImplicitList() {
                 pkg={pkg}
                 kind="implicit"
                 selected={state.detail.selectedPackageId === pkg.id}
-                allProjectEntries={allEntries as any}
+                allProjectEntries={allEntries}
                 findings={vulnerabilities}
                 onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
               />

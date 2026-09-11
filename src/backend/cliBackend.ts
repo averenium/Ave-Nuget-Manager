@@ -139,6 +139,7 @@ export class CliBackend implements INuGetBackend {
       result,
       this._parseAllProjectsInstalled(result.stdout, baseDir),
       this._parseAllProjectsTransitive(result.stdout, baseDir),
+      this._parseProjectFrameworks(result.stdout, (p) => this._resolveReportedProjectPath(p, baseDir)),
     );
     const stamped = await stampListedDependencies(listed.installed, listed.implicit);
     listed.installed = stamped.installed;
@@ -155,6 +156,7 @@ export class CliBackend implements INuGetBackend {
       result,
       this._parseInstalledPackages(result.stdout, projectPath),
       this._parseTransitivePackages(result.stdout, projectPath),
+      this._parseProjectFrameworks(result.stdout, () => projectPath),
     );
     const stamped = await stampListedDependencies(listed.installed, listed.implicit);
     listed.installed = stamped.installed;
@@ -426,9 +428,13 @@ export class CliBackend implements INuGetBackend {
     packageId: string,
     version: string,
     signal?: AbortSignal,
+    framework?: string,
   ): Promise<CliResult> {
     return this.runner.run({
-      args: ['add', projectPath, 'package', packageId, '--version', version],
+      args: [
+        'add', projectPath, 'package', packageId, '--version', version,
+        ...(framework ? ['--framework', framework] : []),
+      ],
       cwd: path.dirname(projectPath),
       timeoutMs: MUTATION_TIMEOUT_MS,
       signal,
@@ -442,9 +448,14 @@ export class CliBackend implements INuGetBackend {
     packageId: string,
     version: string,
     signal?: AbortSignal,
+    framework?: string,
   ): Promise<CliResult> {
     return this.runner.run({
-      args: ['add', projectPath, 'package', packageId, '--version', version, '--no-restore'],
+      args: [
+        'add', projectPath, 'package', packageId, '--version', version,
+        ...(framework ? ['--framework', framework] : []),
+        '--no-restore',
+      ],
       cwd: path.dirname(projectPath),
       timeoutMs: MUTATION_TIMEOUT_MS,
       signal,
@@ -483,12 +494,13 @@ export class CliBackend implements INuGetBackend {
     result: CliResult,
     installed: InstalledPackage[],
     implicit: ImplicitPackage[],
+    projectFrameworks: Record<string, string[]> = {},
   ): PackageListResult {
     const hasPackages = installed.length > 0 || implicit.length > 0;
-    if (hasPackages) return { installed, implicit };
+    if (hasPackages) return { installed, implicit, projectFrameworks };
 
     if (result.timedOut) {
-      return { installed, implicit, error: 'dotnet list timed out' };
+      return { installed, implicit, projectFrameworks, error: 'dotnet list timed out' };
     }
 
     const problemText = summarizeListProblems(result.stdout);
@@ -515,6 +527,20 @@ export class CliBackend implements INuGetBackend {
   private _resolveReportedProjectPath(reported: string, baseDir: string): string {
     if (!reported) return reported;
     return path.normalize(path.resolve(baseDir, reported));
+  }
+
+  /** Every framework each project declares, including ones holding no packages (#82). */
+  private _parseProjectFrameworks(stdout: string, resolve: (p: string) => string): Record<string, string[]> {
+    const output = this._parseListJson(stdout);
+    if (!output) return {};
+    const map: Record<string, string[]> = {};
+    for (const project of output.projects ?? []) {
+      const frameworks = (project.frameworks ?? [])
+        .map((fw) => fw.framework)
+        .filter((f): f is string => !!f);
+      if (frameworks.length > 0) map[resolve(project.path)] = frameworks;
+    }
+    return map;
   }
 
   private _parseAllProjectsInstalled(stdout: string, baseDir: string): InstalledPackage[] {

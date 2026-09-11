@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Per-target-framework update targets — design for #82</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px;
+    background: #181818; color: #cccccc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #e6e6e6; margin: 0 0 6px; }
+  .lede { color: #8a8a8a; font-size: 12px; margin: 0 0 28px; max-width: 62ch; }
+  h2 { font-size: 12px; font-weight: 400; color: #8a8a8a; margin: 0 0 8px; }
+  h3 { font-size: 12px; font-weight: 600; color: #cccccc; margin: 0 0 6px; }
+  .row { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 30px; }
+  .panel {
+    background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 6px;
+    padding: 12px 14px; font-size: 13px;
+  }
+  .wide { width: 620px; }
+  .narrow { width: 300px; }
+  .title { font-size: 13px; font-weight: 600; color: #e6e6e6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; }
+  .icon-btn { width: 24px; height: 24px; border-radius: 3px; display: flex; align-items: center; justify-content: center; flex: 0 0 24px; color: #8a8a8a; }
+  .icon-btn.accent { background: #0e639c; color: #fff; }
+  .icon-btn.idle { background: #313131; color: #6e6e6e; font-weight: bold; }
+  .field { border: 0.5px solid #3c3c3c; border-radius: 3px; padding: 5px 8px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .field.row-field { padding: 3px 8px; flex: 1 1 0; min-width: 80px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .label { font-size: 11px; color: #8a8a8a; letter-spacing: .05em; }
+  .sub { font-size: 11px; color: #8a8a8a; }
+  a { color: #4daafc; text-decoration: none; }
+  .badge { background: #2d2d2d; border-radius: 3px; padding: 1px 6px; font-size: 11px; color: #d4d4d4; }
+  .badge.dim { color: #9a9a9a; }
+  .divider { border-top: 0.5px solid #2f2f2f; margin: 11px -14px 0; }
+  .prow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .pname { font-size: 12px; flex: 1 1 0; min-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .muted { color: #9a9a9a; }
+  .range { color: #7a7a7a; font-size: 11px; }
+  svg { display: block; }
+  .note { color: #6a6a6a; font-size: 11px; margin-top: 9px; }
+  code { color: #d4d4d4; }
+
+  /* New on this page: the framework badge and the rows it sits in. */
+  .tfm { font-size: 11px; color: #9a9a9a; background: #2d2d2d; border-radius: 3px; padding: 1px 6px; flex: 0 0 auto; }
+  .grouphead { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .grouphead .pname { font-size: 12px; }
+  .subrow { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 14px; border-left: 1px solid #2f2f2f; margin-left: 3px; }
+  .facts { border-left: 2px solid #3c3c3c; padding: 2px 0 2px 12px; margin: 0 0 28px; max-width: 76ch; }
+  .facts p { margin: 0 0 7px; font-size: 12px; color: #b4b4b4; }
+  .pick { color: #7ec699; }
+  .arrow { color: #8a8a8a; font-size: 10px; }
+  .menu { min-width: 190px; padding: 4px 0; background: #1f1f1f; border: 1px solid #454545; border-radius: 3px; box-shadow: 0 2px 8px rgba(0,0,0,.36); }
+  .menu__label { padding: 4px 12px 2px; font-size: 11px; color: #8a8a8a; letter-spacing: .05em; }
+  .menu__item { padding: 4px 12px; font-size: 12px; display: flex; justify-content: space-between; gap: 12px; }
+  .menu__item.sel { background: #04395e; }
+  .menu__item.off { color: #6a6a6a; }
+  .menu__sep { border-top: 1px solid #333; margin: 4px 0; }
+  .menu__hint { padding: 2px 12px 4px; font-size: 11px; color: #6a6a6a; }
+  .prow2 { display: flex; align-items: center; gap: 8px; margin: 3px 0 0 22px; flex-wrap: wrap; }
+  .tfm.on { background: #04395e; color: #d4d4d4; }
+  .tfm.off { color: #6a6a6a; text-decoration: line-through; }
+  .tfmv { display: inline-flex; align-items: center; gap: 5px; background: #2d2d2d; border-radius: 3px; padding: 1px 4px 1px 6px; font-size: 11px; color: #9a9a9a; }
+  .tfmv.on { background: #04395e; color: #d4d4d4; }
+  .tfmv .v { background: #1f1f1f; border: 0.5px solid #3c3c3c; border-radius: 2px; padding: 0 4px; font-family: Consolas, monospace; color: #b4b4b4; }
+  .cb { width: 12px; height: 12px; border: 1px solid #6a6a6a; border-radius: 2px; display: inline-block; flex: 0 0 12px; }
+  .cb.on { background: #0e639c; border-color: #0e639c; }
+  pre.xml { margin: 6px 0 0; font-family: Consolas, "Courier New", monospace; font-size: 11px; color: #b4b4b4; white-space: pre-wrap; line-height: 1.45; }
+</style>
+</head>
+<body>
+
+<h1>Per-target-framework update targets</h1>
+<p class="lede">Design for <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/82">#82</a>. A multi-targeted project can pin one package to a different version per framework; today the panel shows one of them and offers a single shared target for both. Everything not under discussion is drawn exactly as it is today. Type scale, button sizes and colours follow <code>global.css</code>.</p>
+
+<div class="facts">
+  <p><strong>What the CLI allows</strong> — measured against <code>demo/multi-tfm/</code>, not assumed.</p>
+  <p><code>dotnet list package --format json</code> already reports the two pins separately, under their own <code>frameworks[]</code> entries sharing one project path. Both spellings of the condition — on the <code>ItemGroup</code> and on the <code>PackageReference</code> — read the same.</p>
+  <p><code>dotnet add package --framework &lt;tfm&gt;</code> edits the matching conditional group and leaves the other one alone. <strong>Without</strong> the flag it rewrites every conditional group to the one version, which is the bug itself: a <code>net8.0</code> pin ends up reading <code>10.0.12</code>.</p>
+  <p><code>dotnet remove package</code> has <strong>no</strong> <code>--framework</code> and removes every conditional reference to the id at once. Removal is a project-level action, and no design here can make it per-framework.</p>
+  <p><code>--framework</code> is only honoured when the compatibility check runs. Adding <code>--no-restore</code> makes the CLI ignore it and write the version into <em>every</em> conditional group — so a framework-confined write cannot borrow the batched no-restore shape the entangled-cluster path uses.</p>
+  <p>For an id the project does not have yet, <code>--framework</code> puts the reference in the matching conditional <code>ItemGroup</code>, and creates that group when there is none. Adding to one framework works from any starting shape.</p>
+  <p>But on an id the project already references <strong>unconditionally</strong>, <code>--framework</code> quietly updates that unconditional line — both frameworks move. Splitting a shared reference into per-framework ones is therefore not a CLI call but an edit of our own, and the last section says what it writes.</p>
+</div>
+
+<h2>Projects section — the proposal</h2>
+<div class="row">
+  <div class="panel wide">
+    <div class="label">PROJECTS</div>
+
+    <div class="prow">
+      <span class="pname">Example.MultiTarget.App</span>
+      <span class="field row-field"><span>10.0.0</span><span class="arrow">&#9662;</span></span>
+      <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+      <span class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+    </div>
+
+    <div class="grouphead">
+      <span class="pname">Example.MultiTarget.Core</span>
+      <span class="icon-btn" style="visibility:hidden;" aria-hidden="true"></span>
+      <span class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+    </div>
+    <div class="subrow">
+      <span class="tfm">net9.0</span>
+      <span class="field row-field"><span>9.0.0</span><span class="arrow">&#9662;</span></span>
+      <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+      <span class="icon-btn" style="visibility:hidden;" aria-hidden="true"></span>
+    </div>
+    <div class="subrow">
+      <span class="tfm">net10.0</span>
+      <span class="field row-field"><span>10.0.0</span><span class="arrow">&#9662;</span></span>
+      <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+      <span class="icon-btn" style="visibility:hidden;" aria-hidden="true"></span>
+    </div>
+
+    <div class="grouphead">
+      <span class="pname">Example.MultiTarget.Workers</span>
+      <span class="icon-btn" style="visibility:hidden;" aria-hidden="true"></span>
+      <span class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+    </div>
+    <div class="subrow">
+      <span class="tfm">net8.0</span>
+      <span class="field row-field"><span>8.0.0</span><span class="arrow">&#9662;</span></span>
+      <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+      <span class="icon-btn" style="visibility:hidden;" aria-hidden="true"></span>
+    </div>
+    <div class="subrow">
+      <span class="tfm">net10.0</span>
+      <span class="field row-field"><span>10.0.0</span><span class="arrow">&#9662;</span></span>
+      <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+      <span class="icon-btn" style="visibility:hidden;" aria-hidden="true"></span>
+    </div>
+
+    <div class="note">A project splits only when its frameworks actually disagree about the version. <code>Example.MultiTarget.App</code> above — and every single-target project, and every multi-target project with one unconditional reference — keeps the row it has today: same height, same controls, same order.</div>
+    <div class="note">The trash sits once per project because that is the only granularity <code>dotnet remove</code> has. The version picker and the apply button move down to the framework, which is the granularity <code>dotnet add --framework</code> has. The two levels on screen are the two levels the CLI actually offers.</div>
+  </div>
+
+  <div class="panel narrow">
+    <h3>The alternative: a flat row per framework</h3>
+    <div class="prow">
+      <span class="pname">Example.MultiTarget.Core</span>
+      <span class="tfm">net9.0</span>
+      <span class="field row-field"><span>9.0.0</span><span class="arrow">&#9662;</span></span>
+      <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+      <span class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+    </div>
+    <div class="prow">
+      <span class="pname">Example.MultiTarget.Core</span>
+      <span class="tfm">net10.0</span>
+      <span class="field row-field"><span>10.0.0</span><span class="arrow">&#9662;</span></span>
+      <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+      <span class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+    </div>
+    <div class="note">One row shorter and it needs no new row type. But it puts a trash on each row that would silently take the other framework with it, and it repeats the project name in the column that is already the narrowest thing in the panel. Recorded as the option considered, not the proposal.</div>
+  </div>
+</div>
+
+<h2>Adding to one framework — the right-click, not a new control</h2>
+<div class="row">
+  <div class="panel narrow">
+    <h3>On a project row in PROJECTS</h3>
+    <div class="menu" style="margin-top:8px;">
+      <div class="menu__label">INSTALL 4.3.0 INTO</div>
+      <div class="menu__item">net8.0</div>
+      <div class="menu__item off">net10.0 <span class="range">already 4.3.0</span></div>
+      <div class="menu__sep"></div>
+      <div class="menu__item">Remove from the project</div>
+    </div>
+    <div class="note">The frameworks are the project's own, and the version is whatever that row's picker is holding — so the menu never asks a second question. A framework that already has the id at that version is there but inert, saying why. Single-target projects get no framework list at all: nothing about their row changes.</div>
+  </div>
+
+  <div class="panel narrow">
+    <h3>The same menu, on a row of the install popup</h3>
+    <div class="menu" style="margin-top:8px;">
+      <div class="menu__label">INSTALL 4.3.0 INTO</div>
+      <div class="menu__item sel">All frameworks</div>
+      <div class="menu__item">net8.0</div>
+      <div class="menu__item">net10.0</div>
+    </div>
+    <div class="note">Reaching a package that is in no project yet still goes through the existing <strong>Install</strong> button and its project popup, which is unchanged and keeps installing into every framework. Narrowing one project to one framework is a right-click on that project's line — the same menu, so there is one thing to learn and no new button in either place.</div>
+  </div>
+
+  <div class="panel narrow">
+    <h3>When the reference is shared</h3>
+    <div class="menu" style="margin-top:8px;">
+      <div class="menu__label">INSTALL 13.0.4 INTO</div>
+      <div class="menu__item">net9.0 <span class="range">splits the reference</span></div>
+      <div class="menu__item">net10.0 <span class="range">splits the reference</span></div>
+      <div class="menu__sep"></div>
+      <div class="menu__item">Remove from the project</div>
+    </div>
+    <div class="note">One unconditional reference covers every framework, and <code>dotnet add --framework</code> would edit that shared line and move all of them without saying so. So this one is not the CLI's to do: choosing a framework here rewrites the reference ourselves, into one conditional reference per framework — the chosen one at the new version, the others left at the version they already had. Nothing changes for a framework the user did not pick.</div>
+  </div>
+</div>
+
+<h2>What the split writes</h2>
+<div class="row">
+  <div class="panel narrow">
+    <div class="label">BEFORE</div>
+    <pre class="xml">&lt;ItemGroup&gt;
+  &lt;PackageReference Include="Newtonsoft.Json"
+                    Version="13.0.1" /&gt;
+&lt;/ItemGroup&gt;</pre>
+  </div>
+  <div class="panel narrow">
+    <div class="label">AFTER &mdash; net9.0 PICKED, 13.0.4</div>
+    <pre class="xml">&lt;ItemGroup Condition="'$(TargetFramework)'=='net9.0'"&gt;
+  &lt;PackageReference Include="Newtonsoft.Json"
+                    Version="13.0.4" /&gt;
+&lt;/ItemGroup&gt;
+&lt;ItemGroup Condition="'$(TargetFramework)'=='net10.0'"&gt;
+  &lt;PackageReference Include="Newtonsoft.Json"
+                    Version="13.0.1" /&gt;
+&lt;/ItemGroup&gt;</pre>
+  </div>
+  <div class="panel narrow">
+    <h3>Where it is written</h3>
+    <div class="note" style="margin-top:0;">The repository already edits <code>PackageReference</code> elements directly for non-SDK projects — <code>legacyPackageReference.ts</code>, with the comment-masking from <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/85">#85</a> that keeps a comment mentioning a tag from swallowing a real one. The split reuses that path rather than a second XML writer.</div>
+    <div class="note">One conditional group per framework of the project, in the order the project declares them, and the reference is only ever written at a version that framework already resolved or the user just picked. A project with three frameworks gets three groups, not two and a leftover.</div>
+  </div>
+</div>
+
+<h2>Choosing frameworks when installing — visible, not a right-click</h2>
+<div class="row">
+  <div class="panel narrow">
+    <h3>A — badges toggle, one version for the row</h3>
+    <div class="prow"><span class="cb on"></span><span class="pname">Example.MultiTarget.App</span></div>
+    <div class="prow"><span class="cb on"></span><span class="pname">Example.MultiTarget.Workers</span></div>
+    <div class="prow2">
+      <span class="tfm on">net8.0</span>
+      <span class="tfm off">net9.0</span>
+      <span class="tfm on">net10.0</span>
+      <span class="field row-field" style="flex:0 0 7em; padding:1px 6px;"><span>7.0.0</span><span class="arrow">&#9662;</span></span>
+    </div>
+    <div class="note">Every badge lit is what happens today — one plain write, no conditional groups. Turning one off narrows the install, and the version box appears only then, because that is when a version of the row's own means anything. Simple, and a project needs two passes to end up with different versions in different frameworks.</div>
+  </div>
+
+  <div class="panel narrow">
+    <h3>B — each badge carries its own version</h3>
+    <div class="prow"><span class="cb on"></span><span class="pname">Example.MultiTarget.App</span></div>
+    <div class="prow"><span class="cb on"></span><span class="pname">Example.MultiTarget.Workers</span></div>
+    <div class="prow2">
+      <span class="tfmv on">net8.0 <span class="v">7.0.0</span></span>
+      <span class="tfm off">net9.0</span>
+      <span class="tfmv on">net10.0 <span class="v">10.0.0</span></span>
+    </div>
+    <div class="note">The same toggles, and a lit badge shows the version it will take — defaulting to the one at the top of the panel. One Apply can put 7.0.0 into <code>net8.0</code> and 10.0.0 into <code>net10.0</code>, which is exactly the case that fails today: <code>Serilog.AspNetCore</code> 10.0.0 needs <code>Logging.Abstractions</code> &gt;= 10.0.0, and <code>net8.0</code> is pinned to 8.0.0.</div>
+  </div>
+
+  <div class="panel narrow">
+    <h3>What both share</h3>
+    <div class="note" style="margin-top:0;">The badges only appear for a project that targets more than one framework. A single-target project keeps the row it has now — a checkbox, a name and a path — and so does every project in a solution that never multi-targets.</div>
+    <div class="note">All badges lit means the write stays plain and unconditional, so installing into an ordinary project does not start growing conditional groups it never had.</div>
+    <div class="note">The right-click menu goes away. It was doing this job invisibly.</div>
+  </div>
+</div>
+
+<h2>What the picker offers, and what the button proposes</h2>
+<div class="row">
+  <div class="panel narrow">
+    <div class="label">VERSION FOR net9.0</div>
+    <div class="field" style="margin-top:6px; display:flex; justify-content:space-between;"><span>9.0.0</span><span class="arrow">&#9662;</span></div>
+    <div style="border:0.5px solid #3c3c3c; border-radius:3px; margin-top:4px; padding:3px 0;">
+      <div style="padding:3px 8px;" class="pick">9.0.20 &nbsp;<span class="range">latest in line</span></div>
+      <div style="padding:3px 8px;">9.0.10</div>
+      <div style="padding:3px 8px; background:#04395e;">9.0.0</div>
+      <div style="padding:3px 8px; border-top:0.5px solid #2f2f2f; margin-top:3px; padding-top:6px;" class="muted">10.0.12 &nbsp;<span class="range">leaves the 9.x line</span></div>
+      <div style="padding:3px 8px;" class="muted">10.0.0</div>
+    </div>
+    <div class="note">The list stays complete — crossing a major deliberately is a legitimate thing to do. What changes is the default the apply button proposes: the highest version inside the line this framework is pinned to, which is what <code>dotnet list --outdated --highest-minor</code> reports. Plain <code>--outdated</code> offers 10.0.12 for <code>net9.0</code>, and taking that silently is the whole complaint.</div>
+  </div>
+
+  <div class="panel narrow">
+    <h3>The line above the projects</h3>
+    <div class="sub" style="margin-top:8px;">showing 10.0.0 &middot; also 9.0.0 in 1 project</div>
+    <div class="note">Today. It counts projects, so two frameworks of one project read as a second project that is not there.</div>
+    <div class="sub" style="margin-top:14px;">showing 10.0.0 &middot; also 9.0.0 in net9.0</div>
+    <div class="note">Proposed: when the difference is between frameworks of one project, name the framework instead of counting projects. Across projects the existing wording is untouched.</div>
+  </div>
+
+  <div class="panel narrow">
+    <h3>What does not change</h3>
+    <div class="note" style="margin-top:0;">The packages list on the left stays one row per id. A framework split is a property of a project, not of the id, and the row already carries the <strong>&#8593;</strong> when anything beneath it has an update.</div>
+    <div class="note">A project whose frameworks agree renders through the same row it uses now — the split is the exception, not a new default shape for the section.</div>
+  </div>
+</div>
+
+<h2>Groups tab</h2>
+<div class="row">
+  <div class="panel narrow">
+    <div class="prow">
+      <span class="pname">Microsoft.Extensions.*</span>
+      <span class="badge dim">net9.0</span>
+      <span class="sub">2</span>
+    </div>
+    <div class="prow">
+      <span class="pname">Microsoft.Extensions.*</span>
+      <span class="badge dim">net10.0</span>
+      <span class="sub">2</span>
+    </div>
+    <div class="note">The two groups already fall apart on their own — the key includes the resolved version, and per-framework pins differ by definition. What is missing is the badge saying which framework a group is, and the <code>--framework</code> on the calls it applies. A group whose members are not framework-scoped carries no badge and looks exactly as it does today.</div>
+  </div>
+
+  <div class="panel narrow">
+    <h3>Still entangled, per framework</h3>
+    <div class="note" style="margin-top:0;"><code>Microsoft.Extensions.Http</code> 9.0.20 wants <code>Microsoft.Extensions.Logging.Abstractions</code> &gt;= 9.0.20, so bumping one alone inside <code>net9.0</code> fails restore with <code>NU1605</code>. The family path already moves members together; what it has to learn is to do that per framework — the <code>net9.0</code> members as one batch, the <code>net10.0</code> members as another.</div>
+  </div>
+</div>
+
+</body>
+</html>

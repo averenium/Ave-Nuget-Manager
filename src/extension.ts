@@ -24,7 +24,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     logger = new Logger();
     await activateCore(context, logger);
   } catch (err) {
-    const text = formatUnknownError(err);
     try {
       console.error('[AVE NuGet Manager] activate failed', err);
     } catch { /* ignore */ }

@@ -79,6 +79,7 @@ import {
 } from './projectFileSnapshot';
 import {
   detectProjectPackageStyle,
+  isSdkStyleProject,
   packagesConfigExists,
   PACKAGES_CONFIG_SKIP,
 } from './projectPackageStyle';
@@ -88,6 +89,13 @@ import {
   upsertPackageReference,
   writeProjectXml,
 } from './legacyPackageReference';
+import {
+  declaredFrameworks,
+  frameworksToUpdate,
+  hasSharedReference,
+  isFrameworkScopedReference,
+  versionForFramework,
+} from './frameworkConditions';
 import {
   collectVulnerabilityFindings,
   DotnetVulnerableProvider,
@@ -150,6 +158,12 @@ interface InstallAttempt {
   mutated?: boolean;
   /** packages.config skip: not a failed update in Groups. */
   skippedUnsupported?: boolean;
+  /**
+   * Conditional groups this write landed in (#82). Absent for an ordinary
+   * unconditional reference, which is every project that does not pin per
+   * framework.
+   */
+  frameworks?: string[];
 }
 
 function skippedInstallResult(): CliResult {
@@ -429,7 +443,15 @@ export class WebviewMessageBroker {
         break;
 
       case 'INSTALL_PACKAGE':
-        await this._handleInstallSingle(msg.projectPath, msg.packageId, msg.version);
+        await this._handleInstallSingle(
+          msg.projectPath, msg.packageId, msg.version, msg.framework, msg.acrossLines,
+        );
+        break;
+
+      case 'SPLIT_PACKAGE_REFERENCE':
+        await this._handleSplitReference(
+          msg.projectPath, msg.packageId, msg.frameworks, msg.framework, msg.version,
+        );
         break;
 
       case 'REMOVE_PACKAGE':
@@ -437,7 +459,9 @@ export class WebviewMessageBroker {
         break;
 
       case 'INSTALL_PACKAGE_MULTI':
-        await this._handleInstallMulti(msg.projects, msg.packageId, msg.version);
+        await this._handleInstallMulti(
+          msg.projects, msg.packageId, msg.version, msg.frameworks, msg.acrossLines,
+        );
         break;
 
       case 'REMOVE_PACKAGE_MULTI':
@@ -804,7 +828,11 @@ export class WebviewMessageBroker {
 
     const installed = this._stampCachedLatest(listed.installed);
     this._installedIds = new Set(installed.map((pkg) => pkg.id.toLowerCase()));
-    this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: installed });
+    this.provider.postMessage({
+      type: 'INSTALLED_PACKAGES',
+      packages: installed,
+      projectFrameworks: listed.projectFrameworks,
+    });
     this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
 
     // Replay each package's cached enrich data (latest version, source,
@@ -1045,16 +1073,237 @@ export class WebviewMessageBroker {
     projectPath: string,
     packageId: string,
     version: string,
+    framework?: string,
+    acrossLines?: boolean,
   ): Promise<void> {
     if (this._rejectBlockedVersionChange(packageId)) return;
-    const attempts = await this._installOnProjects(packageId, version, [projectPath]);
+    const attempts = await this._installOnProjects(
+      packageId, version, [projectPath], undefined, undefined, false, framework, undefined, acrossLines,
+    );
     await this._finishInstallAttempts(packageId, version, attempts);
+  }
+
+  /**
+   * Replace one unconditional `PackageReference` with one per target framework
+   * (#82). `dotnet add --framework` cannot narrow a shared reference — it edits
+   * that one line and moves every framework with it — so the shape is rebuilt
+   * instead: remove the shared reference, then add it back once per framework,
+   * the named one at the new version and the rest at the version they already
+   * had. Nothing changes for a framework the user did not pick.
+   *
+   * Each add carries its own restore, and deliberately so: `--framework` is
+   * only honoured when the compatibility check runs, and `--no-restore` makes
+   * the CLI write the version into *every* conditional group instead — measured
+   * on `demo/multi-tfm`, and the reason this cannot borrow the batched
+   * `--no-restore` shape the entangled-cluster path uses (#38).
+   *
+   * The project file decides whether this may run at all. `dotnet list` cannot
+   * tell one unconditional reference from two conditional groups that happen to
+   * agree on a version, and rebuilding the second kind would replace whatever
+   * conditions it had with plain TFM equalities — losing a `!=` or a
+   * `Contains(...)` this code cannot write back. So the reference has to be
+   * genuinely shared, read from the file, before anything is removed.
+   *
+   * A failure restores the snapshot outright rather than going through the
+   * `onFailedUpdate` setting: `keep` exists to leave a *version bump* in place
+   * for the user to inspect, and there is no version to keep here — a half-done
+   * split is a project that lost its reference.
+   */
+  private async _handleSplitReference(
+    projectPath: string,
+    packageId: string,
+    frameworks: string[],
+    framework: string,
+    version: string,
+  ): Promise<void> {
+    if (this._rejectBlockedVersionChange(packageId)) return;
+    if (frameworks.length === 0) return;
+
+    const snapshots = await snapshotProjectFiles(projectPath);
+    this.trace?.noteTouchedProject(projectPath);
+    const xml = snapshots.find((f) => pathsEqual(f.path, projectPath))?.content ?? '';
+    if (!hasSharedReference(xml, packageId)) {
+      // `dotnet list` reports one entry per framework either way, so the webview
+      // cannot tell a shared reference from conditional groups that happen to
+      // agree on a version. The file can. When they are already conditional,
+      // the ask needs no split at all — the group for this framework is right
+      // there to be written, and rebuilding the file would only risk losing a
+      // condition this code cannot write back.
+      const conditional = frameworksToUpdate(xml, packageId);
+      if (conditional.includes(framework)) {
+        await this._handleInstallSingle(projectPath, packageId, version, framework);
+        return;
+      }
+      this.provider.postMessage({
+        type: 'OPERATION_ERROR',
+        operation: 'install',
+        packageId,
+        failures: [{
+          projectPath,
+          stderr: `${packageId} is not referenced by a single unconditional PackageReference in `
+            + `this project, and no conditional group targets ${framework}, so there is nothing `
+            + 'to split. Change the version on the framework row instead.',
+          exitCode: null,
+        }],
+        succeededProjects: [],
+      });
+      return;
+    }
+    const previousVersion = readPackageVersionFromSnapshots(snapshots, packageId);
+    const results = await this._rebuildAsFrameworkGroups(
+      projectPath, packageId, frameworks, [framework], version, previousVersion,
+    );
+
+    const ok = results.every(isCliOperationSuccess);
+    this.trace?.recordBroker('split-reference', {
+      project: path.basename(projectPath),
+      packageId,
+      version,
+      framework,
+      ok,
+    });
+
+    const attempt: InstallAttempt = {
+      projectPath,
+      snapshots,
+      previousVersion,
+      result: mergeCliResults(results),
+    };
+    // Restores the file and re-restores the project, the same way a rolled-back
+    // update does. Reported as `mutated: false` afterwards so the shared
+    // bookkeeping does not roll back a file that is already back where it
+    // started — or, under `keep`, offer a Rollback button for it.
+    if (!ok) await this._restoreAttempts([attempt]);
+    await this._finishInstallAttempts(packageId, version, [
+      ok ? attempt : { ...attempt, mutated: false },
+    ]);
+  }
+
+  /**
+   * Remove a shared reference and add it back once per framework: the ones in
+   * `updated` at `version`, every other one at the version it already had.
+   *
+   * Each add restores, for the reason `_handleSplitReference` documents —
+   * `--framework` is only honoured when the compatibility check runs. Stops at
+   * the first failure; the caller puts the file back.
+   */
+  private async _rebuildAsFrameworkGroups(
+    projectPath: string,
+    packageId: string,
+    frameworks: string[],
+    updated: readonly string[],
+    version: string,
+    previousVersion: string | null,
+    signal?: AbortSignal,
+  ): Promise<CliResult[]> {
+    const results: CliResult[] = [];
+    const removed = await this.backend.removePackage(projectPath, packageId);
+    results.push(removed);
+    if (!isCliOperationSuccess(removed)) return results;
+    for (const tfm of frameworks) {
+      const target = updated.includes(tfm) ? version : (previousVersion ?? version);
+      const added = await this.backend.installPackage(projectPath, packageId, target, signal, tfm);
+      results.push(added);
+      if (!isCliOperationSuccess(added) || signal?.aborted) break;
+    }
+    return results;
+  }
+
+  /**
+   * A write aimed at named frameworks of a reference the project states once,
+   * unconditionally, for all of them (#82).
+   *
+   * `dotnet add --framework` cannot narrow that: measured on a two-framework
+   * project, asking for `net9.0` alone rewrites the one shared line and
+   * `net10.0` moves with it, the CLI saying only that the package is
+   * "compatible with a subset of the specified frameworks". The frameworks the
+   * user switched off in the project popup would change anyway — the opposite
+   * of what switching them off asked for. So the reference is rebuilt into one
+   * group per framework, exactly as the single-row split does, and only the
+   * named ones take the new version.
+   *
+   * Returns `undefined` when none of this applies, leaving the caller to write
+   * the way it always did: `--framework` lands correctly both on a reference
+   * that is already conditional and on a package the project does not reference
+   * yet, where it creates the conditional group itself.
+   */
+  private async _narrowSharedReference(
+    projectPath: string,
+    snapshots: FileSnapshot[],
+    previousVersion: string | null,
+    packageId: string,
+    version: string,
+    targets: string[],
+    signal?: AbortSignal,
+  ): Promise<{ result: CliResult; skipped?: boolean; mutated?: boolean; frameworks?: string[] } | undefined> {
+    const xml = snapshots.find((f) => pathsEqual(f.path, projectPath))?.content ?? '';
+    // A legacy project is written by editing its XML, not by `dotnet add`, and
+    // targets one framework anyway — nothing here applies to it.
+    if (!isSdkStyleProject(xml)) return undefined;
+    if (!hasSharedReference(xml, packageId)) return undefined;
+    if (previousVersion !== null && compareSemVer(previousVersion, version) === 0) {
+      // The one line already reads the target, so every framework is on it
+      // and there is nothing a rebuild would change.
+      return { result: skippedInstallResult(), skipped: true };
+    }
+
+    // The whole set, or the groups for the frameworks left alone would not be
+    // written back and the package would leave them. The file answers when it
+    // states the frameworks literally; `dotnet list` reports what MSBuild
+    // evaluated, which is the answer when they come from a property.
+    const evaluated = Object.entries(this._lastListed?.projectFrameworks ?? {})
+      .find(([p]) => pathsEqual(p, projectPath))?.[1] ?? [];
+    const stated = declaredFrameworks(xml);
+    const declared = stated.length > 0 ? stated : evaluated;
+    if (declared.length === 0 || targets.some((t) => !declared.includes(t))) {
+      return {
+        result: {
+          exitCode: null,
+          stdout: '',
+          stderr: `${packageId} is referenced once for every framework of this project, so `
+            + `installing it into ${targets.join(', ')} alone means splitting that reference — `
+            + 'and the frameworks this project targets could not be read, so the rest of them '
+            + 'would lose the package. Install it into every framework instead, or split the '
+            + 'reference from the project row.',
+          timedOut: false,
+        },
+        mutated: false,
+      };
+    }
+
+    const results = await this._rebuildAsFrameworkGroups(
+      projectPath, packageId, declared, targets, version, previousVersion, signal,
+    );
+    const ok = results.every(isCliOperationSuccess);
+    this.trace?.recordBroker('narrow-shared-reference', {
+      project: path.basename(projectPath),
+      packageId,
+      version,
+      frameworks: targets.join(','),
+      ok,
+    });
+    // A half-done rebuild is a project that lost its reference, not a version
+    // bump worth keeping, so it goes back immediately and is reported as
+    // `mutated: false` — the same choice the single-row split makes, and what
+    // keeps it away from `onFailedUpdate: keep` and its Rollback button.
+    if (!ok) {
+      await this._restoreAttempts([{
+        projectPath, snapshots, previousVersion, result: mergeCliResults(results),
+      }]);
+    }
+    return {
+      result: mergeCliResults(results),
+      frameworks: ok ? targets : undefined,
+      mutated: ok,
+    };
   }
 
   private async _handleInstallMulti(
     projects: string[],
     packageId: string,
     version: string,
+    frameworks?: Record<string, string[]>,
+    acrossLines?: boolean,
   ): Promise<void> {
     if (this._rejectBlockedVersionChange(packageId)) return;
     // `_installOnProjects` already reports each project as it lands — the batch
@@ -1067,6 +1316,11 @@ export class WebviewMessageBroker {
       (projectPath, ok) => this.provider.postMessage({
         type: 'PROJECT_OPERATION_DONE', operation: 'install', packageId, projectPath, ok,
       }),
+      undefined,
+      false,
+      undefined,
+      frameworks,
+      acrossLines,
     );
     await this._finishInstallAttempts(packageId, version, attempts);
   }
@@ -1078,6 +1332,12 @@ export class WebviewMessageBroker {
     onProjectDone?: (projectPath: string, ok: boolean) => void,
     signal?: AbortSignal,
     retryTransient = false,
+    /** One target framework to confine every write to (#82). */
+    framework?: string,
+    /** Frameworks to write per project, for the ones narrowed to a subset (#82). */
+    frameworksByProject?: Record<string, string[]>,
+    /** Confirmed: write conditional groups outside this version's line too (#82). */
+    acrossLines?: boolean,
   ): Promise<InstallAttempt[]> {
     const generation = this._restoreGeneration;
     const prepared = await Promise.all(
@@ -1101,13 +1361,21 @@ export class WebviewMessageBroker {
           onProjectDone?.(p.projectPath, false);
           return { ...p, result };
         }
-        const { result: first, skipped, mutated, skippedUnsupported } = await this._addOrUpdatePackage(
+        // A project narrowed to some of its frameworks is written once per
+        // framework; every other project keeps the single plain write it always
+        // had, `undefined` and all (#82).
+        const targets: Array<string | undefined> = frameworksByProject?.[p.projectPath]?.length
+          ? frameworksByProject[p.projectPath]
+          : [framework];
+        const { result: first, skipped, mutated, skippedUnsupported, frameworks } = await this._addOrUpdateFrameworks(
           p.projectPath,
           p.snapshots,
           p.previousVersion,
           packageId,
           version,
+          targets,
           signal,
+          acrossLines,
         );
         let result = first;
         this.trace?.recordBroker('add', {
@@ -1130,7 +1398,9 @@ export class WebviewMessageBroker {
           if (signal?.aborted) break;
           result = mutated
             ? await this.backend.restoreProject(p.projectPath, signal)
-            : await this.backend.installPackage(p.projectPath, packageId, version, signal);
+            : await this.backend.installPackage(
+              p.projectPath, packageId, version, signal, targets[0],
+            );
           this.trace?.recordBroker('add-retry', {
             project: path.basename(p.projectPath),
             packageId,
@@ -1139,7 +1409,7 @@ export class WebviewMessageBroker {
           });
         }
         onProjectDone?.(p.projectPath, isCliOperationSuccess(result));
-        return { ...p, result, skipped, mutated, skippedUnsupported };
+        return { ...p, result, skipped, mutated, skippedUnsupported, frameworks };
       }),
       getConfig().dotnetConcurrency,
     );
@@ -1155,6 +1425,62 @@ export class WebviewMessageBroker {
     return attempts;
   }
 
+  /**
+   * One project's write, once per target framework it was narrowed to (#82).
+   * `targets` is `[undefined]` for the ordinary case, which is the single plain
+   * call this always made. The first failure stops the rest: the restore that
+   * each one runs would fail again anyway, and one error reads better than
+   * several saying the same thing.
+   */
+  private async _addOrUpdateFrameworks(
+    projectPath: string,
+    snapshots: FileSnapshot[],
+    previousVersion: string | null,
+    packageId: string,
+    version: string,
+    targets: Array<string | undefined>,
+    signal?: AbortSignal,
+    acrossLines?: boolean,
+  ): Promise<{
+    result: CliResult;
+    skipped?: boolean;
+    mutated?: boolean;
+    skippedUnsupported?: boolean;
+    frameworks?: string[];
+  }> {
+    // Every target named, and the project stating one shared reference for all
+    // of them, is the one shape `--framework` cannot write: it would move the
+    // frameworks the caller left out (#82).
+    const named = targets.filter((t): t is string => !!t);
+    if (named.length > 0 && named.length === targets.length) {
+      const narrowed = await this._narrowSharedReference(
+        projectPath, snapshots, previousVersion, packageId, version, named, signal,
+      );
+      if (narrowed) return narrowed;
+    }
+
+    const outcomes = [];
+    for (const framework of targets.length > 0 ? targets : [undefined]) {
+      const outcome = await this._addOrUpdatePackage(
+        projectPath, snapshots, previousVersion, packageId, version, signal, framework, acrossLines,
+      );
+      outcomes.push(outcome);
+      if (!isCliOperationSuccess(outcome.result) || signal?.aborted) break;
+    }
+    const frameworks = [...new Set(outcomes.flatMap((o) => o.frameworks ?? []))];
+    return {
+      result: mergeCliResults(outcomes.map((o) => o.result)),
+      frameworks: frameworks.length > 0 ? frameworks : undefined,
+      // Skipped only when nothing was written anywhere, and mutated as soon as
+      // any one framework changed the file.
+      skipped: outcomes.every((o) => o.skipped),
+      mutated: outcomes.some((o) => o.mutated === true)
+        ? true
+        : (outcomes.every((o) => o.mutated === false) ? false : undefined),
+      skippedUnsupported: outcomes.some((o) => o.skippedUnsupported),
+    };
+  }
+
   private async _addOrUpdatePackage(
     projectPath: string,
     snapshots: FileSnapshot[],
@@ -1162,7 +1488,15 @@ export class WebviewMessageBroker {
     packageId: string,
     version: string,
     signal?: AbortSignal,
-  ): Promise<{ result: CliResult; skipped?: boolean; mutated?: boolean; skippedUnsupported?: boolean }> {
+    framework?: string,
+    acrossLines?: boolean,
+  ): Promise<{
+    result: CliResult;
+    skipped?: boolean;
+    mutated?: boolean;
+    skippedUnsupported?: boolean;
+    frameworks?: string[];
+  }> {
     const xml = snapshots.find((s) => pathsEqual(s.path, projectPath))?.content ?? '';
     const style = detectProjectPackageStyle(xml, await packagesConfigExists(projectPath));
 
@@ -1176,7 +1510,17 @@ export class WebviewMessageBroker {
       };
     }
 
-    const sameVersion = previousVersion !== null && compareSemVer(previousVersion, version) === 0;
+    // "Already at this version" has to be asked of the reference this write is
+    // about. A package referenced per framework has several, and
+    // `readPackageVersionFromSnapshots` answers with whichever comes first in
+    // the file — so a write another framework needed was skipped, the operation
+    // ended having done nothing, and the progress strip waited on a refresh
+    // that never came (#82).
+    const sameVersion = framework
+      ? versionForFramework(xml, packageId, framework) === version
+      : isFrameworkScopedReference(xml, packageId)
+        ? frameworksToUpdate(xml, packageId, version, { acrossLines }).length === 0
+        : previousVersion !== null && compareSemVer(previousVersion, version) === 0;
     const duplicateLegacy = style === 'legacy-packageref'
       && countPackageReferences(xml, packageId) > 1;
     if (sameVersion && !duplicateLegacy) {
@@ -1204,7 +1548,32 @@ export class WebviewMessageBroker {
       };
     }
 
-    return { result: await this.backend.installPackage(projectPath, packageId, version, signal) };
+    if (framework) {
+      return {
+        result: await this.backend.installPackage(projectPath, packageId, version, signal, framework),
+        frameworks: [framework],
+      };
+    }
+
+    // Nobody named a framework, so the project file decides. A package pinned
+    // in conditional groups is written one group at a time: a single call with
+    // no `--framework` rewrites every one of them to this version, which is
+    // how a `net8.0` pin used to end up on a `net10.0` target (#82). Writing
+    // each group separately lands the same version everywhere the caller meant
+    // it to land, and leaves the conditional structure intact.
+    const frameworks = frameworksToUpdate(xml, packageId, version, { acrossLines });
+    if (frameworks.length === 0) {
+      return { result: await this.backend.installPackage(projectPath, packageId, version, signal) };
+    }
+    const results: CliResult[] = [];
+    const written: string[] = [];
+    for (const tfm of frameworks) {
+      const result = await this.backend.installPackage(projectPath, packageId, version, signal, tfm);
+      results.push(result);
+      written.push(tfm);
+      if (!isCliOperationSuccess(result) || signal?.aborted) break;
+    }
+    return { result: mergeCliResults(results), frameworks: written };
   }
 
   private async _removeFromProject(
@@ -1348,6 +1717,7 @@ export class WebviewMessageBroker {
             },
             abort.signal,
             true,
+            item.framework,
           );
           const remainingOutcome = await this._finishInstallAttempts(item.packageId, item.toVersion, attempts, {
             notify: false,
@@ -1425,7 +1795,7 @@ export class WebviewMessageBroker {
 
         const membersForProject = queued
           .filter((item) => item.projects.includes(projectPath))
-          .map((item) => ({ packageId: item.packageId, toVersion: item.toVersion }));
+          .map((item) => ({ packageId: item.packageId, toVersion: item.toVersion, framework: item.framework }));
         const batchPackageIds = new Set(membersForProject.map((m) => m.packageId.toLowerCase()));
 
         const [{ dependencies: depsGraph, floors }, snapshot] = await Promise.all([
@@ -1476,23 +1846,62 @@ export class WebviewMessageBroker {
    * package's add does not block the others from also being applied — the
    * shared restore afterwards is what ultimately decides success or failure.
    */
+  /**
+   * One cluster member's add. `targets` is empty for an ordinary reference —
+   * the plain `--no-restore` call this path has always made — and otherwise
+   * names the conditional groups to write, each on its own so none of the
+   * others is collapsed onto this version (#82).
+   *
+   * A named framework forces the restoring form: `dotnet add --framework
+   * --no-restore` ignores the framework and writes every conditional group,
+   * measured on `demo/multi-tfm`. Framework-pinned members therefore give up
+   * the single shared restore this path exists for (#38) — being written to the
+   * right group matters more than being written in one pass. The first failure
+   * stops the rest, since the restore afterwards would fail anyway.
+   */
+  private async _clusterAdd(
+    projectPath: string,
+    packageId: string,
+    version: string,
+    targets: Array<string | undefined>,
+    signal: AbortSignal,
+  ): Promise<CliResult> {
+    const list = targets.length > 0 ? targets : [undefined];
+    const results: CliResult[] = [];
+    for (const framework of list) {
+      const result = framework
+        ? await this.backend.installPackage(projectPath, packageId, version, signal, framework)
+        : await this.backend.installPackageNoRestore(projectPath, packageId, version, signal);
+      results.push(result);
+      if (!isCliOperationSuccess(result) || signal.aborted) break;
+    }
+    return mergeCliResults(results);
+  }
+
   private async _runClusterForProject(
     projectPath: string,
-    members: Array<{ packageId: string; toVersion: string }>,
+    members: Array<{ packageId: string; toVersion: string; framework?: string }>,
     snapshot: FileSnapshot[],
     currentVersions: ReadonlyMap<string, string>,
     signal: AbortSignal,
   ): Promise<Array<{ packageId: string; toVersion: string; attempt: InstallAttempt }>> {
     const addResults = new Map<string, CliResult>();
 
-    for (const { packageId, toVersion } of members) {
+    for (const { packageId, toVersion, framework } of members) {
       if (signal.aborted) {
         addResults.set(packageId.toLowerCase(), {
           exitCode: null, stdout: '', stderr: 'Cancelled', timedOut: false, cancelled: true,
         });
         continue;
       }
-      let result = await this.backend.installPackageNoRestore(projectPath, packageId, toVersion, signal);
+      // Same rule as the ordinary write: an unnamed framework lets the project
+      // file decide, so a conditional group outside this target's line is left
+      // alone instead of being collapsed onto it (#82).
+      const xml = snapshot.find((f) => pathsEqual(f.path, projectPath))?.content ?? '';
+      const targets = framework
+        ? [framework]
+        : (frameworksToUpdate(xml, packageId, toVersion) as Array<string | undefined>);
+      let result = await this._clusterAdd(projectPath, packageId, toVersion, targets, signal);
       this.trace?.recordBroker('cluster-add', {
         project: path.basename(projectPath), packageId, version: toVersion, ok: isCliOperationSuccess(result),
       });
@@ -1503,7 +1912,7 @@ export class WebviewMessageBroker {
       ) {
         await delayInstallRetry(signal);
         if (signal.aborted) break;
-        result = await this.backend.installPackageNoRestore(projectPath, packageId, toVersion, signal);
+        result = await this._clusterAdd(projectPath, packageId, toVersion, targets, signal);
         this.trace?.recordBroker('cluster-add-retry', {
           project: path.basename(projectPath), packageId, version: toVersion, ok: isCliOperationSuccess(result),
         });
@@ -1663,6 +2072,7 @@ export class WebviewMessageBroker {
           operation: 'install',
           packageId,
           affectedProjects: succeeded,
+          refreshing: refresh && mutatedAttempts.length > 0,
         });
       } else if (mutatedAttempts.length > 0) {
         this._patchInstalledVersions(packageId, version, mutatedAttempts);
@@ -1765,12 +2175,18 @@ export class WebviewMessageBroker {
   ): void {
     this.provider.postMessage({
       type: 'INSTALLED_PACKAGES_PATCH',
-      packages: attempts.map((a) => ({
-        id: packageId,
-        requestedVersion: version,
-        resolvedVersion: version,
-        projectPath: a.projectPath,
-      })),
+      // One patch per conditional group actually written (#82). Without the
+      // framework the webview matched on the project alone and moved every
+      // framework of a multi-targeted project to this version — the rows then
+      // agreed with each other until the real refresh disagreed again.
+      packages: attempts.flatMap((a) => (a.frameworks?.length ? a.frameworks : [undefined])
+        .map((framework) => ({
+          id: packageId,
+          requestedVersion: version,
+          resolvedVersion: version,
+          projectPath: a.projectPath,
+          framework,
+        }))),
     });
   }
 
@@ -1929,7 +2345,11 @@ export class WebviewMessageBroker {
 
     const installed = this._stampCachedLatest(listed.installed);
     this._installedIds = new Set(installed.map((pkg) => pkg.id.toLowerCase()));
-    this.provider.postMessage({ type: 'INSTALLED_PACKAGES', packages: installed });
+    this.provider.postMessage({
+      type: 'INSTALLED_PACKAGES',
+      packages: installed,
+      projectFrameworks: listed.projectFrameworks,
+    });
     this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
 
     this._lastListed = listed;

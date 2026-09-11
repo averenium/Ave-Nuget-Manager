@@ -44,3 +44,44 @@ describe('resolveVersionSpread', () => {
     expect(resolveVersionSpread([], [])).toBeUndefined();
   });
 });
+
+describe('resolveVersionSpread — one project, several target frameworks (#82)', () => {
+  const CORE = '/s/Core.csproj';
+  const entry = (resolvedVersion: string, framework: string, projectPath = CORE) =>
+    ({ resolvedVersion, framework, projectPath });
+
+  it('names the framework instead of counting a project that is not there', () => {
+    expect(resolveVersionSpread([
+      entry('10.0.0', 'net10.0'),
+      entry('9.0.0', 'net9.0'),
+    ], [])).toEqual({
+      primary: '10.0.0',
+      others: [{ version: '9.0.0', projectCount: 1, frameworks: ['net9.0'] }],
+      withinOneProject: true,
+    });
+  });
+
+  it('goes back to counting projects once a second project is involved', () => {
+    const spread = resolveVersionSpread([
+      entry('10.0.0', 'net10.0'),
+      entry('9.0.0', 'net9.0'),
+      entry('9.0.0', 'net9.0', '/s/App.csproj'),
+    ], []);
+    expect(spread?.withinOneProject).toBeUndefined();
+    expect(spread?.others).toEqual([{ version: '9.0.0', projectCount: 2 }]);
+  });
+
+  it('says nothing new when one project agrees with itself', () => {
+    expect(resolveVersionSpread([
+      entry('13.0.1', 'net9.0'),
+      entry('13.0.1', 'net10.0'),
+    ], [])).toEqual({ primary: '13.0.1', others: [], withinOneProject: true });
+  });
+
+  it('keeps the old shape when the entries carry no framework at all', () => {
+    expect(resolveVersionSpread([
+      { resolvedVersion: '12.0.3', projectPath: CORE },
+      { resolvedVersion: '13.0.1', projectPath: CORE },
+    ], [])).toEqual({ primary: '13.0.1', others: [{ version: '12.0.3', projectCount: 1 }] });
+  });
+});

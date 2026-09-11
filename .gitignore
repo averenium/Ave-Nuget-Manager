@@ -12,3 +12,4 @@ docker/nexus/**/bin/
 docker/nexus/**/obj/
 demo/**
 demo/**
+.debug-logs/

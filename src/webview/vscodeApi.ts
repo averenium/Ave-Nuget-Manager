@@ -1,4 +1,4 @@
-import type { WebviewMessage, ExtensionMessage } from '../../messages';
+import type { WebviewMessage, ExtensionMessage } from '../messages';
 
 // Re-export from the root src for webview consumers
 export type { WebviewMessage, ExtensionMessage };

@@ -1,4 +1,5 @@
 import { compareSemVer } from './semver';
+import { frameworkScopedPins, isFrameworkScoped, latestInLine, pinGroupKey } from './frameworkPins';
 import { packageFamilyId } from './packageFamily';
 import { sortPackagesByDependencies } from './packageGraph';
 import { groupsTargetVersion, isCodeAnalysisPackage, type RoslynCap } from './roslynSdkCap';
@@ -13,11 +14,15 @@ export interface FamilyMember {
   latestVersion?: string;
   /** Direct deps from assets.json — used to order family updates. */
   dependencies?: string[];
+  /** Set when every entry behind this member belongs to one framework-pinned TFM (#82). */
+  framework?: string;
 }
 
 export interface FamilyGroup {
   family: string;
   fromVersion: string;
+  /** Set when every member of the group is pinned to this one TFM (#82). */
+  framework?: string;
   packageCount: number;
   /** Members whose latest is newer than `fromVersion` (All/Other-style count). */
   updateCount: number;
@@ -109,35 +114,82 @@ export function collectUpdatableItems(
   installed: InstalledPackage[],
   cap?: RoslynCap | null,
 ): BatchUpdateItem[] {
-  const byId = new Map<string, InstalledPackage[]>();
+  const scopedPins = frameworkScopedPins(installed);
+  const byKey = new Map<string, InstalledPackage[]>();
   for (const pkg of installed) {
-    const key = pkg.id.toLowerCase();
-    const list = byId.get(key);
+    const key = pinGroupKey(pkg, scopedPins);
+    const list = byKey.get(key);
     if (list) list.push(pkg);
-    else byId.set(key, [pkg]);
+    else byKey.set(key, [pkg]);
   }
 
   const items: Array<BatchUpdateItem & { dependencies?: string[] }> = [];
-  for (const entries of byId.values()) {
-    const latest = latestForId(entries, cap);
+  for (const entries of byKey.values()) {
+    const ceiling = latestForId(entries, cap);
+    if (!ceiling) continue;
+    // A framework-pinned bucket advances inside its own major line: that pin
+    // exists to keep net9.0 on 9.x while net10.0 moves through 10.x, and the
+    // feed's newest version belongs to whichever line it belongs to (#82).
+    // Every entry in such a bucket is framework-pinned by construction — an
+    // ordinary reference to the same id keys on the id alone and lands in its
+    // own bucket, where it keeps the plain latest-version target it always had.
+    const framework = isFrameworkScoped(entries[0], scopedPins) ? entries[0].framework : undefined;
+    const latest = framework ? targetInsideLine(entries, ceiling) : ceiling;
     if (!latest) continue;
-    const projects = entries
-      .filter((e) => isNewer(latest, e.resolvedVersion))
-      .map((e) => e.projectPath);
+
+    const behind = entries.filter((e) => isNewer(latest, e.resolvedVersion));
+    const projects = behind.map((e) => e.projectPath);
     if (projects.length === 0) continue;
-    const fromVersions = [...new Set(
-      entries.filter((e) => isNewer(latest, e.resolvedVersion)).map((e) => e.resolvedVersion),
-    )];
+    const fromVersions = [...new Set(behind.map((e) => e.resolvedVersion))];
     items.push({
       packageId: entries[0].id,
       fromVersion: fromVersions.join(' / '),
       toVersion: latest,
       projects: [...new Set(projects)],
+      framework,
       dependencies: [...new Set(entries.flatMap((e) => e.dependencies ?? []))],
     });
   }
 
   return sortByPackageDeps(items).map(({ dependencies: _deps, ...item }) => item);
+}
+
+/**
+ * The highest version inside the line this bucket already sits in, never above
+ * the ceiling an id-wide policy allows (the Roslyn SDK cap). The line is taken
+ * from the newest version in the bucket, so a project left further behind in
+ * the same framework still moves — one further behind in a *different* major
+ * simply gets no proposal here, and none of the alternatives to that are safe.
+ */
+function targetInsideLine(
+  entries: InstalledPackage[],
+  ceiling: string,
+): string | undefined {
+  const current = [...entries]
+    .sort((a, b) => compareSemVer(b.resolvedVersion, a.resolvedVersion))[0].resolvedVersion;
+  const candidates = [...new Set(entries.flatMap((e) => e.versions ?? []))]
+    .filter((v) => compareSemVer(v, ceiling) <= 0);
+  // With no enrich list the ceiling is the only candidate there is, and it
+  // counts only if it happens to be in the line already.
+  return latestInLine(current, candidates.length > 0 ? candidates : [ceiling]);
+}
+
+/**
+ * The one TFM a set of entries belongs to, when every entry names it and at
+ * least one of them is for an id somebody pins per framework (#82). A group
+ * that is only incidentally all-`net10.0` — because that is what the whole
+ * solution targets — gets nothing: the badge is there to explain why two groups
+ * of one family exist, not to restate the TFM on every group in the tab.
+ */
+function singleFramework(
+  entries: readonly InstalledPackage[],
+  scopedPins: ReadonlySet<string>,
+): string | undefined {
+  if (!entries.some((e) => isFrameworkScoped(e, scopedPins))) return undefined;
+  const frameworks = new Set(entries.map((e) => e.framework));
+  if (frameworks.size !== 1) return undefined;
+  const [only] = frameworks;
+  return only || undefined;
 }
 
 /**
@@ -148,6 +200,7 @@ export function collectFamilyGroups(
   installed: InstalledPackage[],
   cap?: RoslynCap | null,
 ): FamilyGroup[] {
+  const scopedPins = frameworkScopedPins(installed);
   const buckets = new Map<string, InstalledPackage[]>();
   for (const pkg of installed) {
     if (isCodeAnalysisPackage(pkg.id) && cap === null) continue;
@@ -181,12 +234,14 @@ export function collectFamilyGroups(
       projects: [...new Set(idEntries.map((e) => e.projectPath))],
       latestVersion: latestForId(idEntries, cap),
       dependencies: [...new Set(idEntries.flatMap((e) => e.dependencies ?? []))],
+      framework: singleFramework(idEntries, scopedPins),
     }));
 
     const sortedMembers = sortFamilyMembers(members);
     groups.push({
       family,
       fromVersion,
+      framework: singleFramework(entries, scopedPins),
       packageCount: uniqueIds.length,
       updateCount: sortedMembers.filter((m) => isNewer(m.latestVersion, fromVersion)).length,
       members: sortedMembers,
@@ -222,6 +277,7 @@ export function familyItemsAtVersion(members: FamilyMember[], toVersion: string)
       fromVersion: m.fromVersion,
       toVersion,
       projects: m.projects,
+      framework: m.framework,
     }));
 }
 

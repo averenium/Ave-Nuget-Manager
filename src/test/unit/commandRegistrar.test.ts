@@ -54,7 +54,6 @@ import { CommandRegistrar } from '../../commandRegistrar';
 import { SolutionParser } from '../../solutionParser';
 
 // Minimal stubs — we only need resolveTargetFromUri logic here.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const vscode = require('vscode');
 
 function makeRegistrar() {

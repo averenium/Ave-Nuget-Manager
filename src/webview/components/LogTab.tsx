@@ -141,7 +141,7 @@ export function LogTab() {
   // the browser's own hover hit-testing toggles each copy-hover button's
   // `:hover` state as they cross it, which reads as flicker (#66 follow-up).
   const [scrolling, setScrolling] = useState(false);
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => { send({ type: 'GET_LOG_ENTRIES' }); }, [send]);
   useEffect(() => () => clearTimeout(scrollTimerRef.current), []);
@@ -171,7 +171,6 @@ export function LogTab() {
     } else {
       setPendingCount((c) => c + grew);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries.length]);
 
   const scrollToBottom = () => {

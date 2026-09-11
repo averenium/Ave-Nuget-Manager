@@ -184,3 +184,33 @@ export function IconMarkWarning() {
     </svg>
   );
 }
+
+/** Disclosure triangles for a row that opens into per-framework rows (#82). */
+export function IconChevronRight() {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+export function IconChevronDown() {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+/**
+ * The apply button when the picked version is the one already installed (#82).
+ * A check says "you are there"; the `=` it replaces read as an operator, and
+ * sat oddly beside the ↑ and ↓ it shares a slot with.
+ */
+export function IconCheck() {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m5 13 4.5 4.5L19 7" />
+    </svg>
+  );
+}

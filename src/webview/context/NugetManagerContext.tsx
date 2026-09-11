@@ -78,6 +78,12 @@ export interface AppState {
   packages: {
     installed: InstalledPackage[];
     implicit: ImplicitPackage[];
+    /**
+     * Every target framework each project declares, keyed by project path (#82).
+     * Includes frameworks holding no packages, which is what makes "add this
+     * package to that framework" an offer the UI can make at all.
+     */
+    projectFrameworks: Record<string, string[]>;
     available: AvailablePackage[];
     searchQuery: string;
     selectedSources: string[];
@@ -157,6 +163,7 @@ const initialState: AppState = {
   packages: {
     installed: [],
     implicit: [],
+    projectFrameworks: {},
     available: [],
     searchQuery: '',
     selectedSources: [],
@@ -403,6 +410,9 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         packages: {
           ...state.packages,
           installed,
+          // A refresh that could not read the frameworks keeps the last set it
+          // did read, rather than blanking the rows that depend on it.
+          projectFrameworks: msg.projectFrameworks ?? state.packages.projectFrameworks,
           isLoadingPackages: false,
           enrichProgress: uniqueIds.size === 0 || withLatest.size >= uniqueIds.size
             ? null
@@ -485,7 +495,13 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       for (const patch of msg.packages) {
         let found = false;
         installed = installed.map((pkg) => {
-          if (packageIdsEqual(pkg.id, patch.id) && pathsEqual(pkg.projectPath, patch.projectPath)) {
+          // A patch that names a framework belongs to that framework's
+          // conditional group alone; without one it is an ordinary reference and
+          // covers every framework the project reports it under (#82).
+          const sameFramework = patch.framework === undefined || pkg.framework === patch.framework;
+          if (packageIdsEqual(pkg.id, patch.id)
+            && pathsEqual(pkg.projectPath, patch.projectPath)
+            && sameFramework) {
             found = true;
             return {
               ...pkg,
@@ -500,7 +516,9 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       let projectVersions = state.detail.projectVersions;
       if (state.detail.selectedPackageId) {
         for (const patch of msg.packages) {
-          if (packageIdsEqual(patch.id, state.detail.selectedPackageId)) {
+          // A per-framework patch has no single version to put against the
+          // project — those rows read their own pin instead (#82).
+          if (patch.framework === undefined && packageIdsEqual(patch.id, state.detail.selectedPackageId)) {
             projectVersions = setProjectVersion(projectVersions, patch.projectPath, patch.resolvedVersion);
           }
         }
@@ -633,7 +651,11 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           ...state.detail,
           projectErrors: withoutPaths(state.detail.projectErrors, msg.affectedProjects),
           projectLoadingSet: withoutLoading(state.detail.projectLoadingSet, msg.affectedProjects),
-          projectOperation: state.detail.projectOperation
+          // The strip waits for the refreshed list, but only when one is
+          // actually coming: an operation that wrote nothing — every project
+          // already on the target version — has nothing to wait for, and left
+          // the strip running forever (#82).
+          projectOperation: state.detail.projectOperation && msg.refreshing !== false
             ? { ...state.detail.projectOperation, done: state.detail.projectOperation.total, phase: 'refresh' }
             : null,
         },

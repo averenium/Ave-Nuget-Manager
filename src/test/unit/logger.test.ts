@@ -161,7 +161,6 @@ describe('Logger', () => {
   // ── Output Channel ────────────────────────────────────────────────────────
 
   it('writes to the VSCode Output Channel (appendLine called)', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const vscode = require('vscode');
     // The mock createOutputChannel pushes into _outputChannels; find the one
     // belonging to this test's logger (the last Averenium NuGet Manager channel).
@@ -203,7 +202,6 @@ describe('Logger', () => {
   });
 
   it('info writes to the Output Channel and also creates an `info` LogEntry (#58)', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const vscode = require('vscode');
     const channels: Array<{ name: string; lines: string[] }> = vscode.window._outputChannels;
     const ch = channels.filter((c) => c.name === 'Averenium NuGet Manager').at(-1);
@@ -215,7 +213,6 @@ describe('Logger', () => {
   });
 
   it('error writes stack, does not throw, and creates an `error` LogEntry (#58)', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const vscode = require('vscode');
     const channels: Array<{ name: string; lines: string[] }> = vscode.window._outputChannels;
     const ch = channels.filter((c) => c.name === 'Averenium NuGet Manager').at(-1);

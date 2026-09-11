@@ -35,11 +35,51 @@ export type WebviewMessage =
   | { type: 'GET_ALL_VERSIONS'; packageId: string; configFiles: string[]; prerelease: boolean }
 
   // Install / Remove — Project scope (single project)
-  | { type: 'INSTALL_PACKAGE'; projectPath: string; packageId: string; version: string }
+  // `framework` confines the write to one conditional PackageReference group,
+  // for a project that pins this package per target framework (#82).
+  // `acrossLines` writes conditional groups outside this version's major line
+  // as well — only ever set after the user confirmed what that crosses (#82).
+  | {
+      type: 'INSTALL_PACKAGE';
+      projectPath: string;
+      packageId: string;
+      version: string;
+      framework?: string;
+      acrossLines?: boolean;
+    }
+  /**
+   * Turn one unconditional PackageReference into one per target framework, with
+   * `framework` moving to `version` and the rest staying where they are (#82).
+   * `dotnet add --framework` cannot do this on its own — it would edit the
+   * shared line and move every framework with it.
+   */
+  | {
+      type: 'SPLIT_PACKAGE_REFERENCE';
+      projectPath: string;
+      packageId: string;
+      frameworks: string[];
+      framework: string;
+      version: string;
+    }
   | { type: 'REMOVE_PACKAGE'; projectPath: string; packageId: string }
 
   // Install / Remove — Solution scope (after popup confirmation)
-  | { type: 'INSTALL_PACKAGE_MULTI'; projects: string[]; packageId: string; version: string }
+  // `frameworks` names one target framework for some of the projects (#82);
+  // the rest are written the way they always were.
+  | {
+      type: 'INSTALL_PACKAGE_MULTI';
+      projects: string[];
+      packageId: string;
+      version: string;
+      /**
+       * Target frameworks to write, per project (#82). Present only for a
+       * project narrowed to some of its frameworks — a project taking the
+       * package everywhere is absent here and written plainly, exactly as
+       * before, so an ordinary install never starts growing conditional groups.
+       */
+      frameworks?: Record<string, string[]>;
+      acrossLines?: boolean;
+    }
   | { type: 'REMOVE_PACKAGE_MULTI'; projects: string[]; packageId: string }
 
   /** Restore project files snapshotted before a failed add (`onFailedUpdate: keep`). */
@@ -146,7 +186,14 @@ export type ExtensionMessage =
     }
 
   // Packages
-  | { type: 'INSTALLED_PACKAGES'; packages: InstalledPackage[] }
+  // `projectFrameworks` is every TFM each project declares (#82) — including the
+  // ones this package is not referenced from, which is what makes adding it
+  // there possible at all.
+  | {
+      type: 'INSTALLED_PACKAGES';
+      packages: InstalledPackage[];
+      projectFrameworks?: Record<string, string[]>;
+    }
   | { type: 'IMPLICIT_PACKAGES'; packages: ImplicitPackage[] }
   | { type: 'INSTALLED_PACKAGES_PATCH'; packages: InstalledPackage[] }
   | { type: 'PACKAGE_INFO_UPDATE'; packageId: string; latestVersion: string; sourceName: string; versions?: string[] }
@@ -192,6 +239,14 @@ export type ExtensionMessage =
       operation: 'install' | 'remove';
       packageId: string;
       affectedProjects: string[];
+      /**
+       * Whether a package-list refresh follows. False when nothing was actually
+       * written — every project already on the target version — and the
+       * progress strip then has nothing left to wait for (#82). Without it the
+       * strip sat in its `refresh` phase forever, since the refresh that clears
+       * it never runs.
+       */
+      refreshing?: boolean;
     }
   | {
       type: 'OPERATION_ERROR';

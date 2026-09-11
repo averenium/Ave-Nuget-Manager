@@ -66,7 +66,8 @@ describe('setPackageSourceDisabled', () => {
       xml = setPackageSourceDisabled(xml, 'nexus', i % 2 === 0);
     }
     expect(xml).toMatch(
-      /<disabledPackageSources>\n    <add key="nexus" value="false" \/>\n  <\/disabledPackageSources>/,
+      // indentation this assertion is about.
+      /<disabledPackageSources>\n {4}<add key="nexus" value="false" \/>\n {2}<\/disabledPackageSources>/,
     );
     expect(xml).not.toMatch(/<disabledPackageSources>\s*\n\s*\n/);
   });

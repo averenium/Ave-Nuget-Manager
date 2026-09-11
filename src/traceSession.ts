@@ -118,7 +118,7 @@ export class TraceSession implements ITrace {
   }
 
   static async findOrphanDirs(storageRoot: string): Promise<string[]> {
-    let names: string[] = [];
+    let names: string[];
     try {
       names = await fs.readdir(storageRoot);
     } catch {

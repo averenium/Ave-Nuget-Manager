@@ -16,6 +16,12 @@ function versionWarningTitle(flags: VersionFlag | undefined): string | undefined
   return parts.join(' — ');
 }
 
+/** Leading major of a version, or undefined when it does not start with digits. */
+function majorOf(version: string): number | undefined {
+  const m = /^(\d+)/.exec(version.trim());
+  return m ? parseInt(m[1], 10) : undefined;
+}
+
 export function VersionSelect({
   versions,
   selected,
@@ -23,6 +29,7 @@ export function VersionSelect({
   disabled,
   label,
   versionFlags,
+  versionLine,
 }: {
   versions: string[];
   selected: string;
@@ -31,12 +38,20 @@ export function VersionSelect({
   label: string;
   /** Vulnerable/deprecated marks per version, from the feed — shown before a version is even chosen (#86). */
   versionFlags?: Record<string, VersionFlag>;
+  /**
+   * A version whose major line this picker belongs to (#82). Options outside it
+   * are set apart and annotated rather than removed: a per-framework pin exists
+   * to keep one target inside its line, but crossing a major deliberately is
+   * still a legitimate thing to do — it is doing it by accident that is not.
+   */
+  versionLine?: string;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const options = versions.length > 0 ? versions : (selected ? [selected] : []);
   const empty = options.length === 0;
   const selectedWarning = versionWarningTitle(versionFlags?.[selected]);
+  const line = versionLine === undefined ? undefined : majorOf(versionLine);
 
   useEffect(() => {
     if (!open) return;
@@ -72,18 +87,31 @@ export function VersionSelect({
       </button>
       {open && !empty && (
         <div className="version-select__dropdown" role="listbox" aria-label={label}>
-          {options.map((v) => {
+          {options.map((v, i) => {
             const warning = versionWarningTitle(versionFlags?.[v]);
+            const outside = line !== undefined && majorOf(v) !== line;
+            // The first option that leaves the line gets the rule above it, so
+            // the two halves of the list read as two halves.
+            const firstOutside = outside && (i === 0 || majorOf(options[i - 1]) === line);
             return (
               <button
                 key={v}
                 type="button"
                 role="option"
                 aria-selected={v === selected}
-                className={['version-select__option', v === selected ? 'version-select__option--selected' : '']
+                className={[
+                  'version-select__option',
+                  v === selected ? 'version-select__option--selected' : '',
+                  outside ? 'version-select__option--off-line' : '',
+                  firstOutside ? 'version-select__option--line-break' : '',
+                ]
                   .filter(Boolean)
                   .join(' ')}
-                title={warning ? `${v} — ${warning}` : v}
+                title={[
+                  v,
+                  outside ? `leaves the ${line}.x line` : '',
+                  warning ?? '',
+                ].filter(Boolean).join(' — ')}
                 onClick={() => {
                   onChange(v);
                   setOpen(false);

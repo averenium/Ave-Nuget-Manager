@@ -28,6 +28,7 @@ import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from '../..
 import type { BatchUpdateItem, BatchUpdateJob, BatchUpdateItemView } from '../../types';
 import { searchableConfigFiles } from '../../searchConfigFiles';
 import { mergeFamilyVersionFlags } from '../utils/familyVersionFlags';
+import { IconCheck } from '../utils/icons';
 
 type Selection =
   | { type: 'all' }
@@ -129,10 +130,13 @@ function GroupRow({
   hasUpdate,
   fromLabel,
   toLabel,
+  framework,
   onActivate,
 }: {
   name: string;
   count: number;
+  /** Set when this group exists because its members are pinned to one TFM (#82). */
+  framework?: string;
   selected: boolean;
   hasUpdate: boolean;
   fromLabel?: string;
@@ -145,7 +149,17 @@ function GroupRow({
       selected={selected}
       hasUpdate={hasUpdate}
       onActivate={onActivate}
-      aside={<span className="pkg-row__source">{count}</span>}
+      aside={(
+        <>
+          {framework && (
+            <span
+              className="pkg-row__tfm"
+              title={`These members are referenced only from ${framework}`}
+            >{framework}</span>
+          )}
+          <span className="pkg-row__source">{count}</span>
+        </>
+      )}
     >
       {fromLabel ? (
         <VersionPair from={fromLabel} to={toLabel ?? ''} highlight={hasUpdate && !!toLabel} />
@@ -278,6 +292,7 @@ export function UpdatesTab() {
           skipped: blocked || !familyTarget || familyTarget === m.fromVersion,
           blocked,
           projects: m.projects,
+          framework: m.framework,
         };
       })
     : (selection?.type === 'all' ? allUpdatable : allOther).map((i) => {
@@ -289,6 +304,7 @@ export function UpdatesTab() {
           skipped: blocked,
           blocked,
           projects: i.projects,
+          framework: i.framework,
         };
       });
 
@@ -406,6 +422,7 @@ export function UpdatesTab() {
                     key={`${g.family}@${g.fromVersion}`}
                     name={`${g.family}.*`}
                     count={g.updateCount}
+                    framework={g.framework}
                     selected={selected}
                     hasUpdate={g.updateCount > 0}
                     fromLabel={g.fromVersion}
@@ -448,7 +465,9 @@ export function UpdatesTab() {
                     >
                       ■
                     </button>
-                  ) : (
+                  ) : selection.type === 'family' ? null : (
+                    // All and Other have no version to choose, so their button
+                    // stays here; a family's sits joined to its target below (#82).
                     <button
                       type="button"
                       className={`btn btn--icon ${groupTone === 'same' ? 'btn--secondary' : 'btn--primary'}`}
@@ -456,9 +475,7 @@ export function UpdatesTab() {
                       aria-disabled={blockedOnly || undefined}
                       title={blockedOnly
                         ? BLOCKED_UPDATES_TOOLTIP
-                        : selection.type === 'family'
-                          ? `Update ${previewItems.length} package(s) to ${familyTarget}`
-                          : `Update ${previewItems.length} package(s) to latest`}
+                        : `Update ${previewItems.length} package(s) to latest`}
                       aria-label="Update"
                       onClick={startBatch}
                     >
@@ -467,13 +484,30 @@ export function UpdatesTab() {
                   )}
                 >
                   {selection.type === 'family' && (
-                    <VersionSelect
-                      versions={familyVersions}
-                      selected={familyTarget}
-                      label="Target version for family"
-                      onChange={setFamilyTarget}
-                      versionFlags={familyVersionFlags}
-                    />
+                    // Joined to the button that applies it, the same pair the
+                    // package rows use (#82). All and Other have no version to
+                    // pick, so their button stays in the header above.
+                    <div className="version-apply">
+                      <VersionSelect
+                        versions={familyVersions}
+                        selected={familyTarget}
+                        label="Target version for family"
+                        onChange={setFamilyTarget}
+                        versionFlags={familyVersionFlags}
+                      />
+                      <button
+                        className={`btn btn--icon version-apply__btn ${
+                          groupTone === 'same' ? 'btn--secondary' : 'btn--primary'
+                        }`}
+                        disabled={batchBusy || (previewItems.length === 0 && !blockedOnly)}
+                        aria-disabled={blockedOnly || undefined}
+                        title={blockedOnly
+                          ? BLOCKED_UPDATES_TOOLTIP
+                          : `Update ${previewItems.length} package(s) to ${familyTarget}`}
+                        aria-label="Update"
+                        onClick={startBatch}
+                      >{groupTone === 'same' ? <IconCheck /> : groupGlyph}</button>
+                    </div>
                   )}
                 </DetailHeader>
               )}
@@ -502,8 +536,14 @@ export function UpdatesTab() {
                     <div className="pkg-section__list">
                       {listRows.map((row) => (
                         <PkgListRow
-                          key={row.packageId}
+                          // One id can be here once per target framework (#82),
+                          // so the id alone is not a key — two rows sharing one
+                          // would have React reuse the wrong element.
+                          key={row.framework ? `${row.packageId}::${row.framework}` : row.packageId}
                           name={row.packageId}
+                          nameTitle={row.framework
+                            ? `${row.packageId} · ${row.framework}`
+                            : row.packageId}
                           muted={row.skipped || row.blocked}
                           hasUpdate={!row.skipped && !row.blocked}
                           blocked={row.blocked}
@@ -514,9 +554,17 @@ export function UpdatesTab() {
                             y: e.clientY,
                           })}
                           aside={(
-                            <span className="pkg-row__source" title={projectNames(row.projects)}>
-                              {row.projects.length} proj
-                            </span>
+                            <>
+                              {row.framework && (
+                                <span
+                                  className="pkg-row__tfm"
+                                  title={`Only the ${row.framework} reference is being changed`}
+                                >{row.framework}</span>
+                              )}
+                              <span className="pkg-row__source" title={projectNames(row.projects)}>
+                                {row.projects.length} proj
+                              </span>
+                            </>
                           )}
                         >
                           <VersionPair
@@ -588,18 +636,32 @@ function BatchJobList({ job }: { job: BatchUpdateJob }) {
           const stopped = item.status === 'cancelled';
           return (
             <PkgListRow
-              key={item.packageId}
+              // Same reason as the preview list: a framework-pinned package
+              // appears once per TFM, and two rows cannot share a key (#82).
+              key={item.framework ? `${item.packageId}::${item.framework}` : item.packageId}
               className={stale ? undefined : rowTone(item)}
               name={item.packageId}
-              nameTitle={item.error ?? `${item.packageId} · ${projectNames(item.projects)}`}
+              nameTitle={item.error ?? [
+                item.packageId,
+                item.framework,
+                projectNames(item.projects),
+              ].filter(Boolean).join(' · ')}
               muted={stale || stopped}
               aside={(
-                <span
-                  className="pkg-row__source"
-                  title={`${statusLabel(item)} · ${projectNames(item.projects)}`}
-                >
-                  {done}/{total}
-                </span>
+                <>
+                  {item.framework && (
+                    <span
+                      className="pkg-row__tfm"
+                      title={`Only the ${item.framework} reference was changed`}
+                    >{item.framework}</span>
+                  )}
+                  <span
+                    className="pkg-row__source"
+                    title={`${statusLabel(item)} · ${projectNames(item.projects)}`}
+                  >
+                    {done}/{total}
+                  </span>
+                </>
               )}
             >
               <VersionPair

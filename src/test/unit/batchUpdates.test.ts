@@ -89,6 +89,86 @@ describe('collectUpdatableItems', () => {
   });
 });
 
+describe('collectUpdatableItems — a package pinned per target framework (#82)', () => {
+  // The demo/multi-tfm fixture: one project, one id, two lines.
+  const CORE = '/s/Core.csproj';
+  const APP = '/s/App.csproj';
+  const LINES = ['10.0.12', '10.0.0', '9.0.20', '9.0.0'];
+
+  const tfmPkg = (
+    id: string,
+    version: string,
+    framework: string,
+    projectPath = CORE,
+    versions = LINES,
+  ): InstalledPackage => ({
+    id,
+    requestedVersion: version,
+    resolvedVersion: version,
+    projectPath,
+    framework,
+    latestVersion: versions[0],
+    versions,
+  });
+
+  it('proposes one target per framework, each inside its own major line', () => {
+    const items = collectUpdatableItems([
+      tfmPkg('Microsoft.Extensions.Http', '9.0.0', 'net9.0'),
+      tfmPkg('Microsoft.Extensions.Http', '10.0.0', 'net10.0'),
+    ]);
+    expect(items.map((i) => ({ to: i.toVersion, framework: i.framework }))).toEqual([
+      { to: '9.0.20', framework: 'net9.0' },
+      { to: '10.0.12', framework: 'net10.0' },
+    ]);
+  });
+
+  it('leaves an unconditional reference as one item with no framework', () => {
+    // Newtonsoft.Json in the fixture: same version under both TFMs.
+    const items = collectUpdatableItems([
+      tfmPkg('Newtonsoft.Json', '13.0.1', 'net9.0', CORE, ['13.0.4', '13.0.1']),
+      tfmPkg('Newtonsoft.Json', '13.0.1', 'net10.0', CORE, ['13.0.4', '13.0.1']),
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0].framework).toBeUndefined();
+    expect(items[0].toVersion).toBe('13.0.4');
+    expect(items[0].projects).toEqual([CORE]);
+  });
+
+  it('leaves a neighbouring project out of the framework-pinned items entirely', () => {
+    // APP references the id ordinarily. Pinning is a property of one project's
+    // file, so CORE's conditional groups must not reach into APP: it keeps the
+    // plain latest-version target it would have had on its own.
+    const items = collectUpdatableItems([
+      tfmPkg('Microsoft.Extensions.Http', '9.0.0', 'net9.0'),
+      tfmPkg('Microsoft.Extensions.Http', '10.0.0', 'net10.0'),
+      tfmPkg('Microsoft.Extensions.Http', '9.0.0', 'net9.0', APP),
+    ]);
+    expect(items.find((i) => i.framework === 'net9.0')?.projects).toEqual([CORE]);
+    expect(items.find((i) => i.framework === 'net10.0')?.projects).toEqual([CORE]);
+    const plain = items.find((i) => i.framework === undefined);
+    expect(plain?.projects).toEqual([APP]);
+    // The whole point: APP is offered the newest version, not CORE's 9.x line.
+    expect(plain?.toVersion).toBe('10.0.12');
+  });
+
+  it('says nothing for a line that has nothing newer in it', () => {
+    expect(collectUpdatableItems([
+      tfmPkg('A', '9.0.20', 'net9.0'),
+      tfmPkg('A', '10.0.0', 'net10.0'),
+    ]).map((i) => i.framework)).toEqual(['net10.0']);
+  });
+
+  it('keeps every ordinary package on the id alone, framework or not', () => {
+    const items = collectUpdatableItems([
+      tfmPkg('Serilog', '3.1.0', 'net9.0', CORE, ['4.0.0', '3.1.0']),
+      tfmPkg('Serilog', '3.1.0', 'net10.0', APP, ['4.0.0', '3.1.0']),
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0].framework).toBeUndefined();
+    expect(items[0].projects).toEqual([CORE, APP]);
+  });
+});
+
 describe('collectFamilyGroups', () => {
   it('groups Microsoft.**.** packages that share a version, including those without a newer latest', () => {
     const groups = collectFamilyGroups([

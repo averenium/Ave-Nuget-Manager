@@ -20,7 +20,7 @@ export async function findNearestFile(startDir: string, fileName: string): Promi
   let current = path.resolve(startDir);
   const root = path.parse(current).root;
   for (;;) {
-    let entries: string[] = [];
+    let entries: string[];
     try {
       entries = await fs.readdir(current);
     } catch {

@@ -39,7 +39,7 @@ Toolbar:
 
 - Restore (`RESTORE_PACKAGES`) — `dotnet restore`, потім list/vuln; кеш latest лишається;
 - Force refresh (`FORCE_REFRESH`) — те саме з очищенням кешу latest;
-- пошук (inline `<input>`, не `SearchBar.tsx` — той файл **не підключений**);
+- пошук (inline `<input>` у `PackagesTab`);
 - `SourceFilterDropdown`;
 - лічильник enrich `done/total`;
 - чекбокс Pre-release.

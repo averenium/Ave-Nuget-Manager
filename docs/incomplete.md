@@ -40,7 +40,6 @@ Retry 429/503 на catalog GET — у `HttpBackend`, не в `cliRetry` (той 
 
 ## UI-мертвий код
 
-- `src/webview/components/SearchBar.tsx` — дубль пошуку, `PackagesTab` має власний input.
 - `getState` / `setState` у `vscodeApi.ts` не використовуються.
 
 ## Обмеження scope

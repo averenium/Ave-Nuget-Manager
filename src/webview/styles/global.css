@@ -570,6 +570,14 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   background: var(--color-list-active);
   color: var(--color-list-active-fg);
 }
+/* Versions outside the major line this picker belongs to (#82): still offered,
+   set apart so choosing one is a decision rather than an accident. */
+.version-select__option--off-line { color: var(--color-tab-inactive); }
+.version-select__option--line-break {
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--spacing-xs);
+  padding-top: var(--spacing-sm);
+}
 /* Feed-reported vulnerable/deprecated mark on a version, before it's even chosen (#86). */
 .version-select__value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The `▾` SourceFilterDropdown already uses, at the button's own size and
@@ -877,20 +885,227 @@ a.badge:hover { text-decoration: underline; }
 
 /* ── Project list section ───────────────────────────────────────────────────── */
 .project-list { display: flex; flex-direction: column; gap: 2px; }
+/* No rule between rows (#82). Once the open project stopped being a table, a
+   line under every closed row was the only ruling left in the section, and it
+   made three short rows look like a grid. Spacing separates them, and the row
+   hover says which one the pointer is on. */
 .project-row {
   display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap;
-  padding: 3px 0; border-bottom: 1px solid var(--color-border);
+  padding: 4px 0;
   min-width: 0;
 }
-.project-row:last-child { border-bottom: none; }
 .project-row__name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .project-row .version-select { flex: 1 1 8em; width: auto; min-width: 0; }
+
 .project-row__error { width: 100%; color: var(--color-error); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 /* A project that only gets the package through restore (#90): "transitive"
    says why there is nothing to update here, and the version takes the slot the
    picker occupies on an installed row so the two line up down the column. */
 .project-row__transitive { font-size: 11px; color: var(--color-tab-inactive); flex-shrink: 0; }
 .project-row__action-gap { width: 24px; flex: 0 0 24px; }
+
+/* A project that pins this package per target framework (#82). The name and the
+   remove button keep the row they always had — removal is project-wide, because
+   `dotnet remove package` has no `--framework` — and the frameworks hang off it,
+   each with the version and the apply button that are genuinely per framework. */
+/* An open project is a band, not a table (#82). Lines were doing this job
+   before — a rule down the left, a rule under the heading, a rule under every
+   framework row — and a panel of five frameworks came out ruled like a
+   spreadsheet. A background says the same thing with nothing drawn: everything
+   sitting on it belongs to the project named at its top.
+
+   A real box rather than `display: contents`, which generates none and so
+   cannot carry either the band or the animation it opens with. */
+.project-group {
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--color-list-hover) 55%, transparent);
+  border-radius: var(--radius);
+  padding: 2px 0;
+  margin: 2px 0;
+}
+/* An open project is still a project row: same left edge, same name column, so
+   the names read as one list whether a project is open or closed (#82). No
+   indent of its own — pushing the heading in put its name 8px right of every
+   other project's and the list went ragged down the left — and no rule beneath
+   it either: a line across the panel to tie one button to a name was a band of
+   furniture for a very small job. The button says it itself, below. */
+.project-row--group-head { border-bottom: none; padding-bottom: 0; }
+.project-row__actions { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
+/* One indent level below the project names, and no rules of their own: the band
+   underneath is what holds them together, and a border under each row turned it
+   back into a table (#82). */
+.project-row--framework {
+  padding-left: 22px;
+  border-bottom: none;
+}
+.project-group .project-row__tfm {
+  /* The surface the version field beside it uses, plus the same edge that field
+     has: on the group's band a chip can end up within a shade of its
+     background, and the outline is what keeps it a badge in every theme rather
+     than in the ones where the two colours happen to differ enough. */
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-border);
+}
+.project-row--framework:last-child { border-bottom: none; }
+/* The TFM a Groups row is confined to (#82) — same shape as the one on a
+   per-framework project row. */
+.pkg-row__tfm {
+  font-size: 11px; color: var(--color-tab-inactive);
+  background: var(--color-list-hover);
+  border-radius: var(--radius);
+  padding: 1px 6px;
+  flex: 0 0 auto;
+}
+/* Opening a project into its per-framework rows (#82). The same triangle a
+   tree uses, on the rows that have something to open — and a matching gap on
+   the rows that do not, so every project name still starts at one x. */
+.project-row__toggle {
+  /* The gap matches the row's own, so a name after a chevron starts at the same
+     x as a name after the empty slot on a row with nothing to open (#82). */
+  display: flex; align-items: center; gap: var(--spacing-sm);
+  flex: 1; min-width: 0;
+  padding: 0; border: none; background: none;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  border-radius: var(--radius);
+}
+.project-row__disclosure {
+  display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; flex: 0 0 16px;
+  color: var(--color-tab-inactive);
+}
+.project-row__toggle:hover .project-row__disclosure { color: var(--color-fg); }
+.project-row__toggle:hover .project-row__name { text-decoration: underline; }
+.project-row__toggle:focus-visible {
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
+}
+.project-row__disclosure-gap { width: 16px; flex: 0 0 16px; }
+
+/* The rows it opens arrive rather than appear. */
+.project-group { animation: framework-rows-open 160ms ease-out; }
+@keyframes framework-rows-open {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-group { animation: none; }
+}
+
+/* A framework the package is not referenced from (#82): the row is an offer,
+   not a state, so it sits back until the pointer is on it. */
+/* The package is not referenced from this framework (#82). The version in the
+   picker is a proposal, not a fact — nothing is installed here — so the row
+   reads as muted throughout and the button carries the install icon rather than
+   an arrow. A dashed border said the same thing far too quietly at rest and far
+   too loudly under the pointer, and it left the number itself looking like an
+   installed version. */
+.project-row--unreferenced .project-row__tfm,
+.project-row--unreferenced .version-select__value {
+  color: var(--color-tab-inactive);
+}
+.project-row--unreferenced .version-select__value { font-style: italic; }
+
+/* Version and the button that applies it, as one control (#82). The action is
+   about the version beside it, and in a sidebar this narrow two boxes with a
+   gap between them spend width on saying nothing.
+
+   The outline belongs to the pair and the background to the half: hovering
+   either segment rings the whole control — anything else cuts it down the seam,
+   since the picker's right edge is the seam and has no border to colour — while
+   the half under the pointer lifts its own background to say which of the two a
+   click would hit. That is the same split the panel already makes for every
+   field: border says "this control", background says "this target" (#99).
+
+   Below the dashed-border rule on purpose: at equal specificity the later rule
+   is the one that decides whether the seam has an edge in it. */
+.version-apply {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  /* Invisible outside High Contrast, where it is the only boundary there is. */
+  outline: 1px solid var(--color-contrast-border);
+  outline-offset: -1px;
+}
+/* The pair grows with the row rather than sitting in a fixed column: a wide
+   panel should spend its width on the picker, which is what the row is for. The
+   project name shares the same growth and gives up its tail when there is not
+   enough for both — an ellipsis on a name that is still recognisable costs less
+   than a picker that stays narrow in a panel with room to spare (#82). */
+.project-row .version-apply { flex: 1 1 8em; }
+/* On a framework row it fills instead: the badge is short, nothing else is on
+   the line, and a fixed column left the badge stranded at the far left with a
+   hand's width of nothing after it. Growing keeps the right edge shared with
+   the project rows above — which is the edge that has to line up — and spends
+   the difference on a wider picker rather than on a gap. */
+.project-row--framework .version-apply { flex: 1 1 auto; margin-left: 0; }
+/* The version, its action and Remove on one line — the package header laid out
+   like a project row, rather than the buttons up beside the name (#82). Lost
+   once already when the block above was rewritten, which left the wrapper a
+   plain block and dropped Remove onto a line of its own. */
+.version-row { display: flex; align-items: center; gap: var(--spacing-xs); min-width: 0; }
+.version-row .version-apply { flex: 1 1 auto; }
+.version-apply .version-select { flex: 1 1 auto; min-width: 0; }
+
+/* The segments give their borders up to the pair and keep only the seam.
+
+   Their corners are the pair's radius less its 1px border — the radius of the
+   space they actually sit in. Given the full radius, each segment's arc cut
+   inside the border's own arc and left a sliver of panel showing through at the
+   outer corners, which the thicker hover outline then made obvious. */
+.version-apply .version-select__btn {
+  border: none;
+  border-radius: calc(var(--radius) - 1px) 0 0 calc(var(--radius) - 1px);
+  outline: none;
+}
+.version-apply .version-apply__btn {
+  border: none;
+  border-left: 1px solid var(--color-border);
+  border-radius: 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0;
+}
+
+/* Hover and the open list ring the pair, exactly as they do a lone field. */
+.version-apply:hover,
+.version-apply:has(.version-select__btn[aria-expanded='true']) {
+  border-color: var(--color-btn-bg);
+  outline-width: 2px;
+  outline-offset: -2px;
+}
+/* Keyboard focus stays on the half that has it: which button will act matters
+   more here than restating that the two are one control. */
+.version-apply .version-select__btn:focus-visible,
+.version-apply .version-apply__btn:focus-visible {
+  outline: 1px solid var(--color-focus-border);
+  outline-offset: -1px;
+}
+
+/* Already on that version, so nothing to press: no fill, and no border of its
+   own — the pair's outline already goes all the way round. */
+.version-apply .version-apply__btn.btn--secondary {
+  background: none;
+  color: var(--color-tab-inactive);
+}
+.version-apply .version-apply__btn.btn--secondary:hover {
+  background: var(--color-list-hover);
+  color: var(--color-fg);
+}
+
+
+.project-row__tfm {
+  font-size: 11px; color: var(--color-tab-inactive);
+  background: var(--color-list-hover);
+  border-radius: var(--radius);
+  padding: 1px 6px;
+  flex: 0 0 auto;
+  /* Inside an open project the badge sits on the group's own band, which is the
+     same colour — so there it takes a step up rather than blending in (#82). */
+  /* The width itself is stepped per name, in `tfmBadgeWidth` — CSS cannot see
+     how long its neighbours are (#82). Centring is what makes the step read as
+     a column rather than as padding on one side. */
+  display: inline-flex;
+  justify-content: center;
+}
 /* The install/remove sliver (#104) rides in space the layout already has —
    beside a section title, or on the detail header's bottom border — so it costs
    no room of its own and starting or finishing an operation moves nothing.
@@ -1332,6 +1547,32 @@ a.badge:hover { text-decoration: underline; }
   -webkit-box-orient: vertical;
   word-break: break-word;
 }
+/* The target frameworks a popup row can be narrowed to (#82). Shown outright
+   rather than behind a right-click, and only for a project that targets more
+   than one — every other row is untouched. */
+.popup__item-tfms { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); margin-top: 3px; }
+.popup__tfm {
+  font-size: 10px; font-family: var(--font-family);
+  padding: 1px 6px; border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: none; color: var(--color-tab-inactive);
+  cursor: pointer;
+  text-decoration: line-through;
+}
+.popup__tfm--on {
+  background: var(--color-list-hover);
+  color: var(--color-fg);
+  border-color: var(--color-btn-bg);
+  text-decoration: none;
+}
+.popup__tfm:hover { outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
+
+/* The frameworks a cross-line update would take with it (#82). */
+.popup__list-plain {
+  list-style: none; margin: var(--spacing-xs) 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--spacing-xs);
+  font-size: 12px;
+}
 .popup__tools {
   display: flex; flex-direction: column; gap: var(--spacing-xs);
   flex-shrink: 0;
@@ -1412,6 +1653,14 @@ a.badge:hover { text-decoration: underline; }
   color: var(--color-tab-inactive);
   font-size: 11px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Appears under the badges the moment one goes off, for a project whose
+   reference has to be rebuilt to honour that (#82). Warning-toned rather than
+   muted: it is a change to the project file, not a note about it. */
+.popup__item-split {
+  color: var(--color-warning);
+  font-size: 11px;
+  line-height: 1.3;
 }
 .popup__actions {
   display: flex; gap: var(--spacing-sm); justify-content: flex-end;
@@ -1568,6 +1817,19 @@ a.badge:hover { text-decoration: underline; }
   background: var(--vscode-menu-selectionBackground, var(--color-list-active));
   color: var(--vscode-menu-selectionForeground, var(--color-list-active-fg));
 }
+/* The framework menu (#82): a heading, and entries that are listed but inert
+   because that framework is already where the pick would put it. */
+.pkg-ctx-menu__label {
+  padding: 4px 12px 2px;
+  font-size: 11px;
+  color: var(--color-tab-inactive);
+  letter-spacing: 0.05em;
+}
+.pkg-ctx-menu__item { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.pkg-ctx-menu__item--inert { color: var(--color-tab-inactive); cursor: default; }
+.pkg-ctx-menu__item--inert:hover { background: none; color: var(--color-tab-inactive); }
+.pkg-ctx-menu__note { font-size: 11px; color: var(--color-tab-inactive); }
+.pkg-ctx-menu__note--block { padding: 0 12px 4px; max-width: 220px; }
 
 /* ── OS-level forced colors (Windows) ──────────────────────────────────────────
    Second safety net, independent of the --vscode-contrastBorder mechanism
@@ -1595,6 +1857,16 @@ a.badge:hover { text-decoration: underline; }
   .btn--primary, .btn--secondary { forced-color-adjust: none; background: ButtonFace; color: ButtonText; }
   .btn--primary:hover, .btn--secondary:hover { background: Highlight; color: HighlightText; }
   .tab-btn--active { border-bottom-color: Highlight; outline-color: Highlight; }
+  /* The pair carries the boundary now (#82); the fill-less apply segment
+     outranks the .btn--secondary rule above and has to repeat it here. */
+  .version-apply { border-color: ButtonText; }
+  .version-apply .version-apply__btn { border-left-color: ButtonText; }
+  .version-apply .version-apply__btn.btn--secondary {
+    forced-color-adjust: none; background: ButtonFace; color: ButtonText;
+  }
+  .version-apply .version-apply__btn.btn--secondary:hover {
+    background: Highlight; color: HighlightText;
+  }
   /* The accent the operation strip uses is not available in forced colors (#104). */
   .operation-strip .activity-strip__fill { background: Highlight; }
   .pkg-row__mark { forced-color-adjust: none; }

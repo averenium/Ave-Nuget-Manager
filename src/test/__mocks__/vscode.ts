@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Minimal VSCode API mock for Jest unit tests.
  * Only the surface area used by the extension host modules is mocked here.

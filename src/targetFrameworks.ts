@@ -6,10 +6,19 @@
  * .NET 8. Newest-first therefore needs the moniker parsed, not compared.
  */
 
-/** Lower rank sorts first. Modern .NET, then .NET Core, then .NET Standard, then .NET Framework, then everything else. */
+/**
+ * Lower rank sorts first: modern .NET, then .NET Standard, then .NET Core, then
+ * .NET Framework, then everything else.
+ *
+ * .NET Standard outranks .NET Core deliberately, against their release order. A
+ * `netstandard2.0` target is still the thing a library ships to reach
+ * everything at once, and packages are still built for it; `netcoreapp` ended
+ * at 3.1 and nothing new targets it. Sorting these badges by age would put a
+ * dead moniker above a live one.
+ */
 const FAMILY_MODERN = 0;
-const FAMILY_CORE = 1;
-const FAMILY_STANDARD = 2;
+const FAMILY_STANDARD = 1;
+const FAMILY_CORE = 2;
 const FAMILY_FRAMEWORK = 3;
 const FAMILY_OTHER = 4;
 

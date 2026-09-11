@@ -89,7 +89,7 @@ export async function buildSanitizedZip(opts: {
     entries.push({ name, data: Buffer.from(body, 'utf8') });
   };
 
-  let jsonl = '';
+  let jsonl: string;
   try {
     jsonl = await fs.readFile(opts.session.jsonlPath(), 'utf8');
   } catch {

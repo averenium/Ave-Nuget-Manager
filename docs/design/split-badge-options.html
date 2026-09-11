@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Split-badge options — #82</title>
+<style>
+  :root { color-scheme: dark;
+    --color-btn-bg:#0e639c; --color-btn-hover:#1177bb; --color-btn-fg:#ffffff;
+    --color-border:#3c3c3c; --color-list-hover:#2a2d2e; --color-tab-inactive:#8a8a8a;
+    --color-input-bg:#313131; --radius:3px;
+  }
+  body {
+    margin:0; padding:32px; background:#181818; color:#cccccc;
+    font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size:13px; line-height:1.5;
+  }
+  h1 { font-size:18px; font-weight:600; color:#e6e6e6; margin:0 0 6px; }
+  .lede { color:#8a8a8a; font-size:12px; margin:0 0 26px; max-width:66ch; }
+  h2 { font-size:12px; font-weight:400; color:#8a8a8a; margin:26px 0 10px; }
+  table { border-collapse:collapse; width:100%; max-width:880px; }
+  td, th { padding:9px 12px; border-bottom:0.5px solid #2f2f2f; vertical-align:middle; text-align:left; }
+  th { font-size:11px; color:#8a8a8a; font-weight:400; }
+  td.k { width:118px; color:#d4d4d4; font-size:12px; }
+  td.n { color:#7a7a7a; font-size:11px; line-height:1.5; }
+  .real { display:flex; align-items:center; gap:6px; }
+  .zoom { transform:scale(2); transform-origin:left center; display:inline-flex; }
+  .cell { width:150px; }
+
+  /* The shipped button, so every option is judged at its real size. */
+  .btn { padding:4px 6px; border:none; border-radius:var(--radius); cursor:pointer;
+    font-family:inherit; font-size:13px; outline:1px solid transparent; outline-offset:-1px; }
+  .btn--primary { background:var(--color-btn-bg); color:var(--color-btn-fg); }
+  .tfm-action { display:inline-flex; align-items:center; gap:4px;
+    padding:1px 8px 1px 6px; border-radius:999px; font-size:10px; }
+  .hover { background:var(--color-btn-hover); box-shadow:inset 0 0 0 1px var(--color-btn-fg); }
+
+  /* Variants. */
+  .v-outline { background:none; color:var(--color-btn-bg); border:1px solid var(--color-btn-bg); }
+  .v-ghost { background:var(--color-list-hover); color:#d4d4d4; border:1px solid var(--color-border); }
+  .v-split { display:inline-flex; align-items:stretch; border-radius:999px; overflow:hidden; font-size:10px; }
+  .v-split .ic { display:flex; align-items:center; padding:1px 5px; background:#0b4e7a; color:#fff; }
+  .v-split .tx { display:flex; align-items:center; padding:1px 8px; background:var(--color-btn-bg); color:#fff; }
+  .v-square { border-radius:var(--radius); }
+  .v-arrow { display:inline-flex; align-items:center; gap:4px; padding:1px 8px; border-radius:999px;
+    background:var(--color-btn-bg); color:#fff; font-size:10px; }
+  svg { display:block; }
+</style>
+</head>
+<body>
+
+<h1>Split-badge options</h1>
+<p class="lede">The button on a project row that gives one target framework its own version (<a href="https://github.com/averenium/Ave-Nuget-Manager/issues/82">#82</a>). Everything below is drawn at the real 10px/12px it ships at, with a 2× copy beside it, because at this size the difference between two icons is the whole decision.</p>
+
+<h2>Icon candidates — same button, same colours</h2>
+<table>
+  <tr><th>Icon</th><th class="cell">Real size</th><th class="cell">2×</th><th>What it says, and against it</th></tr>
+
+  <tr>
+    <td class="k">Install <em style="color:#7ec699">(current)</em></td>
+    <td><span class="real"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M8 9.5 4 4.5h2.4V1h3.2v3.5H12Z"/><path fill="currentColor" d="M3 10v4h10v-4h-1.5v2.5h-7V10H3Z"/></svg>net8.0</button></span></td>
+    <td><span class="zoom"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M8 9.5 4 4.5h2.4V1h3.2v3.5H12Z"/><path fill="currentColor" d="M3 10v4h10v-4h-1.5v2.5h-7V10H3Z"/></svg>net8.0</button></span></td>
+    <td class="n">“Make a reference here” — already its meaning on the Install button and the transitive pin row. Reads as an install, not as a split, so it says the result and not the change of shape.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Split</td>
+    <td><span class="real"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h5l4-5h4M12 17h4"/><path d="M8 12l4 5"/><path d="M16 4l3 3-3 3M16 14l3 3-3 3"/></svg>net8.0</button></span></td>
+    <td><span class="zoom"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h5l4-5h4M12 17h4"/><path d="M8 12l4 5"/><path d="M16 4l3 3-3 3M16 14l3 3-3 3"/></svg>net8.0</button></span></td>
+    <td class="n">One reference becoming two — exactly the operation. Busiest of the set at 12px, and the two arrowheads nearly merge.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Pin</td>
+    <td><span class="real"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></span></td>
+    <td><span class="zoom"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></span></td>
+    <td class="n">“Pin this framework to this version” — the word the issue itself uses for a per-framework reference. Clear at size, and distinct from everything else in the panel.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Plus</td>
+    <td><span class="real"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>net8.0</button></span></td>
+    <td><span class="zoom"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>net8.0</button></span></td>
+    <td class="n">The most legible mark there is at 12px, and the least specific: “add something”. Nothing says the other frameworks stay behind.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Arrow to a wall</td>
+    <td><span class="real"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h11M10 8l4 4-4 4M19 4v16"/></svg>net8.0</button></span></td>
+    <td><span class="zoom"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h11M10 8l4 4-4 4M19 4v16"/></svg>net8.0</button></span></td>
+    <td class="n">“Send this version into that framework.” Directional, so the badge reads left to right as a sentence. Close to the row's own ↑ button, which may blur the two.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Brackets</td>
+    <td><span class="real"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h3M16 4h3a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-3"/></svg>net8.0</button></span></td>
+    <td><span class="zoom"><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h3M16 4h3a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-3"/></svg>net8.0</button></span></td>
+    <td class="n">“Scoped to this”, the way a condition scopes a group. Quiet and legible, but abstract enough that it needs to be learned once.</td>
+  </tr>
+
+  <tr>
+    <td class="k">No icon</td>
+    <td><span class="real"><button class="btn btn--primary tfm-action" style="padding:1px 9px;">net8.0</button></span></td>
+    <td><span class="zoom"><button class="btn btn--primary tfm-action" style="padding:1px 9px;">net8.0</button></span></td>
+    <td class="n">A filled accent pill already reads as pressable. Shortest, and the only one that never has to be explained — at the cost of saying nothing about what pressing does.</td>
+  </tr>
+</table>
+
+<h2>Badge shapes — with the pin, for comparison</h2>
+<table>
+  <tr><th>Shape</th><th class="cell">Rest</th><th class="cell">Hover</th><th>Note</th></tr>
+
+  <tr>
+    <td class="k">Filled pill <em style="color:#7ec699">(current)</em></td>
+    <td><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></td>
+    <td><button class="btn btn--primary tfm-action hover"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></td>
+    <td class="n">Loudest, and unmistakably a button. Three or five of them under a row is a lot of accent colour for something that is not the row's main action.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Outlined pill</td>
+    <td><button class="btn tfm-action v-outline"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></td>
+    <td><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></td>
+    <td class="n">Quieter at rest, fills in on hover. This is what was there before the icon, and it read as a label — the icon may be what fixes that rather than the fill.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Neutral chip</td>
+    <td><button class="btn tfm-action v-ghost"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></td>
+    <td><button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></td>
+    <td class="n">Matches the TFM badges elsewhere in the panel at rest, becomes the accent button on hover. Consistent, but at rest it is the same thing that already means “a fact”, not “an action”.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Two-tone</td>
+    <td><span class="v-split"><span class="ic"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg></span><span class="tx">net8.0</span></span></td>
+    <td><span class="v-split" style="box-shadow:inset 0 0 0 1px #fff;"><span class="ic"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg></span><span class="tx">net8.0</span></span></td>
+    <td class="n">The icon gets its own darker segment, the way a split button looks. Strongest “press me” of the set, and the widest — five of these will wrap.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Square, not pill</td>
+    <td><button class="btn btn--primary tfm-action v-square"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></td>
+    <td><button class="btn btn--primary tfm-action v-square hover"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button></td>
+    <td class="n">The 3px radius every other button in the panel uses. Blends in — which is the argument for it and against it: the pill is what marks these as a different kind of action.</td>
+  </tr>
+
+  <tr>
+    <td class="k">Arrow prefix, no icon</td>
+    <td><span class="v-arrow">&rarr; net8.0</span></td>
+    <td><span class="v-arrow" style="background:var(--color-btn-hover); box-shadow:inset 0 0 0 1px #fff;">&rarr; net8.0</span></td>
+    <td class="n">A glyph instead of an SVG: nothing to draw, and it reads as “this version goes to net8.0”. Weakest as a shape, since an arrow is also what the row's own buttons use.</td>
+  </tr>
+</table>
+
+<h2>In place</h2>
+<table>
+  <tr><th class="k">Pin, filled pill</th><td>
+    <div style="width:400px; border:0.5px solid #2f2f2f; border-radius:6px; padding:10px 12px;">
+      <div style="display:flex; align-items:center; gap:6px; padding:3px 0;">
+        <span style="flex:1; font-size:12px;">Example.MultiTarget.Workers</span>
+        <span style="display:flex; align-items:center; gap:6px; background:var(--color-input-bg); border:1px solid var(--color-border); border-radius:3px; padding:3px 8px; font-size:12px; flex:1 1 8em;">
+          <span style="flex:1; font-family:Consolas,monospace;">3.1.1</span><span style="color:#8a8a8a; font-size:10px;">&#9662;</span>
+        </span>
+        <span style="width:24px; height:24px; border-radius:3px; display:flex; align-items:center; justify-content:center; background:var(--color-btn-bg); color:#fff;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+        <span style="width:24px; height:24px; border-radius:3px; display:flex; align-items:center; justify-content:center; color:#8a8a8a;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+        <span style="width:100%; display:flex; gap:4px; padding:0 0 3px 2px;">
+          <button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button>
+          <button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net9.0</button>
+          <button class="btn btn--primary tfm-action"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net10.0</button>
+        </span>
+      </div>
+    </div>
+  </td></tr>
+  <tr><th class="k">Pin, outlined</th><td>
+    <div style="width:400px; border:0.5px solid #2f2f2f; border-radius:6px; padding:10px 12px;">
+      <div style="display:flex; align-items:center; gap:6px; padding:3px 0;">
+        <span style="flex:1; font-size:12px;">Example.MultiTarget.Workers</span>
+        <span style="display:flex; align-items:center; gap:6px; background:var(--color-input-bg); border:1px solid var(--color-border); border-radius:3px; padding:3px 8px; font-size:12px; flex:1 1 8em;">
+          <span style="flex:1; font-family:Consolas,monospace;">3.1.1</span><span style="color:#8a8a8a; font-size:10px;">&#9662;</span>
+        </span>
+        <span style="width:24px; height:24px; border-radius:3px; display:flex; align-items:center; justify-content:center; background:var(--color-btn-bg); color:#fff;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+        <span style="width:24px; height:24px; border-radius:3px; display:flex; align-items:center; justify-content:center; color:#8a8a8a;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+        <span style="width:100%; display:flex; gap:4px; padding:0 0 3px 2px;">
+          <button class="btn tfm-action v-outline"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net8.0</button>
+          <button class="btn tfm-action v-outline"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net9.0</button>
+          <button class="btn tfm-action v-outline"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>net10.0</button>
+        </span>
+      </div>
+    </div>
+  </td></tr>
+</table>
+
+</body>
+</html>

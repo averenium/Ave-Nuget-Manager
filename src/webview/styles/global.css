@@ -13,9 +13,21 @@
   --color-btn-hover:    var(--vscode-button-hoverBackground, #1177bb);
   --color-btn-sec-bg:   var(--vscode-button-secondaryBackground, #3a3d41);
   --color-btn-sec-fg:   var(--vscode-button-secondaryForeground, #d4d4d4);
-  --color-list-hover:   var(--vscode-list-hoverBackground, #2a2d2e);
-  --color-list-active:  var(--vscode-list-activeSelectionBackground, #094771);
-  --color-list-active-fg: var(--vscode-list-activeSelectionForeground, #ffffff);
+  /*
+   * Neither hc_light.json nor hc_black.json defines a single `list.*` colour
+   * (#108) — High Contrast marks list state with a border, not a fill. Falling
+   * back to Dark+'s literal values here would paint every such theme with a
+   * hardcoded dark navy/grey: HC Light renders `#2a2d2e` as a near-black band
+   * on an otherwise white list, with the theme's own foreground still on top.
+   * `transparent`/`inherit` let the border-left and outline (#68) this file
+   * already draws for state carry it instead — the same mechanism
+   * `--color-contrast-border` below uses in the opposite direction. Light and
+   * Dark are unaffected: both register every `list.*` colour, so this fallback
+   * never applies to them.
+   */
+  --color-list-hover:   var(--vscode-list-hoverBackground, transparent);
+  --color-list-active:  var(--vscode-list-activeSelectionBackground, transparent);
+  --color-list-active-fg: var(--vscode-list-activeSelectionForeground, inherit);
   --color-tab-active:   var(--vscode-tab-activeForeground, #ffffff);
   --color-tab-inactive: var(--vscode-tab-inactiveForeground, #9d9d9d);
   --color-badge-bg:     var(--vscode-badge-background, #4d4d4d);
@@ -301,7 +313,19 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   position: relative;
   min-height: calc(1.25em + 15px + 2 * var(--spacing-xs) + 1px);
 }
-.pkg-row:hover { background: var(--color-list-hover); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
+/*
+ * `:not(.pkg-row--selected)`: hover and selection are two different colour
+ * pairs, and `:hover` being the more specific selector used to win outright —
+ * replacing the selected row's background while its text stayed at the
+ * selection foreground, a combination no theme designs together. Unreadable
+ * in Light+, which defines `list.hoverBackground` but leaves
+ * `list.activeSelectionForeground` at the registry default (#108). The
+ * selected row now keeps its own pairing intact under the pointer.
+ */
+.pkg-row:hover:not(.pkg-row--selected) {
+  background: var(--color-list-hover);
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
+}
 .pkg-row--selected {
   background: var(--color-list-active);
   color: var(--color-list-active-fg);
@@ -565,7 +589,11 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   text-align: left; cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.version-select__option:hover { background: var(--color-list-hover); outline: 1px solid var(--color-contrast-border); outline-offset: -1px; }
+/* Same hover/selected collision as .pkg-row, and the same fix (#108). */
+.version-select__option:hover:not(.version-select__option--selected) {
+  background: var(--color-list-hover);
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
+}
 .version-select__option--selected {
   background: var(--color-list-active);
   color: var(--color-list-active-fg);

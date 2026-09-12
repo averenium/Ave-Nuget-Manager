@@ -114,11 +114,7 @@
           "tags": [
             "experimental"
           ],
-          "markdownDescription": "**Experimental.** Read package versions and metadata over HTTP from the feeds in your `nuget.config`, instead of shelling out to `dotnet package search`.
-
-Faster on solutions with many packages, and it fills fields the CLI cannot return. Every step falls back to the CLI when a feed does not support it, so turning this off restores the current behaviour exactly.
-
-The extension only ever contacts hosts that appear among your configured package or audit sources."
+          "markdownDescription": "**Experimental.** Read package versions and metadata over HTTP from the feeds in your `nuget.config`, instead of shelling out to `dotnet package search`. Faster on solutions with many packages, and it fills fields the CLI cannot return. Every step falls back to the CLI when a feed does not support it, so turning this off restores the current behaviour exactly. The extension only ever contacts hosts that appear among your configured package or audit sources."
         },
         "averenium.nugetManager.vulnerabilityScript": {
           "type": "string",

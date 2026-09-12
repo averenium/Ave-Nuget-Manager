@@ -5,6 +5,7 @@
 ### Fixed
 
 - Update no longer collapses a package pinned per target framework onto one version: each framework gets its own row, target, write and install (#82)
+- Hovering a row no longer washes out its selected colours, and High Contrast themes no longer show a hardcoded dark fill where they define none (#108)
 
 ## 0.7.5
 

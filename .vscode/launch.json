@@ -6,8 +6,25 @@
       "name": "Run Extension",
       "type": "extensionHost",
       "request": "launch",
+      // Kept until the extension host's intermittent abort (exit 134 before it
+      // loads any extension) is diagnosed: js-debug logs the spawn command line
+      // and everything the host prints, which is the only place the abort
+      // reason appears — VS Code's own logs never capture that stream (#95 is
+      // unrelated; see the crashed-launch signature: no window*/exthost/ dir).
+      // Under the workspace rather than %TEMP%: the 2026-09-10 crash produced no
+      // trace file at all, and an unresolved ${env:TEMP} is one of the few ways
+      // that happens.
+      "trace": { "logFile": "${workspaceFolder}/.debug-logs/edh-trace.log" },
+      // A Node/V8 fatal error (an out-of-memory abort among them) is written to
+      // the process's own stderr, not through console.*, so the default capture
+      // would miss the one line that names the reason.
+      "outputCapture": "std",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}"
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        // Same investigation: makes the launched instance keep dumps for its
+        // utility processes, which is where the aborting host lives. VS Code
+        // writes none for it by default, so a crash currently leaves nothing.
+        "--crash-reporter-directory=${workspaceFolder}/.debug-logs/crashes"
       ],
       "outFiles": [
         "${workspaceFolder}/dist/**/*.js"
@@ -27,8 +44,13 @@
       "name": "Run Extension (watch)",
       "type": "extensionHost",
       "request": "launch",
+      // Same diagnostics as the config above, so whichever one is launched
+      // leaves the same evidence behind.
+      "trace": { "logFile": "${workspaceFolder}/.debug-logs/edh-trace-watch.log" },
+      "outputCapture": "std",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}"
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--crash-reporter-directory=${workspaceFolder}/.debug-logs/crashes"
       ],
       "outFiles": [
         "${workspaceFolder}/dist/**/*.js"

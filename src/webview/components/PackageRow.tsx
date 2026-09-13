@@ -22,6 +22,12 @@ interface Props {
   blocked?: boolean;
   /** Active `<packageSourceMapping>` — installed rows only; see #40 follow-up. */
   packageSourceMapping?: PackageSourceMapping[];
+  /**
+   * What the feed says about the versions of this package, keyed by version.
+   * Only the deprecation of the version this row actually shows is used: a
+   * newer version being deprecated says nothing about the one installed.
+   */
+  versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
 }
@@ -35,7 +41,7 @@ function formatFindingLine(finding: VulnerabilityFinding, viaPackage?: string): 
 }
 
 export function PackageRow({
-  pkg, kind, selected, implicitVersions, allProjectEntries, findings, blocked, packageSourceMapping, onClick, onContextMenu,
+  pkg, kind, selected, implicitVersions, allProjectEntries, findings, blocked, packageSourceMapping, versionFlags, onClick, onContextMenu,
 }: Props) {
   const installed = kind === 'installed' ? (pkg as InstalledPackage) : undefined;
   const implicit  = kind === 'implicit'  ? (pkg as ImplicitPackage)  : undefined;
@@ -92,6 +98,12 @@ export function PackageRow({
   const vulnTitle = [...direct.map((f) => formatFindingLine(f)), ...via.map((f) => formatFindingLine(f, f.packageId))]
     .join('\n') || undefined;
 
+  // Deprecation belongs to one version, so an aggregate row showing several
+  // has no single answer and is left unmarked — the same rule `rowVersion`
+  // already applies to findings.
+  const deprecation = rowVersion ? versionFlags?.[rowVersion]?.deprecation : undefined;
+  const deprecationTitle = deprecation ? `Deprecated: ${deprecation}` : undefined;
+
   const mappingActive = kind === 'installed' && !!packageSourceMapping?.length;
   const hasNoMappingSource = mappingActive && !packageMatchesAnyMapping(pkg.id, packageSourceMapping!);
   const unmappedTitle = hasNoMappingSource
@@ -111,6 +123,7 @@ export function PackageRow({
       hasVulnerability={direct.length + via.length > 0}
       vulnerabilityVia={direct.length === 0 && via.length > 0}
       vulnerabilityTitle={vulnTitle}
+      deprecationTitle={deprecationTitle}
       onActivate={onClick}
       onContextMenu={onContextMenu}
       aside={sourceName ? (

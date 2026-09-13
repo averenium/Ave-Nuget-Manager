@@ -22,6 +22,18 @@ export type LogListener = (entry: LogEntry) => void;
 /** Ring-buffer cap — the Output Channel (`_writeToChannel`) stays unbounded. */
 const MAX_ENTRIES = 500;
 
+/**
+ * HTTP rows are budgeted separately (#27). One panel refresh over HTTP can make
+ * hundreds of requests, and on a single ring they would push out the CLI
+ * history the log exists for. Two budgets means a busy HTTP session never costs
+ * the record of what `dotnet` was asked to do.
+ */
+const MAX_HTTP_ENTRIES = 300;
+
+function isHttpEntry(entry: LogEntry): boolean {
+  return entry.kind === 'http';
+}
+
 export function formatUnknownError(err: unknown): string {
   if (err instanceof Error) {
     return err.stack ?? `${err.name}: ${err.message}`;
@@ -101,7 +113,21 @@ export class Logger {
 
   private _pushEntry(entry: LogEntry): void {
     this.entries.push(entry);
-    if (this.entries.length > MAX_ENTRIES) this.entries.splice(0, this.entries.length - MAX_ENTRIES);
+    this._trim(isHttpEntry(entry) ? MAX_HTTP_ENTRIES : MAX_ENTRIES, isHttpEntry(entry));
+  }
+
+  /** Drops the oldest rows of one budget, leaving the other budget untouched. */
+  private _trim(cap: number, http: boolean): void {
+    let over = this.entries.reduce((n, e) => n + (isHttpEntry(e) === http ? 1 : 0), 0) - cap;
+    if (over <= 0) return;
+    for (let i = 0; i < this.entries.length && over > 0; ) {
+      if (isHttpEntry(this.entries[i]) === http) {
+        this.entries.splice(i, 1);
+        over--;
+      } else {
+        i++;
+      }
+    }
   }
 
   /** Returns all recorded log entries in chronological order. */

@@ -13,6 +13,8 @@
 | [Пакетні оновлення](batch-updates.md) | Update all, родини `Microsoft.**.**`, вкладка Groups |
 | [Вразливості](vulnerabilities.md) | `dotnet list --vulnerable`, користувацький скрипт, ⚠ у Packages |
 | [Backend і CLI](backend.md) | `INuGetBackend`, `cliBackend.ts`, `cliRunner.ts`, `concurrency.ts` |
+| [HTTP-каталог: план](http-backend-plan.md) | Етапи переходу з CLI на v3 HTTP, інваріанти, критерії готовності (#27) |
+| [HTTP-каталог: ендпоінти](http-endpoints.md) | Виміряні форми відповідей v3, що який ресурс дає і чого не дає |
 | [Парсер solution](solution.md) | `solutionParser.ts` |
 | [Ланцюжок nuget.config](config-chain.md) | `nugetConfigChainResolver.ts`, `sourcesSnapshot.ts`, вкладка Sources |
 | [Webview UI](webview.md) | `src/webview/**` |

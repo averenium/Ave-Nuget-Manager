@@ -16,6 +16,21 @@ import { getConfig } from './config';
 import { registerAgentSkillCommand, installAgentSkill, updateOutdatedAgentSkills, readSkillStatus } from './agentSkillInstall';
 import { TraceController } from './traceController';
 import { RoslynSdkProbe } from './roslynSdkProbe';
+import { HttpCatalogBackend } from './backend/httpCatalogBackend';
+import { createConfigSourceResolver } from './backend/httpSourceResolver';
+import { SourceCapabilityStore, capabilityStorage } from './nugetSourceCapabilities';
+import { VersionLadder } from './nugetVersionLadder';
+import { PackageSearch } from './nugetSearch';
+import { VulnerabilityDatabase } from './nugetVulnerabilityDatabase';
+import { vdbFileStore } from './nugetVdbFileStore';
+import { isHttpPackageUrl } from './vulnerabilityScanPolicy';
+import { expandNuGetConfigValue } from './nugetConfigEnv';
+import { createJsonFetcher, DEFAULT_PREVIEW_BYTES } from './nugetHttpJson';
+import { authorizingFetcher, CredentialRegistry } from './nugetHttpAuth';
+import { ProxyRegistry } from './nugetProxyRegistry';
+import { httpLogSink, loggingFetcher } from './nugetHttpLog';
+import { HttpResponseCache } from './nugetHttpCache';
+import { retryingFetcher } from './nugetHttpRetry';
 
 let logger: Logger | undefined;
 
@@ -73,7 +88,55 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
     createConcurrencyGate(() => getConfig().dotnetConcurrency),
     trace,
   );
-  const backend = new CliBackend(runner);
+  // The HTTP catalog (#27) wraps the CLI backend rather than replacing it: with
+  // the experimental setting off — its default — every call passes straight
+  // through, so the extension behaves exactly as it did before.
+  // Credentials are read while the configuration is resolved and attached only
+  // to requests to the origin they belong to (#27). Sources needing none are
+  // unaffected; a source whose sign-in method this cannot express answers 401
+  // and its work falls back to the CLI.
+  const credentials = new CredentialRegistry();
+  // Logging sits inside the credential wrapper: it sees that a request carried
+  // a credential without ever seeing the credential.
+  const httpLog = httpLogSink(log, trace);
+  // Bodies are kept small until a trace is recording, and only then grow enough
+  // to be worth reading — a trace taken to investigate the HTTP path must
+  // contain the HTTP path (#27, #23).
+  // A proxy declared in nuget.config outranks the editor setting, and the
+  // editor cannot execute it for us — so the transport carries it (#27).
+  const proxies = new ProxyRegistry();
+  const httpTransport = createJsonFetcher(
+    () => (trace.isRecording() ? 256 * 1024 : DEFAULT_PREVIEW_BYTES),
+    (url) => proxies.routeFor(url),
+  );
+  // The cache sits outermost, so a repeat inside the window reaches neither the
+  // log nor the network: three consumers want the same metadata document, and
+  // two configuration files can enable the same feed.
+  const httpCache = new HttpResponseCache({ log: httpLog });
+  // Order matters: the cache answers repeats first; credentials are attached
+  // before a request goes out; the retry sits above the log so every attempt is
+  // visible, not just the one that succeeded.
+  const httpFetch = httpCache.wrap(
+    authorizingFetcher(retryingFetcher(loggingFetcher(httpTransport, httpLog)), credentials),
+  );
+  const capabilities = new SourceCapabilityStore(
+    httpFetch,
+    capabilityStorage(context.globalState),
+  );
+  const backend = new HttpCatalogBackend(
+    new CliBackend(runner),
+    new VersionLadder(capabilities, httpFetch, { log: httpLog }),
+    capabilities,
+    createConfigSourceResolver(credentials, proxies),
+    { search: new PackageSearch(capabilities, httpFetch, { log: httpLog }) },
+  );
+  const vulnerabilityDatabase = new VulnerabilityDatabase(
+    capabilities,
+    httpFetch,
+    vdbFileStore(path.join(context.globalStorageUri.fsPath, 'vdb')),
+    undefined,
+    httpLog,
+  );
   const solutionParser = new SolutionParser();
   const roslynProbe = new RoslynSdkProbe(runner);
 
@@ -117,6 +180,28 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
         : installAgentSkill(context),
     },
     roslynProbe,
+    {
+      // Consulted only when NuGet's own cache held nothing (#27). The database
+      // is normally on a different host from the package source and may be
+      // named only by an audit source, so both lists are offered as configured
+      // origins — otherwise an ordinary corporate setup would look like an
+      // address nobody asked for.
+      fromDatabase: (sources, installed, implicit, signal) => {
+        const urls = [...sources.packageSources, ...sources.auditSources]
+          .map((source) => expandNuGetConfigValue(source.url).trim())
+          .filter((url) => isHttpPackageUrl(url));
+        const targets = urls.map((url) => ({ url, knownOrigins: urls }));
+        return vulnerabilityDatabase.findings(targets, installed, implicit, signal);
+      },
+    },
+    {
+      invalidate: () => {
+        httpCache.clear();
+        credentials.clear();
+        proxies.clear();
+        capabilities.forgetAll();
+      },
+    },
   );
   broker.attach();
   log.info('broker attached');

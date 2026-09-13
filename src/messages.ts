@@ -196,7 +196,21 @@ export type ExtensionMessage =
     }
   | { type: 'IMPLICIT_PACKAGES'; packages: ImplicitPackage[] }
   | { type: 'INSTALLED_PACKAGES_PATCH'; packages: InstalledPackage[] }
-  | { type: 'PACKAGE_INFO_UPDATE'; packageId: string; latestVersion: string; sourceName: string; versions?: string[] }
+  | {
+      type: 'PACKAGE_INFO_UPDATE';
+      packageId: string;
+      latestVersion: string;
+      sourceName: string;
+      versions?: string[];
+      /**
+       * What the feed marks about this package's versions — vulnerable,
+       * deprecated — trimmed to the versions it marks at all. The enrich wave
+       * covers every installed package, so this is what lets the package list
+       * mark a row before anything is selected; `ALL_VERSIONS` carries the same
+       * shape for one package at a time.
+       */
+      versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
+    }
   | { type: 'ENRICH_PROGRESS'; done: number; total: number }
   | { type: 'VULNERABILITIES'; findings: VulnerabilityFinding[] }
   /** Quiet hint when `dotnet list --vulnerable` was skipped (Nexus / no VDB). */

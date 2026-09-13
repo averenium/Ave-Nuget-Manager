@@ -484,7 +484,17 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         if (!aHasUpdate && bHasUpdate) return 1;
         return a.id.localeCompare(b.id);
       });
-      return { ...state, packages: { ...state.packages, installed: sorted } };
+      // The feed's marks for this id, kept beside the ones `ALL_VERSIONS`
+      // stores: the enrich wave reaches every installed package, so this is the
+      // only moment the list learns about a package nobody has selected.
+      const flagsByPackageId = msg.versionFlags
+        ? { ...state.updates.flagsByPackageId, [msg.packageId.toLowerCase()]: msg.versionFlags }
+        : state.updates.flagsByPackageId;
+      return {
+        ...state,
+        packages: { ...state.packages, installed: sorted },
+        updates: { ...state.updates, flagsByPackageId },
+      };
     }
 
     case 'IMPLICIT_PACKAGES':

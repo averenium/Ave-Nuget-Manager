@@ -22,7 +22,7 @@ import { sanitizeText, type FileAlias, type SanitizeContext } from './traceSanit
 import { collectScopeSnapshotFiles } from './tracePack';
 import type { WebviewMessage } from './messages';
 import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
-import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile } from './types';
+import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, ImplicitPackage, PackageSource, VulnerabilityFinding, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile } from './types';
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText, mergeCliResults } from './dotnetOutput';
 import { mergeFindings } from './vulnerabilities';
 import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS, isRetryableCliFailure } from './cliRetry';
@@ -64,6 +64,28 @@ function scopeIdentityPath(scope: WorkspaceScope): string {
   if (scope.kind === 'solution') return scope.solutionPath;
   if (scope.kind === 'folder') return scope.folderPath;
   return scope.projectPath;
+}
+
+/**
+ * The feed's own per-version marks, without the rest of the enrich answer.
+ *
+ * `enrichPackage` returns a description, authors and links for every version,
+ * which the panel reads one version at a time and the package list never reads
+ * at all. Sending that for each of a solution's packages would be a large
+ * message carrying almost nothing the list can use, so only the two fields that
+ * mark a version travel: what the feed calls vulnerable, and what it calls
+ * deprecated. Versions the feed marks in neither way are left out entirely.
+ */
+export function feedFlags(
+  metadataByVersion: Record<string, import('./types').SearchedVersionMetadata> | undefined,
+): Record<string, { vulnerable?: boolean; deprecation?: string }> | undefined {
+  if (!metadataByVersion) return undefined;
+  const flags: Record<string, { vulnerable?: boolean; deprecation?: string }> = {};
+  for (const [version, metadata] of Object.entries(metadataByVersion)) {
+    if (!metadata?.vulnerable && !metadata?.deprecation) continue;
+    flags[version] = { vulnerable: metadata.vulnerable, deprecation: metadata.deprecation };
+  }
+  return Object.keys(flags).length > 0 ? flags : undefined;
 }
 
 /** Absolute project paths covered by a scope — a project scope is a single-element list. */
@@ -287,7 +309,25 @@ export class WebviewMessageBroker {
     private readonly roslyn?: { probe: (cwd: string) => Promise<RoslynCap | null> },
     private readonly vulnScan?: {
       httpCacheDir?: () => string;
+      /**
+       * Reads the vulnerability database over HTTP (#27). `undefined` means it
+       * could not be read at all; an empty array means it was read and nothing
+       * in this project matches, which is an answer.
+       */
+      fromDatabase?: (
+        sources: { packageSources: PackageSource[]; auditSources: PackageSource[] },
+        installed: InstalledPackage[],
+        implicit: ImplicitPackage[],
+        signal?: AbortSignal,
+      ) => Promise<VulnerabilityFinding[] | undefined>;
     },
+    /**
+     * The experimental HTTP catalog (#27), which holds state derived from the
+     * configuration: probe verdicts, cached responses, credentials. Any edit to
+     * a `nuget.config` invalidates all three — without this a source edited in
+     * the Sources tab would keep answering from what was true before it.
+     */
+    private readonly httpCatalog?: { invalidate: () => void },
   ) {
   }
 
@@ -491,6 +531,7 @@ export class WebviewMessageBroker {
         break;
 
       case 'FORCE_REFRESH':
+        this.httpCatalog?.invalidate();
         await this._refreshWithRestore(true);
         break;
 
@@ -2591,7 +2632,33 @@ export class WebviewMessageBroker {
     });
 
     const providers: import('./vulnerabilityProvider').IVulnerabilityProvider[] = [];
-    if (runCli) {
+
+    // The database first, when it can be read (#27). It answers for the whole
+    // solution with a couple of small requests against one document, while
+    // `dotnet list --vulnerable` on a feed with no audit source reads that
+    // feed's registration once per package. Both end up reading the same
+    // advisories, and the match here runs over the implicit set too, so the
+    // transitive packages the CLI catches are not lost.
+    const fromDatabase = this.vulnScan?.fromDatabase
+      ? await this.vulnScan.fromDatabase(
+          { packageSources, auditSources }, listed.installed, listed.implicit, signal,
+        ).catch(() => undefined)
+      : undefined;
+
+    if (fromDatabase) {
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        kind: 'scan',
+        command: 'vulnerability scan via HTTP database',
+        args: [`${fromDatabase.length} finding(s)`, 'dotnet list --vulnerable not started'],
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      providers.push({ id: 'vulnerability-database', scan: async () => fromDatabase });
+    } else if (runCli) {
       providers.push(new DotnetVulnerableProvider(this.backend));
     } else {
       this.logger.logCliOperation({
@@ -2768,6 +2835,7 @@ export class WebviewMessageBroker {
         latestVersion,
         sourceName,
         versions,
+        versionFlags: feedFlags(metadataByVersion),
       });
       return true;
     } catch {
@@ -2914,7 +2982,13 @@ export class WebviewMessageBroker {
         if (path.basename(e.document.fileName).toLowerCase() === 'nuget.config') bump();
       }),
       vscode.workspace.onDidSaveTextDocument((doc) => {
-        if (path.basename(doc.fileName).toLowerCase() === 'nuget.config') bump();
+        if (path.basename(doc.fileName).toLowerCase() !== 'nuget.config') return;
+        // A saved file is a decision; a keystroke is not. The chain preview
+        // follows every edit, but what the catalog holds — probe verdicts,
+        // cached responses, credentials — is dropped only here and on an
+        // explicit refresh (#27).
+        this.httpCatalog?.invalidate();
+        bump();
       }),
     ];
   }
@@ -2936,6 +3010,17 @@ export class WebviewMessageBroker {
       this._configChainTimer = undefined;
       void this._pushConfigChainUpdate(false);
     }, 200);
+  }
+
+  /**
+   * After this extension itself writes a `nuget.config` — a source added,
+   * disabled, re-credentialled, remapped. What the HTTP catalog holds is
+   * derived from that file, so it is dropped here rather than on a watcher:
+   * the write is the decision, and there is exactly one moment for it (#27).
+   */
+  private async _afterConfigWrite(): Promise<void> {
+    this.httpCatalog?.invalidate();
+    await this._pushConfigChainUpdate(true);
   }
 
   private async _pushConfigChainUpdate(force: boolean): Promise<void> {
@@ -3008,7 +3093,7 @@ export class WebviewMessageBroker {
         timedOut: false,
         durationMs: 0,
       });
-      await this._pushConfigChainUpdate(true);
+      await this._afterConfigWrite();
       if (msg.kind === 'audit') this._rescanVulnerabilities();
     } catch (err) {
       await vscode.window.showErrorMessage(`Could not update source ${msg.name}: ${String(err)}`);
@@ -3111,7 +3196,7 @@ export class WebviewMessageBroker {
         timedOut: false,
         durationMs: 0,
       });
-      await this._pushConfigChainUpdate(true);
+      await this._afterConfigWrite();
     } catch (err) {
       await vscode.window.showErrorMessage(`Could not update source ${msg.name}: ${String(err)}`);
     }
@@ -3138,7 +3223,7 @@ export class WebviewMessageBroker {
         timedOut: false,
         durationMs: 0,
       });
-      await this._pushConfigChainUpdate(true);
+      await this._afterConfigWrite();
     } catch (err) {
       await vscode.window.showErrorMessage(`Could not update source mapping for ${msg.name}: ${String(err)}`);
     }
@@ -3165,7 +3250,7 @@ export class WebviewMessageBroker {
         timedOut: false,
         durationMs: 0,
       });
-      await this._pushConfigChainUpdate(true);
+      await this._afterConfigWrite();
     } catch (err) {
       await vscode.window.showErrorMessage(`Could not add source ${msg.name}: ${String(err)}`);
     }
@@ -3191,7 +3276,7 @@ export class WebviewMessageBroker {
         timedOut: false,
         durationMs: 0,
       });
-      await this._pushConfigChainUpdate(true);
+      await this._afterConfigWrite();
     } catch (err) {
       await vscode.window.showErrorMessage(`Could not remove source ${msg.name}: ${String(err)}`);
     }
@@ -3238,7 +3323,7 @@ export class WebviewMessageBroker {
         timedOut: false,
         durationMs: 0,
       });
-      await this._pushConfigChainUpdate(true);
+      await this._afterConfigWrite();
     } catch (err) {
       await vscode.window.showErrorMessage(`Could not update credentials for ${msg.name}: ${String(err)}`);
     }

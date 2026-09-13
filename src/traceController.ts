@@ -191,6 +191,11 @@ export class TraceController implements ITrace {
     this.record({ kind: 'broker', at: new Date().toISOString(), step, detail });
   }
 
+  recordHttp(entry: Omit<Extract<TraceEvent, { kind: 'http' }>, 'kind' | 'at'>): void {
+    if (!this.isRecording()) return;
+    this.record({ kind: 'http', at: new Date().toISOString(), ...entry });
+  }
+
   recordCli(entry: Omit<Extract<TraceEvent, { kind: 'cli' }>, 'kind'>): void {
     if (!this.isRecording()) return;
     this.record({ kind: 'cli', ...entry });

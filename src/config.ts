@@ -36,6 +36,12 @@ export function getConfig() {
      * Relative paths are resolved from the first workspace folder.
      */
     vulnerabilityScript: cfg.get<string>('vulnerabilityScript', ''),
+    /**
+     * Experimental HTTP catalog (#27). Off by default: every catalog operation
+     * keeps its CLI path, and each HTTP step falls back to it, so switching
+     * this off returns the extension to exactly its previous behaviour.
+     */
+    experimentalHttpCatalog: cfg.get<boolean>('experimentalHttpCatalog', false),
     /** Workspace-only block list (not User settings). */
     blockedPackages: getBlockedPackages(),
   };

@@ -4,6 +4,20 @@
  *  = 0 if equal
  *  < 0 if a < b (a is older)
  */
+/**
+ * Whether two version strings name the same version.
+ *
+ * String identity is not enough: the same version is written `1.0` in a project
+ * file and `1.0.0` by a feed, and build metadata (`1.2.3+build.7`) is part of
+ * the string but never part of the identity — the flat container even strips it
+ * while registration keeps it. Comparing the parsed forms is what makes a
+ * version from one source match the same version from another.
+ */
+export function versionsEqual(a: string, b: string): boolean {
+  const strip = (v: string): string => v.trim().split('+')[0];
+  return compareSemVer(strip(a), strip(b)) === 0;
+}
+
 export function compareSemVer(a: string, b: string): number {
   const pa = parseSemVer(a);
   const pb = parseSemVer(b);

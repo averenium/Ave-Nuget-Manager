@@ -5,7 +5,7 @@ import { IconCopy, IconBroom, IconShieldBadge, IconOutputPanel, IconRecordDot, I
 import type { LogEntry, LogEntryKind } from '../../types';
 import { useFocusSearchOnFind } from '../utils/useFocusSearchOnFind';
 
-type KindFilter = 'all' | 'error' | 'cli' | 'edit';
+type KindFilter = 'all' | 'error' | 'cli' | 'http' | 'edit';
 
 const NU_CODE_RE = /\bNU\d{4}\b/;
 const BOTTOM_SLACK_PX = 24;
@@ -117,6 +117,7 @@ function matchesKindFilter(entry: LogEntry, filter: KindFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'error') return entry.kind === 'error' || (entry.exitCode !== 0 && entry.exitCode !== null) || entry.timedOut;
   if (filter === 'cli') return entry.kind === 'cli';
+  if (filter === 'http') return entry.kind === 'http';
   return entry.kind === 'edit' || entry.kind === 'scan' || entry.kind === 'info';
 }
 
@@ -254,6 +255,7 @@ export function LogTab() {
           <option value="all">All</option>
           <option value="error">Errors</option>
           <option value="cli">CLI</option>
+          <option value="http">HTTP</option>
           <option value="edit">Edits</option>
         </select>
         <div className="log-toolbar__divider" />

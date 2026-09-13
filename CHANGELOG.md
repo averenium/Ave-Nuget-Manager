@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Experimental setting: read package versions, details, search and advisories over HTTP instead of the CLI, off by default (#27)
+
+### Fixed
+
+- A deprecated installed version now says why in the details panel and carries a mark in the package list
+
 ## 0.8.0
 
 ### Added

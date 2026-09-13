@@ -13,6 +13,14 @@ interface Props {
   hasVulnerability?: boolean;
   vulnerabilityVia?: boolean;
   vulnerabilityTitle?: string;
+  /**
+   * The feed's deprecation notice for the version this row shows. It wears the
+   * same glyph as a vulnerability in the warning colour rather than a glyph of
+   * its own: the row already carries four marks, and a fifth shape would cost
+   * more to learn than the distinction is worth. Unlike a vulnerability it
+   * never asks for action, so it is only ever a warning.
+   */
+  deprecationTitle?: string;
   hasNoMappingSource?: boolean;
   unmappedTitle?: string;
   className?: string;
@@ -33,6 +41,7 @@ export function PkgListRow({
   hasVulnerability,
   vulnerabilityVia,
   vulnerabilityTitle,
+  deprecationTitle,
   hasNoMappingSource,
   unmappedTitle,
   className,
@@ -88,6 +97,11 @@ export function PkgListRow({
               className={`pkg-row__mark ${vulnerabilityVia ? 'pkg-row__mark--vuln-via' : 'pkg-row__mark--vuln'}`}
               title={vulnerabilityTitle}
             ><IconMarkWarning /></span>
+          ) : null}
+          {deprecationTitle ? (
+            <span className="pkg-row__mark pkg-row__mark--deprecated" title={deprecationTitle}>
+              <IconMarkWarning />
+            </span>
           ) : null}
           {hasNoMappingSource ? (
             <span className="pkg-row__mark pkg-row__mark--unmapped" title={unmappedTitle}>

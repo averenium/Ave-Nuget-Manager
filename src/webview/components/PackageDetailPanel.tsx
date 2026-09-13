@@ -137,7 +137,14 @@ export function PackageDetailPanel() {
     isInstalled,
     packageSourceMapping,
     updatesBlocked,
-    deprecation: metadata?.deprecation,
+    // An installed package's Info panel is built from its local `.nuspec`,
+    // which cannot carry a deprecation: that is a fact about the feed, not
+    // about the package. The feed's answer is already here, keyed by version —
+    // it is what marks the version dropdown — so the panel reads it from there
+    // when the nuspec has nothing to say. Keyed by the version the panel is
+    // actually showing, which for a nuspec is the installed one.
+    deprecation: metadata?.deprecation
+      ?? state.detail.versionFlags[metadata?.version ?? effectiveVersion]?.deprecation,
   });
 
   // Metadata arrives a moment after the selection does. Sections that don't

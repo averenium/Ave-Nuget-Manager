@@ -236,3 +236,38 @@ describe('formatUnknownError', () => {
     expect(formatUnknownError('x')).toBe('x');
   });
 });
+
+describe('Logger budgets', () => {
+  const op = (kind: 'cli' | 'http', command: string) => ({
+    timestamp: new Date(),
+    kind,
+    command,
+    args: [],
+    stdout: '',
+    stderr: '',
+    exitCode: 0,
+    timedOut: false,
+    durationMs: 1,
+  });
+
+  it('does not let a busy HTTP session push out the CLI history', () => {
+    // One panel refresh can make hundreds of requests; the record of what
+    // dotnet was asked to do is the reason this log exists.
+    const log = new Logger();
+    for (let i = 0; i < 40; i++) log.logCliOperation(op('cli', `dotnet call ${i}`));
+    for (let i = 0; i < 2_000; i++) log.logCliOperation(op('http', `GET https://feed.example/${i}`));
+
+    const kept = log.getEntries();
+    expect(kept.filter((e) => e.kind === 'cli')).toHaveLength(40);
+    expect(kept.filter((e) => e.kind === 'http').length).toBeLessThanOrEqual(300);
+  });
+
+  it('drops its own oldest rows first', () => {
+    const log = new Logger();
+    for (let i = 0; i < 400; i++) log.logCliOperation(op('http', `GET https://feed.example/${i}`));
+
+    const kept = log.getEntries().filter((e) => e.kind === 'http');
+    expect(kept[kept.length - 1].command).toBe('GET https://feed.example/399');
+    expect(kept[0].command).not.toBe('GET https://feed.example/0');
+  });
+});

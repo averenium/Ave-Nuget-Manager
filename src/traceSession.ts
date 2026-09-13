@@ -25,6 +25,30 @@ export type TraceEvent =
       stdout: string;
       stderr: string;
     }
+  | {
+      /**
+       * One HTTP request of the catalog (#27). A trace taken to investigate the
+       * HTTP path used to contain only `dotnet` invocations — that is, exactly
+       * the calls the feature had stopped making.
+       */
+      kind: 'http';
+      at: string;
+      url: string;
+      status: number;
+      durationMs: number;
+      bytes?: number;
+      /** Whether a credential travelled — never which one. */
+      authorized?: boolean;
+      reason?: string;
+      error?: string;
+      /**
+       * As much of the answer as the transport kept. Only present while a trace
+       * is recording; `trace.jsonl` is sanitised on the way into the zip, so
+       * internal addresses and author e-mails inside a document are redacted
+       * with everything else.
+       */
+      body?: string;
+    }
   | { kind: 'webview'; at: string; type: string; payload: unknown }
   | { kind: 'broker'; at: string; step: string; detail?: unknown };
 

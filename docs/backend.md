@@ -1,6 +1,6 @@
 # Backend і CLI
 
-Усі NuGet-операції проходять через `INuGetBackend` (`src/backend/INuGetBackend.ts`). Єдина реалізація — `CliBackend` (`src/backend/cliBackend.ts`).
+Усі NuGet-операції проходять через `INuGetBackend` (`src/backend/INuGetBackend.ts`). Базова реалізація — `CliBackend` (`src/backend/cliBackend.ts`); поверх неї, за вимкненим за замовчуванням прапорцем, працює `HttpCatalogBackend` (див. [HTTP-каталог](#http-каталог-27) нижче).
 
 ## INuGetBackend
 
@@ -99,3 +99,30 @@ Timeout: list / search / `--version` / `--vulnerable` — **30 000 ms**. `add` /
 `dependencies` і `targetFrameworks` завжди `[]`.
 
 `dotnet package search` не приймає TFM і не віддає граф сумісності. Enrich / `getAllVersions` тому не можуть відповісти «latest, який встає в цей `.csproj`». Це ліміт CLI, не баг запису PackageReference. Catalog API (майбутній HttpBackend) або `dotnet list --outdated` по проєкту — єдині шляхи відфільтрувати версії під `TargetFramework` / `TargetFrameworkVersion`.
+
+## HTTP-каталог (#27)
+
+Експериментальна фіча за прапорцем `averenium.nugetManager.experimentalHttpCatalog` (default `false`). Реалізована **декоратором**, а не другим бекендом: `HttpCatalogBackend` (`src/backend/httpCatalogBackend.ts`) делегує в `CliBackend` усе, крім чотирьох каталожних операцій, а з вимкненим прапорцем — і їх теж. Тобто вимкнення повертає рівно попередню поведінку.
+
+| Модуль | Відповідальність |
+|---|---|
+| `nugetServiceIndex.ts` | Розбір сервісного індексу, вибір ресурсу за базовим типом, класифікація походження `@id` |
+| `nugetSourceCapabilities.ts` | Що вміє джерело: пʼять станів на ресурс, персистентний кеш вердиктів |
+| `nugetVersionLadder.ts` | Драбина сходинок для переліку версій і повного каталогу версій |
+| `nugetRegistration.ts` | Чистий розбір реєстрації в по-версійні записи, нормалізація severity / reasons / listed |
+| `nugetSearch.ts` | Пошук і правило «запит схожий на id» |
+| `nugetVulnerabilityDatabase.ts` | База вразливостей по HTTP, коли локальний кеш порожній |
+| `nugetHttpJson.ts` | Єдине місце з мережею: статус як дані, стеля на тіло під час читання |
+| `nugetHttpAuth.ts`, `nugetSourceCredentials.ts` | Облікові дані з `nuget.config`, привʼязані до точного origin |
+| `nugetHttpCache.ts`, `nugetHttpRetry.ts` | Кеш відповідей із перевалідацією, склеювання паралельних запитів, обмежені повтори |
+| `nugetHttpLog.ts` | Кожен запит окремим рядком у вкладці Log (kind `http`) |
+| `backend/httpSourceResolver.ts` | Конфіг-файл → джерела, які цей шар має право кликати; мемоізація за mtime |
+
+Які операції відповідаються по HTTP і за яких умов CLI все одно запускається — у [плані](http-backend-plan.md); виміряні форми відповідей різних серверів — в [ендпоінтах](http-endpoints.md).
+
+Два правила, які визначають межу:
+
+- **По конфіг-файлу, а не по джерелу.** CLI викликається з одним `--configfile` і відповідає за всі його джерела, тож пропустити його можна лише коли **всі** вони відповіли по HTTP.
+- **Не втрачати по-версійні мітки.** Пікер показує «вразлива» / «закинута», а їх дає лише ресурс метаданих — той самий, який читає CLI. Джерело, що його публікує, має відповісти через нього; інакше файл падає на CLI.
+
+Інвалідація того, що каталог тримає (вердикти проб, кеш відповідей, облікові дані), відбувається лише в моменти рішення: збереження `nuget.config` у редакторі, форс-рефреш і власний запис розширення у конфіг.

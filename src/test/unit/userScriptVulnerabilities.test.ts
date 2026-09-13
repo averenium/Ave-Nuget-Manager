@@ -103,6 +103,7 @@ describe('UserScriptVulnerabilityProvider.scan', () => {
       cacheTtlMs: 1000,
       includePrerelease: false,
       onFailedUpdate: 'rollback',
+      experimentalHttpCatalog: false,
       vulnerabilityScript: scriptPath,
       blockedPackages: [],
     } as any);

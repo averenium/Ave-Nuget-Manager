@@ -15,5 +15,7 @@ describe('nugetConfigDpapi', () => {
     expect(blob).not.toContain('hunter2');
     expect(blob).toMatch(/^[A-Za-z0-9+/=]+$/);
     expect(await decryptNuGetConfigPassword(blob)).toBe('hunter2');
-  });
+    // Two PowerShell spawns; under a loaded full-suite run they pass the
+    // default per-test budget, which showed up as a flake rather than a bug.
+  }, 30_000);
 });

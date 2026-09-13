@@ -4,6 +4,8 @@
 
 ## Запланований HttpBackend
 
+> **Оновлення (#27).** Частина вже є: за прапорцем `averenium.nugetManager.experimentalHttpCatalog` (default `false`) працює `HttpCatalogBackend` — версії, відомості, пошук і база вразливостей по v3 HTTP, з відкатом на CLI на кожному кроці. Див. [backend.md](backend.md#http-каталог-27) і [план](http-backend-plan.md). Нижче — те, що лишається за CLI: приватні фіди з провайдерами облікових даних, v2-галереї, а також усе, що потребує графа сумісності з TFM.
+
 `INuGetBackend` і коментарі в `cliBackend.getMetadata` передбачають NuGet HTTP API v3. Без нього:
 
 - `PackageMetadata.dependencies` завжди `[]`;

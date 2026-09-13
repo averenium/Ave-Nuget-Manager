@@ -8,8 +8,10 @@
 │                                                         │
 │  CommandRegistrar ──► WebviewMessageBroker              │
 │                           │                             │
-│                           ├── INuGetBackend (CliBackend)│
-│                           │       └── CliRunner         │
+│                           ├── INuGetBackend             │
+│                           │   └── HttpCatalogBackend    │
+│                           │       └── CliBackend        │
+│                           │           └── CliRunner     │
 │                           ├── RoslynSdkProbe            │
 │                           ├── SolutionParser            │
 │                           ├── NuGetConfigChainResolver  │
@@ -42,6 +44,7 @@
 | Legacy csproj | `src/projectPackageStyle.ts`, `src/legacyPackageReference.ts` | Без `Sdk=`: XML upsert; `packages.config` skip лише без PackageReference |
 | CLI output | `src/dotnetOutput.ts`, `src/cliRetry.ts` | Успіх add, summary NU1605, parse `problems` з list; retry group `dotnet add` за NU/HTTP-фразами в CLI |
 | Backend | `src/backend/` | Усі NuGet-операції через абстракцію `INuGetBackend` |
+| HTTP-каталог | `src/nuget*Http*.ts`, `src/nugetServiceIndex.ts`, `src/nugetVersionLadder.ts`, `src/nugetRegistration.ts`, `src/nugetSearch.ts`, `src/backend/httpCatalogBackend.ts` | Читання каталогу по v3 HTTP замість CLI за прапорцем `experimentalHttpCatalog`; декоратор над `CliBackend`, кожен крок має відкат на нього ([backend.md](backend.md#http-каталог-27)) |
 | CLI | `src/cliRunner.ts` | `spawn('dotnet')`, timeout, логування |
 | Solution | `src/solutionParser.ts` | Список проєктів з `.sln` / `.slnx` |
 | Config | `src/nugetConfigChainResolver.ts` | Ланцюжок `nuget.config` nearest → global |

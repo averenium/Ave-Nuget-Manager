@@ -811,6 +811,100 @@ describe('WebviewMessageBroker', () => {
     expect(vuln?.findings).toHaveLength(1);
   });
 
+  it('takes the vulnerability database over the CLI when it can be read', async () => {
+    // The database answers for the whole solution with two small requests; on a
+    // feed with no audit source, `dotnet list --vulnerable` reads that feed's
+    // registration once per package to reach the same advisories.
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+    const fromDatabase = jest.fn().mockResolvedValue([{
+      packageId: 'Newtonsoft.Json',
+      version: '1.0.0',
+      severity: 'high',
+      id: 'GHSA-from-db',
+      url: 'https://github.com/advisories/GHSA-from-db',
+      source: 'nuget-cache',
+    }]);
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, undefined, undefined, { fromDatabase },
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(fromDatabase).toHaveBeenCalled();
+    expect(backend.listVulnerable).not.toHaveBeenCalled();
+    const vuln = posted.find((m) => m.type === 'VULNERABILITIES') as { findings?: Array<{ id: string }> } | undefined;
+    expect(vuln?.findings?.map((f) => f.id)).toEqual(['GHSA-from-db']);
+  });
+
+  it('reads the database for the transitive set as well as the direct one', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Example.App', '/p/App.csproj')],
+      implicit: [{ id: 'System.Text.Encodings.Web', resolvedVersion: '4.5.0', projectPath: '/p/App.csproj' }],
+    });
+    const fromDatabase = jest.fn().mockResolvedValue([]);
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, undefined, undefined, { fromDatabase },
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const [, installed, implicit] = fromDatabase.mock.calls[0];
+    expect(installed.map((p: { id: string }) => p.id)).toEqual(['Example.App']);
+    expect(implicit.map((p: { id: string }) => p.id)).toEqual(['System.Text.Encodings.Web']);
+  });
+
+  it('falls back to the CLI when the database could not be read at all', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+    const fromDatabase = jest.fn().mockResolvedValue(undefined);
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, undefined, undefined, { fromDatabase },
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(backend.listVulnerable).toHaveBeenCalled();
+  });
+
+  it('treats an empty database answer as an answer, not as a reason to run the CLI', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, undefined, undefined, { fromDatabase: async () => [] },
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(backend.listVulnerable).not.toHaveBeenCalled();
+  });
+
   it('starts listVulnerable without waiting for restore on WEBVIEW_READY', async () => {
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
@@ -1233,7 +1327,10 @@ describe('WebviewMessageBroker', () => {
     expect((broker as any)._lastRestoreText).toBe('');
 
     simulateMessage({ type: 'INSTALL_PACKAGE', projectPath: '/p/App.csproj', packageId: 'Pkg', version: '1.0.0' });
-    await new Promise((r) => setTimeout(r, 10));
+    // The install path runs several asynchronous steps before this is set; a
+    // fixed pause is a guess about how long they take, and under a loaded run
+    // the guess is sometimes wrong.
+    await waitFor(() => ((broker as any)._lastRestoreText as string).includes('NU1903'));
 
     expect((broker as any)._lastRestoreText).toContain('NU1903');
   });
@@ -1353,6 +1450,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       cacheTtlMs: 1000,
       includePrerelease: true,
       onFailedUpdate: 'keep',
+      experimentalHttpCatalog: false,
       vulnerabilityScript: '',
       blockedPackages: [],
     });
@@ -1410,7 +1508,10 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     broker.attach();
 
     simulateMessage({ type: 'INSTALL_PACKAGE', projectPath: '/p/App.csproj', packageId: 'Pkg', version: '1.0.0' });
-    await new Promise((r) => setTimeout(r, 10));
+    // Waits for the message rather than for ten milliseconds: the install path
+    // does several asynchronous steps first, and under a loaded full-suite run
+    // that occasionally takes longer than a fixed pause allows.
+    await waitFor(() => posted.some((m) => m.type === 'OPERATION_TIMEOUT'));
 
     expect(posted.some((m) => m.type === 'OPERATION_TIMEOUT')).toBe(true);
   });
@@ -1781,6 +1882,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       cacheTtlMs: 1000,
       includePrerelease: false,
       onFailedUpdate: 'rollback',
+      experimentalHttpCatalog: false,
       vulnerabilityScript: '',
       blockedPackages: [],
     });
@@ -1826,6 +1928,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       cacheTtlMs: 1000,
       includePrerelease: false,
       onFailedUpdate: 'rollback',
+      experimentalHttpCatalog: false,
       vulnerabilityScript: '',
       blockedPackages: [],
     });
@@ -2703,6 +2806,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
         cacheTtlMs: 1000,
         includePrerelease: false,
         onFailedUpdate: 'keep',
+        experimentalHttpCatalog: false,
         vulnerabilityScript: '',
         blockedPackages: [],
       });
@@ -2974,6 +3078,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       cacheTtlMs: 1000,
       includePrerelease: true,
       onFailedUpdate: 'keep',
+      experimentalHttpCatalog: false,
       vulnerabilityScript: '',
       blockedPackages: [],
     });

@@ -122,6 +122,7 @@ export function InstalledList() {
                 findings={vulnerabilities}
                 blocked={blocked}
                 packageSourceMapping={packageSourceMapping}
+                versionFlags={state.updates.flagsByPackageId[pkg.id.toLowerCase()]}
                 onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
                 onContextMenu={(e) => setMenu({ packageId: pkg.id, blocked, x: e.clientX, y: e.clientY })}
               />

@@ -329,7 +329,7 @@ export interface SourcesSnapshot {
  * decision (e.g. skipped). `info`/`error` — routed from `Logger.info`/`error`,
  * previously Output-Channel-only (#58).
  */
-export type LogEntryKind = 'cli' | 'edit' | 'scan' | 'info' | 'error';
+export type LogEntryKind = 'cli' | 'edit' | 'scan' | 'info' | 'error' | 'http';
 
 export interface LogEntry {
   id: string;

@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Several versions in one row — variants</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px;
+    background: #181818; color: #cccccc;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #e6e6e6; margin: 0 0 6px; }
+  .lede { color: #8a8a8a; font-size: 12px; margin: 0 0 22px; max-width: 78ch; }
+  h2 { font-size: 12px; font-weight: 400; color: #8a8a8a; margin: 26px 0 4px; }
+  .cap { color: #6a6a6a; font-size: 11px; margin: 0 0 10px; max-width: 78ch; }
+  .grid { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+  .cell { width: 320px; }
+  .cell h3 { font-size: 11px; font-weight: 600; letter-spacing: .04em; color: #b4b4b4; margin: 0 0 4px; }
+  .cell .why { font-size: 11px; color: #6a6a6a; margin: 6px 0 0; min-height: 56px; }
+  .scn { font-size: 10px; color: #5f5f5f; padding: 2px 8px 0; letter-spacing: .03em; }
+
+  /* ── the list, with the version type already settled ─────────────────────── */
+  .pane { background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 4px; overflow: hidden; }
+  .pane.narrow { width: 180px; }
+  .r { padding: 4px 8px; border-left: 2px solid transparent; }
+  .r1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .nm { font-weight: 500; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25; }
+  .src { font-size: 10px; color: #6e6e6e; flex: 0 0 auto; }
+  .r2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); column-gap: 8px; min-height: 15px; align-items: baseline; }
+  .v { font-size: 12px; color: #c8c8c8; font-variant-numeric: tabular-nums; line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .v.right { justify-self: end; text-align: right; }
+  .v.up { color: #4ec994; }
+  .mark { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: 3px; vertical-align: super; border: 1px solid currentColor; border-radius: 2px; font-size: 9px; line-height: 1; }
+  .mark.up { color: #4ec994; border-color: transparent; font-size: 11px; }
+
+  /* today: the whole enumeration is amber, joined by a slash */
+  .v.multi { color: #cca700; }
+
+  /* ── the pieces the variants are built from ─────────────────────────────── */
+  /* The count of what the cell is not showing. Amber, because "several
+     versions" is what amber already means in this list. */
+  .more { color: #cca700; font-size: 11px; }
+  /* Same badge shape the Groups rows use for a TFM (`.pkg-row__tfm`). */
+  .axis {
+    font-size: 10px; color: #cca700; background: rgba(204,167,0,.12);
+    border-radius: 3px; padding: 0 5px; white-space: nowrap;
+  }
+  .sep { color: #5f5f5f; padding: 0 3px; }
+  .lo { color: #8a8a8a; }
+
+  .tip {
+    margin-top: 8px; font-size: 11px; color: #9a9a9a; background: #252526;
+    border: 0.5px solid #3c3c3c; border-radius: 3px; padding: 6px 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .tip b { color: #c8c8c8; font-weight: 500; }
+  .tip .k { color: #7a7a7a; }
+  .tip table { border-collapse: collapse; }
+  .tip td { padding: 0 12px 0 0; }
+  .note { color: #6a6a6a; font-size: 11px; margin-top: 10px; max-width: 78ch; }
+  .legend { margin-top: 8px; font-size: 11px; color: #6a6a6a; line-height: 1.75; max-width: 78ch; }
+  code { font-family: Consolas, monospace; font-size: 11px; color: #b4b4b4; }
+</style>
+</head>
+<body>
+
+<h1>When one row has several versions</h1>
+<p class="lede">A package resolves per project, and since <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/82">#82</a> it can resolve per target framework inside a single project as well. The row has one cell to say that in. Today it enumerates: <span class="v multi">2.8.1 / 3.1.0</span>, capped at three and cut with an ellipsis, the whole string amber, with the projects only in the tooltip. Four variants below, each over the same five cases &mdash; and each one distinguishing a spread <em>between projects</em> from a spread <em>between frameworks</em>, which the row cannot tell apart at all today.</p>
+<p class="cap">The rule is not invented here: <code>resolveVersionSpread</code> already picks the primary version for the details panel and already knows <code>withinOneProject</code> &mdash; the case where every entry is one project&rsquo;s and the spread is between its frameworks. Whatever the row shows, it should come from that same call, so the list and the panel can never say different things about the same package.</p>
+
+<h2>0 &middot; Today</h2>
+<div class="grid">
+  <div class="cell">
+    <div class="pane">
+      <div class="scn">two projects, two versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v multi">2.8.1 / 3.1.0</span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">five projects, three versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v multi">2.8.1 / 3.1.0 / 3.4.0</span><span class="v right up">4.0.0</span></div>
+      </div>
+      <div class="scn">nine projects, five versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v multi">6.0.0 / 8.0.1 / 9.0.0 &hellip;</span><span class="v right up">10.0.0</span></div>
+      </div>
+      <div class="scn">one project, two frameworks</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v multi">2.8.1 / 3.1.0</span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">one version &mdash; the control</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Diagnostics</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">Rows 1 and 4 are printed identically and mean different things. Row 3 loses two versions to an ellipsis. Nothing says how many projects are on what, so the cell reads as a list of equals when it almost never is.</p>
+  </div>
+
+  <div class="cell" style="width:420px;">
+    <div class="legend">
+      <div><b>The slash reads as a fraction or a path.</b> These are alternatives, not a ratio &mdash; and the character we use for &ldquo;or&rdquo; is the one the rest of the UI uses for file paths.</div>
+      <div><b>Everything is amber, so nothing is.</b> The colour marks the condition, but painting all three versions with it leaves no contrast for the one that matters.</div>
+      <div><b>The count is missing.</b> Two versions can mean two projects or nine; the row cannot say, and the difference decides whether it is worth acting on.</div>
+      <div><b>A framework spread looks like a project spread.</b> One project targeting <code>net8.0</code> and <code>net10.0</code> at different versions is a different situation from two projects disagreeing, and often a deliberate one.</div>
+    </div>
+  </div>
+</div>
+
+<h2>Variants</h2>
+<div class="grid">
+
+  <div class="cell">
+    <h3>A &mdash; the primary version, and a count of the rest</h3>
+    <div class="pane">
+      <div class="scn">two projects, two versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0 <span class="more">+1</span></span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">five projects, three versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.4.0 <span class="more">+2</span></span><span class="v right up">4.0.0</span></div>
+      </div>
+      <div class="scn">nine projects, five versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0 <span class="more">+4</span></span><span class="v right up">10.0.0</span></div>
+      </div>
+      <div class="scn">one project, two frameworks</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0 <span class="more">+1</span></span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">one version &mdash; the control</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Diagnostics</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">One version at full contrast &mdash; the one the details panel is describing &mdash; and an amber count of what is not shown. Always the same width whether there are two versions or nine. Still does not separate frameworks from projects; variant C adds that.</p>
+  </div>
+
+  <div class="cell">
+    <h3>B &mdash; the span, lowest to highest</h3>
+    <div class="pane">
+      <div class="scn">two projects, two versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v"><span class="lo">2.8.1</span><span class="sep">&hellip;</span>3.1.0</span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">five projects, three versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v"><span class="lo">2.8.1</span><span class="sep">&hellip;</span>3.4.0</span><span class="v right up">4.0.0</span></div>
+      </div>
+      <div class="scn">nine projects, five versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v"><span class="lo">6.0.0</span><span class="sep">&hellip;</span>9.0.0</span><span class="v right up">10.0.0</span></div>
+      </div>
+      <div class="scn">one project, two frameworks</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v"><span class="lo">2.8.1</span><span class="sep">&hellip;</span>3.1.0</span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">one version &mdash; the control</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Diagnostics</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">How far apart the projects have drifted, in constant width, with the oldest stepped back so the newest still reads first. It says nothing about how many, and for exactly two versions it is the same string as today with better punctuation.</p>
+  </div>
+
+  <div class="cell">
+    <h3>C &mdash; the primary version, and what it is split by</h3>
+    <div class="pane">
+      <div class="scn">two projects, two versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0 <span class="axis">2 projects</span></span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">five projects, three versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.4.0 <span class="axis">5 projects</span></span><span class="v right up">4.0.0</span></div>
+      </div>
+      <div class="scn">nine projects, five versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0 <span class="axis">9 projects</span></span><span class="v right up">10.0.0</span></div>
+      </div>
+      <div class="scn">one project, two frameworks</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0 <span class="axis">2 TFM</span></span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">one version &mdash; the control</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Diagnostics</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">The badge names the axis the versions are spread along, so row 4 finally stops looking like row 1. It is the widest of the four, and on a narrow pane it falls back to A&rsquo;s bare <span class="more">+1</span>.</p>
+  </div>
+
+  <div class="cell">
+    <h3>D &mdash; today, tidied</h3>
+    <div class="pane">
+      <div class="scn">two projects, two versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="lo">2.8.1</span></span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">five projects, three versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.4.0<span class="sep">&middot;</span><span class="lo">3.1.0</span><span class="sep">&middot;</span><span class="lo">2.8.1</span></span><span class="v right up">4.0.0</span></div>
+      </div>
+      <div class="scn">nine projects, five versions</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="lo">8.0.1</span><span class="sep">&middot;</span><span class="lo">6.0.0</span> <span class="more">+2</span></span><span class="v right up">10.0.0</span></div>
+      </div>
+      <div class="scn">one project, two frameworks</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="lo">2.8.1</span></span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="scn">one version &mdash; the control</div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Diagnostics</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">The enumeration survives: newest first at full contrast, the rest stepped back, a middle dot instead of a slash, and a count for what did not fit. The smallest change &mdash; and the only one that still grows with the number of versions.</p>
+  </div>
+
+</div>
+
+<h2>The hover, in every variant</h2>
+<p class="cap">Whatever the cell shows, the full answer belongs in the tooltip &mdash; and the tooltip is where the two cases stop being ambiguous, because one lists projects and the other lists frameworks under the single project that owns them.</p>
+<div class="grid">
+  <div class="cell">
+    <div class="tip">
+      <div class="k">Versions across projects</div>
+      <table>
+        <tr><td><b>3.1.0</b></td><td>Example.Shop.Api</td></tr>
+        <tr><td><b>3.1.0</b></td><td>Example.Shop.Admin</td></tr>
+        <tr><td><b>2.8.1</b></td><td>Example.Shop.Jobs</td></tr>
+      </table>
+    </div>
+    <p class="why">Version first, so the column of versions is scannable and the repeated one is visibly repeated.</p>
+  </div>
+  <div class="cell">
+    <div class="tip">
+      <div class="k">Versions across frameworks &mdash; Example.Shop.Api</div>
+      <table>
+        <tr><td><b>3.1.0</b></td><td>net10.0</td></tr>
+        <tr><td><b>2.8.1</b></td><td>net8.0</td></tr>
+      </table>
+    </div>
+    <p class="why">One project, named once in the heading instead of repeated on every line &mdash; today it is repeated, which reads like a bug.</p>
+  </div>
+  <div class="cell" style="width:420px;">
+    <div class="legend">
+      <div>Both shapes come from <code>resolveVersionSpread</code>: <code>withinOneProject</code> decides which of the two is rendered, and it is already computed for the details panel.</div>
+      <div>The mixed case &mdash; several projects, and one of them split across frameworks &mdash; uses the project shape, with the split project&rsquo;s frameworks indented under it.</div>
+    </div>
+  </div>
+</div>
+
+<h2>Narrow &mdash; the pane at its 180px minimum</h2>
+<p class="cap">The cell is half of the row&rsquo;s second line, so at the minimum pane width it is about seventy pixels. Only A survives unchanged; C drops its badge to the bare count, B drops to the highest version alone, D drops to A.</p>
+<div class="grid">
+  <div class="pane narrow">
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span></div>
+      <div class="r2"><span class="v">3.1.0 <span class="more">+1</span></span><span class="v right up">3.4.0</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark up">&#8593;</span></span></div>
+      <div class="r2"><span class="v">9.0.0 <span class="more">+4</span></span><span class="v right up">10.0.0</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Diagnostics</span></div>
+      <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+    </div>
+  </div>
+  <div class="cell" style="width:420px;">
+    <div class="legend">
+      <div>This is the argument for A as the base and C as its wide form: they are the same cell, and the badge is the part that appears when there is room for it.</div>
+      <div>The amber count is never dropped &mdash; it is the only thing that says the single version on screen is not the whole story.</div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  None of this moves the cell, changes the columns, or touches the row&rsquo;s height. Amber keeps meaning &ldquo;more than one version is in play&rdquo;; green keeps meaning &ldquo;there is an update&rdquo;; the right-hand column is untouched in every variant.
+</div>
+
+</body>
+</html>

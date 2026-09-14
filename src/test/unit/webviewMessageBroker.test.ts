@@ -970,6 +970,415 @@ describe('WebviewMessageBroker', () => {
     expect(backend.listVulnerable).not.toHaveBeenCalled();
   });
 
+
+  /**
+   * The licence question is about the version the selector is offering, not the
+   * one the Info panel describes. On entering a package those differ — the
+   * panel shows the installed version, the selector the newest — and asking
+   * about the metadata's version compared the installed version with itself, so
+   * the warning appeared only after an explicit pick and vanished on return.
+   */
+  describe('the licence comparison is keyed to the version asked about', () => {
+    /** A nuspec stating one licence, so which one comes back names which version was read. */
+    const nuspecDeclaring = (version: string, expression: string): string => `<?xml version="1.0"?>
+<package><metadata>
+  <id>Example.Imaging</id><version>${version}</version>
+  <license type="expression">${expression}</license>
+  <description>d</description>
+</metadata></package>`;
+
+    /** The installed side read from disk, one licence per installed version. */
+    function stubInstalledNuspecs(byVersion: Record<string, string>): void {
+      jest.spyOn(projectAssets, 'readPackageFolders').mockResolvedValue(['/cache']);
+      jest.spyOn(nuspecLocator, 'findNuspecFile')
+        .mockImplementation(async (_folders: string[], _id: string, version: string) =>
+          (byVersion[version] ? `/cache/example.imaging/${version}/example.imaging.nuspec` : undefined));
+      jest.spyOn(fsPromises, 'readFile').mockImplementation(async (p: any) => {
+        const version = String(p).split('/')[3];
+        return nuspecDeclaring(version, byVersion[version]) as any;
+      });
+    }
+
+    function installedAt(version: string, projectPath: string): InstalledPackage {
+      return { id: 'Example.Imaging', requestedVersion: version, resolvedVersion: version, projectPath };
+    }
+
+    it('answers for the version in the request, not the one installed', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [makeInstalledPkg('Example.Imaging', '/p/App.csproj')],
+        implicit: [],
+      });
+      const forVersion = jest.fn().mockResolvedValue(undefined);
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, { forVersion },
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_LICENSE_CHANGE',
+        packageId: 'Example.Imaging',
+        version: '4.1.2',
+        configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'LICENSE_CHANGE'));
+
+      const answer = posted.find((m) => m.type === 'LICENSE_CHANGE') as
+        { packageId: string; version: string } | undefined;
+      expect(answer).toMatchObject({ packageId: 'Example.Imaging', version: '4.1.2' });
+    });
+
+    /**
+     * A solution resolves a package per project, and those versions differ —
+     * exactly the case #115 is about. The panel names the highest of them and
+     * says so on screen; taking whichever entry the CLI happened to list first
+     * compared against a version the reader cannot see, and the row then
+     * described a change that was not the one being made.
+     */
+    it('compares from the version the panel shows, not the first the CLI listed', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        // Listed oldest first, which is the order that used to decide it.
+        installed: [installedAt('2.1.9', '/p/App.csproj'), installedAt('3.1.5', '/p/Lib.csproj')],
+        implicit: [],
+      });
+      stubInstalledNuspecs({ '2.1.9': 'Apache-2.0', '3.1.5': 'BSD-3-Clause' });
+      const forVersion = jest.fn().mockResolvedValue({ type: 'file', value: 'LICENSE' });
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, { forVersion },
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_LICENSE_CHANGE',
+        packageId: 'Example.Imaging',
+        version: '4.1.2',
+        configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'LICENSE_CHANGE'));
+
+      const answer = posted.find((m) => m.type === 'LICENSE_CHANGE') as
+        { change?: { from: { text: string } } } | undefined;
+      expect(answer?.change?.from.text).toBe('BSD-3-Clause');
+    });
+
+    /**
+     * Scrolling the version list asks about every version it passes, and a
+     * version whose expression the feed leaves empty costs a request to the
+     * feed. The answer to a version already left behind is of no use, so the
+     * lookup in flight is dropped rather than raced — without this, a slow
+     * early answer arrives last and is the one the panel is left with.
+     */
+    it('drops the lookup in flight when a newer version is asked about', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [installedAt('2.1.9', '/p/App.csproj')],
+        implicit: [],
+      });
+      stubInstalledNuspecs({ '2.1.9': 'Apache-2.0' });
+
+      const signals: Array<AbortSignal | undefined> = [];
+      let releaseFirst: (() => void) | undefined;
+      const forVersion = jest.fn().mockImplementation(
+        async (_id: string, _version: string, _configFiles: string[], signal?: AbortSignal) => {
+          signals.push(signal);
+          if (signals.length === 1) await new Promise<void>((r) => { releaseFirst = r; });
+          return { type: 'file', value: 'LICENSE' };
+        },
+      );
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, { forVersion },
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_LICENSE_CHANGE', packageId: 'Example.Imaging', version: '3.1.5', configFiles: ['a.config'],
+      });
+      await waitFor(() => signals.length === 1);
+      simulateMessage({
+        type: 'GET_LICENSE_CHANGE', packageId: 'Example.Imaging', version: '4.1.2', configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'LICENSE_CHANGE'));
+
+      expect(signals[0]?.aborted).toBe(true);
+
+      // The superseded answer arrives late and must still say nothing.
+      releaseFirst?.();
+      await waitFor(() => signals.length === 2);
+      const answers = posted.filter((m) => m.type === 'LICENSE_CHANGE') as Array<{ version: string }>;
+      expect(answers.map((a) => a.version)).toEqual(['4.1.2']);
+    });
+
+    /**
+     * The Problems row only reaches someone who opened the package, and nobody
+     * opens anything on the way to an "update all" — which is the scenario the
+     * whole issue is argued from. So the batch asks the same question of every
+     * item before the first `dotnet add`.
+     */
+    describe('the batch asks before the first install', () => {
+      function brokerWithBatch(
+        forVersion: jest.Mock,
+      ): { posted: ExtensionMessage[]; simulateMessage: (m: any) => void; broker: WebviewMessageBroker } {
+        const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.listAllForProject.mockResolvedValue({
+          installed: [installedAt('2.1.9', '/p/App.csproj'), {
+            id: 'Example.Text', requestedVersion: '1.0.0', resolvedVersion: '1.0.0', projectPath: '/p/App.csproj',
+          }],
+          implicit: [],
+        });
+        jest.spyOn(projectAssets, 'readPackageFolders').mockResolvedValue(['/cache']);
+        jest.spyOn(nuspecLocator, 'findNuspecFile')
+          .mockImplementation(async (_f: string[], id: string) => `/cache/${id.toLowerCase()}/x/x.nuspec`);
+        jest.spyOn(fsPromises, 'readFile').mockImplementation(async (p: any) => (`<?xml version="1.0"?>
+<package><metadata>
+  <id>x</id><version>1</version>
+  <license type="expression">${String(p).includes('example.imaging') ? 'Apache-2.0' : 'MIT'}</license>
+  <description>d</description>
+</metadata></package>` as any));
+
+        const broker = new WebviewMessageBroker(
+          stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+          undefined, undefined, undefined, undefined, undefined, undefined, { forVersion },
+        );
+        broker.attach();
+        simulateMessage({ type: 'WEBVIEW_READY' });
+        return { posted, simulateMessage, broker };
+      }
+
+      const BATCH = {
+        type: 'CHECK_BATCH_LICENSES',
+        requestId: 'r1',
+        configFiles: ['a.config'],
+        items: [
+          { packageId: 'Example.Imaging', fromVersion: '2.1.9', toVersion: '3.1.5' },
+          { packageId: 'Example.Text', fromVersion: '1.0.0', toVersion: '2.0.0' },
+        ],
+      };
+
+      it('names only the packages whose licence moves, and echoes the request', async () => {
+        // Imaging moves Apache-2.0 → a file licence; Text stays MIT, so it is
+        // not in the answer even though it is in the batch.
+        const forVersion = jest.fn().mockImplementation(async (id: string) =>
+          (id === 'Example.Imaging' ? { type: 'file', value: 'LICENSE' } : { type: 'expression', value: 'MIT' }));
+        const { posted, simulateMessage, broker } = brokerWithBatch(forVersion);
+        await waitFor(() => !!(broker as any)._lastListed);
+
+        simulateMessage(BATCH);
+        await waitFor(() => posted.some((m) => m.type === 'BATCH_LICENSE_CHANGES'));
+
+        const answer = posted.find((m) => m.type === 'BATCH_LICENSE_CHANGES') as Extract<
+          ExtensionMessage, { type: 'BATCH_LICENSE_CHANGES' }
+        >;
+        expect(answer.requestId).toBe('r1');
+        expect(answer.findings).toEqual([
+          expect.objectContaining({
+            packageId: 'Example.Imaging',
+            fromVersion: '2.1.9',
+            toVersion: '3.1.5',
+            change: {
+              // Linked from the identifier alone, which always resolves.
+              from: { text: 'Apache-2.0', file: false, url: 'https://licenses.nuget.org/Apache-2.0' },
+              // No page stated for the file licence here, so nowhere to send the
+              // reader — the row says so rather than inventing a link.
+              to: { text: 'LICENSE', file: true, url: undefined },
+              unnamed: true,
+            },
+          }),
+        ]);
+      });
+
+      /**
+       * The budget limits how long the check may take and says nothing about
+       * how many connections it opens at once. An "All" of forty packages would
+       * otherwise put forty requests to the feed in the same instant, and a feed
+       * that answers 429 to the fortieth does so well inside the budget.
+       */
+      it('never has more lookups in flight than the configured concurrency', async () => {
+        const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
+          dotnetConcurrency: 2,
+          cacheTtlMs: 1000,
+          includePrerelease: false,
+          onFailedUpdate: 'keep',
+          experimentalHttpCatalog: false,
+          vulnerabilityScript: '',
+          blockedPackages: [],
+        });
+        try {
+          let inFlight = 0;
+          let peak = 0;
+          const release: Array<() => void> = [];
+          const forVersion = jest.fn().mockImplementation(async () => {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            await new Promise<void>((r) => release.push(r));
+            inFlight -= 1;
+            return { type: 'expression', value: 'MIT' };
+          });
+          const { posted, simulateMessage, broker } = brokerWithBatch(forVersion);
+          await waitFor(() => !!(broker as any)._lastListed);
+
+          const many = Array.from({ length: 6 }, (_, n) => ({
+            packageId: n % 2 === 0 ? 'Example.Imaging' : 'Example.Text',
+            fromVersion: '1.0.0',
+            toVersion: `9.0.${n}`,
+          }));
+          simulateMessage({ ...BATCH, items: many });
+
+          // Let each wave finish only once the next cannot have started early.
+          await waitFor(() => release.length === 2);
+          while (release.length > 0) {
+            release.shift()!();
+            await waitFor(() => inFlight < 2 || release.length >= 2);
+          }
+          await waitFor(() => posted.some((m) => m.type === 'BATCH_LICENSE_CHANGES'));
+
+          expect(peak).toBe(2);
+        } finally {
+          cfgSpy.mockRestore();
+        }
+      });
+
+      /**
+       * A batch must never be blocked on an unknown. When the budget runs out
+       * the answer is "nothing found", the update the user asked for goes
+       * ahead, and the log carries the fact that the check was skipped so the
+       * silence is accounted for rather than invisible.
+       */
+      it('answers with nothing and records the skip when the budget runs out', async () => {
+        const forVersion = jest.fn().mockImplementation(() => new Promise(() => {}));
+        const { posted, simulateMessage, broker } = brokerWithBatch(forVersion);
+        await waitFor(() => !!(broker as any)._lastListed);
+        (broker as any)._licenseBudgetMs = 20;
+
+        simulateMessage(BATCH);
+        await waitFor(() => posted.some((m) => m.type === 'BATCH_LICENSE_CHANGES'));
+
+        const answer = posted.find((m) => m.type === 'BATCH_LICENSE_CHANGES') as { findings: unknown[] };
+        expect(answer.findings).toEqual([]);
+        expect(logger.getEntries().some((e) => e.command.includes('Licence check skipped'))).toBe(true);
+      });
+    });
+  });
+
+
+  /**
+   * The log knew everything the extension did and nothing about what was asked
+   * of it. When a search reported no matching installed packages for a query
+   * that plainly matched one, the record could not say what the panel had been
+   * given or how it read its own lists — so the investigation had nothing to go
+   * on. These rows close that gap.
+   */
+  describe('what the person did reaches the log', () => {
+    it('records the query exactly as typed, with how the panel read its lists', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      simulateMessage({
+        type: 'WEBVIEW_ACTION',
+        action: 'search',
+        query: 'ImageSharp ',
+        counts: { installed: [0, 22], implicit: [0, 40], available: 21 },
+      });
+
+      const row = logger.getEntries().find((e) => e.kind === 'ui');
+      expect(row?.command).toBe('search box');
+      // Quoted, so a stray space is visible rather than swallowed by the layout.
+      expect(row?.args).toEqual([
+        'query "ImageSharp "', 'installed 0/22', 'implicit 0/40', 'available 21',
+      ]);
+    });
+
+
+    it('records a click that produced nothing, which nothing else would show', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      simulateMessage({
+        type: 'WEBVIEW_ACTION',
+        action: 'confirm',
+        packageId: 'SixLabors.ImageSharp',
+        version: '4.1.2',
+        detail: ['split the shared reference', 'cancelled'],
+      });
+
+      const row = logger.getEntries().find((e) => e.kind === 'ui');
+      expect(row?.command).toBe('confirmation');
+      expect(row?.args).toEqual([
+        'SixLabors.ImageSharp 4.1.2', 'split the shared reference', 'cancelled',
+      ]);
+    });
+
+    it('records the set that was applied, including what was narrowed', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      simulateMessage({
+        type: 'WEBVIEW_ACTION',
+        action: 'apply',
+        packageId: 'Newtonsoft.Json',
+        version: '13.0.4',
+        detail: ['2 project(s)', 'narrowed to Example.Core: net10.0'],
+      });
+
+      const row = logger.getEntries().find((e) => e.kind === 'ui');
+      expect(row?.command).toBe('apply');
+      expect(row?.args).toContain('narrowed to Example.Core: net10.0');
+    });
+
+    it('records which package was selected and at which version', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      simulateMessage({
+        type: 'WEBVIEW_ACTION',
+        action: 'select',
+        packageId: 'SixLabors.ImageSharp',
+        version: '2.1.13',
+        counts: { installed: [1, 22], implicit: [0, 40], available: 21 },
+      });
+
+      const row = logger.getEntries().find((e) => e.kind === 'ui');
+      expect(row?.command).toBe('package selected');
+      expect(row?.args[0]).toBe('SixLabors.ImageSharp 2.1.13');
+    });
+  });
+
   it('starts listVulnerable without waiting for restore on WEBVIEW_READY', async () => {
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();

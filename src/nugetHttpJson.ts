@@ -43,6 +43,7 @@ import * as zlib from 'zlib';
 import type { IncomingMessage } from 'http';
 import { tunnelledTlsSocket } from './nugetProxyConnect';
 import type { ResolvedRoute } from './nugetProxy';
+import type { HttpFetcher } from './nugetSourceCapabilities';
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 /** Registration documents reach hundreds of kilobytes; nothing legitimate is near this. */
@@ -66,6 +67,13 @@ export interface HttpJsonResult {
 
 export interface JsonFetchOptions {
   timeoutMs?: number;
+  /**
+   * Keep the whole body as text on the result. Off by default: a registration
+   * document runs to half a megabyte and nothing reads it as text, while a
+   * `.nuspec` is a couple of kilobytes and is XML, so it has no other way out
+   * of here (#89).
+   */
+  wantText?: boolean;
   /**
    * How this address is to be reached. Consulted per address, because the
    * answer depends on it: one feed may be excluded from a proxy that another
@@ -111,9 +119,13 @@ export function isFetchableUrl(url: string): boolean {
 export function createJsonFetcher(
   previewBytes: () => number,
   route?: (url: string) => ResolvedRoute,
-): (url: string, signal?: AbortSignal, headers?: Record<string, string>) => Promise<HttpJsonResult> {
-  return (url, signal, headers) =>
-    fetchJsonStatus(url, signal, headers, { previewBytes: previewBytes(), route });
+): HttpFetcher {
+  return (url, signal, headers, intent) =>
+    fetchJsonStatus(url, signal, headers, {
+      previewBytes: previewBytes(),
+      route,
+      wantText: intent?.wantText,
+    });
 }
 
 /**
@@ -169,12 +181,16 @@ export async function fetchJsonStatus(
 
     const preview = read.text.slice(0, options.previewBytes ?? DEFAULT_PREVIEW_BYTES);
     const validators = { etag: header('etag'), lastModified: header('last-modified') };
+    // A document asked for as text is not expected to parse as JSON, and a
+    // failed parse must not cost the caller the body it came for.
+    const body = options.wantText ? { text: read.text } : {};
     try {
       return {
         status,
         json: JSON.parse(read.text) as unknown,
         bytes: read.bytes,
         preview,
+        ...body,
         ...validators,
       };
     } catch {
@@ -182,7 +198,7 @@ export async function fetchJsonStatus(
       // shape check upstream would reject it anyway; refusing it here keeps the
       // parse failure from looking like a malformed feed — but the text is kept,
       // because that is precisely the body somebody will want to read.
-      return { status, bytes: read.bytes, preview };
+      return { status, bytes: read.bytes, preview, ...body };
     }
   } finally {
     clearTimeout(timer);

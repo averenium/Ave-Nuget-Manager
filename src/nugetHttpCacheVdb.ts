@@ -59,7 +59,7 @@ export function nugetHttpCacheDirs(): string[] {
   return existing.length > 0 ? existing : out.slice(0, 1);
 }
 
-function severityFromInt(n: number): VulnerabilitySeverity {
+export function severityFromInt(n: number): VulnerabilitySeverity {
   switch (n) {
     case 0: return 'low';
     case 1: return 'moderate';

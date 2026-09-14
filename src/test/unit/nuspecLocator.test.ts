@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { findNuspecFile, listRuntimeIdentifiers } from '../../nuspecLocator';
+import { findNuspecFile, findLicenseFile, listRuntimeIdentifiers } from '../../nuspecLocator';
 
 describe('findNuspecFile', () => {
   let dir: string;
@@ -88,5 +88,43 @@ describe('listRuntimeIdentifiers', () => {
     await fs.writeFile(path.join(dir, 'runtimes', 'README.txt'), 'x', 'utf8');
     await fs.mkdir(path.join(dir, 'runtimes', 'win-x64'), { recursive: true });
     expect(await listRuntimeIdentifiers(nuspecPath)).toEqual(['win-x64']);
+  });
+});
+
+describe('findLicenseFile', () => {
+  let dir: string;
+  let nuspecPath: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nuspec-licence-'));
+    nuspecPath = path.join(dir, 'example.nuspec');
+    await fs.writeFile(nuspecPath, '<package></package>', 'utf8');
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('resolves the path the nuspec states, relative to the package root', async () => {
+    await fs.writeFile(path.join(dir, 'LICENSE.txt'), 'MIT License', 'utf8');
+    expect(await findLicenseFile(nuspecPath, 'LICENSE.txt'))
+      .toBe(path.join(dir, 'LICENSE.txt'));
+  });
+
+  it('follows a subdirectory, which a package may name', async () => {
+    await fs.mkdir(path.join(dir, 'docs'));
+    await fs.writeFile(path.join(dir, 'docs', 'LICENSE'), 'MIT License', 'utf8');
+    expect(await findLicenseFile(nuspecPath, 'docs/LICENSE'))
+      .toBe(path.join(dir, 'docs', 'LICENSE'));
+  });
+
+  it('says nothing when the package names a file it did not ship', async () => {
+    expect(await findLicenseFile(nuspecPath, 'LICENSE.txt')).toBeUndefined();
+  });
+
+  it('refuses a path that climbs out of the package, which is package-supplied data', async () => {
+    await fs.writeFile(path.join(dir, 'outside.txt'), 'x', 'utf8');
+    expect(await findLicenseFile(path.join(dir, 'inner', 'example.nuspec'), '../outside.txt'))
+      .toBeUndefined();
   });
 });

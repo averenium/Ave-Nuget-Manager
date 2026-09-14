@@ -138,11 +138,11 @@ export function httpLogSink(
  * report that a request carried a credential without ever seeing its value.
  */
 export function loggingFetcher(fetchJson: HttpFetcher, log: HttpLogSink): HttpFetcher {
-  return async (url, signal, headers) => {
+  return async (url, signal, headers, intent) => {
     const startedAt = Date.now();
     const authorized = !!headers?.authorization;
     try {
-      const response = await fetchJson(url, signal, headers);
+      const response = await fetchJson(url, signal, headers, intent);
       log.request({
         url,
         status: response.status,

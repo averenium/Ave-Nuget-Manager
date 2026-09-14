@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Version typography — variants</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px;
+    background: #181818; color: #cccccc;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #e6e6e6; margin: 0 0 6px; }
+  .lede { color: #8a8a8a; font-size: 12px; margin: 0 0 24px; max-width: 78ch; }
+  h2 { font-size: 12px; font-weight: 400; color: #8a8a8a; margin: 26px 0 4px; }
+  .cap { color: #6a6a6a; font-size: 11px; margin: 0 0 10px; max-width: 78ch; }
+  .grid { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+  .cell { width: 300px; }
+  .cell h3 {
+    font-size: 11px; font-weight: 600; letter-spacing: .04em; color: #b4b4b4;
+    margin: 0 0 4px; text-transform: none;
+  }
+  .cell .why { font-size: 11px; color: #6a6a6a; margin: 6px 0 0; min-height: 44px; }
+
+  /* ── the list, drawn with the tokens of global.css ───────────────────────── */
+  .pane { background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 4px; overflow: hidden; }
+  .r { padding: 4px 8px; border-left: 2px solid transparent; }
+  .r.sel { background: #04395e; border-left-color: #0e639c; }
+  .r1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .nm { font-weight: 500; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25; }
+  .src { font-size: 10px; color: #8a8a8a; flex: 0 0 auto; }
+  .r2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); column-gap: 8px; min-height: 15px; }
+  .v  { font-size: 11px; color: #8a8a8a; font-family: Consolas, "Courier New", monospace; line-height: 15px; }
+  .v.right { justify-self: end; text-align: right; }
+  .mark { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: 3px; vertical-align: super; border: 1px solid currentColor; border-radius: 2px; font-size: 9px; line-height: 1; }
+  .mark.up { color: #4ec994; border-color: transparent; font-size: 11px; }
+
+  /* today's behaviour: a long version wraps inside its column */
+  .v.wrap { overflow-wrap: anywhere; white-space: normal; }
+
+  /* ── variant A: the UI font with tabular figures ─────────────────────────── */
+  .a .v { font-family: inherit; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+
+  /* ── variant B: the version outranks the feed name ───────────────────────── */
+  /* `:not(.up):not(.multi)` throughout: the green of an available update and
+     the amber of several versions across projects already mean something, and
+     a variant that restyles the version must not take that meaning away. */
+  .b .v:not(.up):not(.multi) { color: #c8c8c8; }
+  .b .v { font-family: inherit; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .b .src { color: #6e6e6e; }
+
+  /* ── variant C: the pre-release tail steps back ──────────────────────────── */
+  .c .v:not(.up):not(.multi) { color: #c8c8c8; }
+  .c .v { font-family: inherit; font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .c .src { color: #6e6e6e; }
+  .c .tail { color: #7a7a7a; }
+
+  /* ── variant D: what differs is what is lit ──────────────────────────────── */
+  .d .v { font-family: inherit; font-variant-numeric: tabular-nums; color: #6e6e6e; font-size: 12px; white-space: nowrap; }
+  .d .v.multi { color: #cca700; }
+  .d .src { color: #6e6e6e; }
+  .d .diff { color: #c8c8c8; }
+  .d .diff.up { color: #4ec994; }
+
+  /* ── variant E: settled rows go quiet ───────────────────────────────────── */
+  .e .v:not(.up):not(.multi) { color: #c8c8c8; }
+  .e .v { font-family: inherit; font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }
+  .e .src { color: #6e6e6e; }
+  .e .v.settled { color: #5f5f5f; }
+
+  .up { color: #4ec994; }
+  .multi { color: #cca700; }
+  .note { color: #6a6a6a; font-size: 11px; margin-top: 10px; max-width: 78ch; }
+  .legend { margin-top: 8px; font-size: 11px; color: #6a6a6a; line-height: 1.75; max-width: 78ch; }
+  code { font-family: Consolas, monospace; font-size: 11px; color: #b4b4b4; }
+  .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; vertical-align: 0; margin-right: 3px; }
+</style>
+</head>
+<body>
+
+<h1>How the versions look</h1>
+<p class="lede">Positions are unchanged: the installed version stays in the left column of the row&rsquo;s second line, the available one stays in the right column, and the sections, marks and colours of state stay as they are. Only the type changes. Each variant below is the same five rows, so they can be read against each other; they combine, and the last pane is the combination worth taking.</p>
+
+<h2>0 &middot; Today</h2>
+<p class="cap">The version is set in <code>--font-mono</code>, which resolves to <code>--vscode-editor-font-family</code> &mdash; the font the reader chose for their <em>code</em>. It is 11px against the name&rsquo;s 13px, in the same grey as the feed name directly above it, and it wraps mid-string when the column is too narrow.</p>
+<div class="grid">
+  <div class="cell">
+    <div class="pane">
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v wrap">3.9.2</span><span class="v right up wrap">4.3.2</span></div>
+      </div>
+      <div class="r sel">
+        <div class="r1"><span class="nm">Example.Search.Client</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v wrap">10.1.0-preview.7.25380.108</span><span class="v right wrap">10.1.0-preview.7.25380.108</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Cdk.Search<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v wrap">4.0.100.13</span><span class="v right up wrap">4.0.102.12</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v wrap multi">2.8.1 / 3.1.0</span><span class="v right up wrap">3.4.0</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v wrap">8.0.4</span><span class="v right wrap">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">Three type families in one row &mdash; the UI font for the name, the UI font at 10px for the feed, the editor font at 11px for the version &mdash; and the version, the second most useful fact in the row, is the least legible thing on it.</p>
+  </div>
+
+  <div class="cell" style="width:420px;">
+    <div class="legend">
+      <div><b>The font is not ours to pick.</b> <code>--font-mono</code> follows the editor font setting, so the list looks different on every machine &mdash; a ligature font or a wide one changes how the whole column reads, and we never see it while designing.</div>
+      <div><b>No hierarchy.</b> Feed name and version are both <code>--color-tab-inactive</code>, stacked, right-aligned. They read as one grey block instead of two facts of different weight.</div>
+      <div><b>A pre-release fills the row.</b> <code>10.1.0-preview.7.25380.108</code> is mostly build metadata, and it is set as loudly as the part anyone reads.</div>
+      <div><b>The height is not fixed.</b> <code>overflow-wrap: anywhere</code> means a long version wraps and the row grows &mdash; so the list shifts while the splitter is dragged.</div>
+    </div>
+  </div>
+</div>
+
+<h2>Variants</h2>
+<div class="grid">
+
+  <div class="cell a">
+    <h3>A &mdash; the interface font, with tabular figures</h3>
+    <div class="pane">
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.9.2</span><span class="v right up">4.3.2</span></div>
+      </div>
+      <div class="r sel">
+        <div class="r1"><span class="nm">Example.Search.Client</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">10.1.0-preview.7&hellip;</span><span class="v right">10.1.0-preview.7&hellip;</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Cdk.Search<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">4.0.100.13</span><span class="v right up">4.0.102.12</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v multi">2.8.1 / 3.1.0</span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">One type family in the row. <code>tabular-nums</code> keeps the digits in a column, which is the only thing the monospace font was doing for us &mdash; and it no longer depends on a setting we cannot see.</p>
+  </div>
+
+  <div class="cell b">
+    <h3>B &mdash; the version outranks the feed name</h3>
+    <div class="pane">
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.9.2</span><span class="v right up">4.3.2</span></div>
+      </div>
+      <div class="r sel">
+        <div class="r1"><span class="nm">Example.Search.Client</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">10.1.0-preview.7&hellip;</span><span class="v right">10.1.0-preview.7&hellip;</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Cdk.Search<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">4.0.100.13</span><span class="v right up">4.0.102.12</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v multi">2.8.1 / 3.1.0</span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">A on top of a swapped hierarchy: version at 12px near the foreground, feed name pushed back to 10px dim. Nothing moves; the eye simply stops reading the feed name first.</p>
+  </div>
+
+  <div class="cell c">
+    <h3>C &mdash; the pre-release tail steps back</h3>
+    <div class="pane">
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.9.2</span><span class="v right up">4.3.2</span></div>
+      </div>
+      <div class="r sel">
+        <div class="r1"><span class="nm">Example.Search.Client</span><span class="src">nuget.org</span></div>
+        <div class="r2">
+          <span class="v">10.1.0<span class="tail">-preview.7&hellip;</span></span>
+          <span class="v right">10.1.0<span class="tail">-preview.7&hellip;</span></span>
+        </div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Cdk.Search<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">4.0.100.13</span><span class="v right up">4.0.102.12</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v multi">2.8.1 / 3.1.0</span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">The release part keeps full contrast, everything after the hyphen is dimmed and ellipsized, the whole string stays in the tooltip. A release version is unaffected, so most rows look exactly like B.</p>
+  </div>
+
+  <div class="cell d">
+    <h3>D &mdash; only what differs is lit</h3>
+    <div class="pane">
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v"><span class="diff">3</span>.9.2</span><span class="v right"><span class="diff up">4</span>.3.2</span></div>
+      </div>
+      <div class="r sel">
+        <div class="r1"><span class="nm">Example.Search.Client</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v"><span class="diff">10.1.0</span>-preview&hellip;</span><span class="v right"><span class="diff">10.1.0</span>-preview&hellip;</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Cdk.Search<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">4.0.<span class="diff">100</span>.13</span><span class="v right">4.0.<span class="diff up">102</span>.12</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v multi">2.8.1 / 3.1.0</span><span class="v right"><span class="diff up">3.4</span>.0</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">The segment where the two versions part is at full contrast, the shared prefix steps back. It answers &ldquo;how far apart are these&rdquo; without a word. The clever one &mdash; and the one that could read as noise on a list where most rows differ in the first digit.</p>
+  </div>
+
+  <div class="cell e">
+    <h3>E &mdash; a settled row goes quiet</h3>
+    <div class="pane">
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.9.2</span><span class="v right up">4.3.2</span></div>
+      </div>
+      <div class="r sel">
+        <div class="r1"><span class="nm">Example.Search.Client</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">10.1.0-preview.7&hellip;</span><span class="v right settled">10.1.0-preview.7&hellip;</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Cdk.Search<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">4.0.100.13</span><span class="v right up">4.0.102.12</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v multi">2.8.1 / 3.1.0</span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right settled">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">When the available version equals the installed one it is dimmed rather than repeated at full strength. The column keeps its shape, and the rows with somewhere to go are the ones that carry contrast.</p>
+  </div>
+
+  <div class="cell c">
+    <h3>Combined &mdash; A + B + C + E</h3>
+    <div class="pane">
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.9.2</span><span class="v right up">4.3.2</span></div>
+      </div>
+      <div class="r sel">
+        <div class="r1"><span class="nm">Example.Search.Client</span><span class="src">nuget.org</span></div>
+        <div class="r2">
+          <span class="v">10.1.0<span class="tail">-preview.7&hellip;</span></span>
+          <span class="v right" style="color:#5f5f5f;">10.1.0<span class="tail">-preview.7&hellip;</span></span>
+        </div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Cdk.Search<span class="mark up">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">4.0.100.13</span><span class="v right up">4.0.102.12</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v multi">2.8.1 / 3.1.0</span><span class="v right up">3.4.0</span></div>
+      </div>
+      <div class="r">
+        <div class="r1"><span class="nm">Example.Serialization</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right" style="color:#5f5f5f;">8.0.4</span></div>
+      </div>
+    </div>
+    <p class="why">One font, digits in a column, the version ahead of the feed name, build metadata stepped back, and the rows with nothing to do stepped back too. D is left out: it is the only one that could be called decoration.</p>
+  </div>
+
+</div>
+
+<h2>What none of these change</h2>
+<div class="legend">
+  <div>Where the two versions sit &mdash; left column and right column of the same second line, exactly as today.</div>
+  <div><span class="swatch" style="background:#4ec994;"></span>The green of an available update and <span class="swatch" style="background:#cca700;"></span>the amber of several versions across projects: both already mean something, and both keep meaning it.</div>
+  <div>The marks, the section headers, the selection and hover treatment, the width of the pane.</div>
+  <div>Wrapping is the one behaviour that goes: a version ellipsizes with the full string in the tooltip, so a row&rsquo;s height never depends on the pane&rsquo;s width.</div>
+</div>
+<p class="note">One honest caveat about A: <code>tabular-nums</code> needs the interface font to carry tabular figures. Segoe UI and the system fonts on macOS and most Linux desktops do; if one does not, the digits fall back to proportional widths &mdash; still perfectly readable, just not aligned into a column. That is a softer failure than inheriting an unknown editor font.</p>
+
+</body>
+</html>

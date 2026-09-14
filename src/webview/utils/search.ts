@@ -135,10 +135,20 @@ export function matchesQuery(id: string, query: string): boolean {
 export function sortByRelevance<T extends { id: string }>(
   packages: T[],
   query: string,
+  options: { keepOrderOnTies?: boolean } = {},
 ): T[] {
   if (!query || query.length < 2) return packages;
   return [...packages].sort((a, b) => {
     const diff = relevanceScore(a.id, query) - relevanceScore(b.id, query);
-    return diff !== 0 ? diff : a.id.localeCompare(b.id);
+    if (diff !== 0) return diff;
+    // A tie means this scoring cannot tell the two apart, and for search
+    // results something else already could: the feed ranks by popularity, and
+    // on one measured query the wanted package led the next by five times the
+    // downloads. Every candidate there ended in `.ImageSharp`, so the score was
+    // identical for all of them and the alphabet buried the obvious answer in
+    // sixth place. `Array.prototype.sort` is stable, so returning 0 keeps the
+    // order the feed gave. An installed list has no such order, and there the
+    // alphabet is the only sensible tie-break.
+    return options.keepOrderOnTies ? 0 : a.id.localeCompare(b.id);
   });
 }

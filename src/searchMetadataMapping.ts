@@ -19,6 +19,7 @@ export function searchedMetadataToPackageMetadata(
     authors: m.authors ?? '',
     projectUrl: m.projectUrl,
     licenseUrl: m.licenseUrl,
+    license: m.license,
     description: m.description ?? '',
     tags: m.tags ? m.tags.split(/[\s,]+/).filter(Boolean) : [],
     deprecation: m.deprecation,

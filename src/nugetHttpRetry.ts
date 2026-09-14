@@ -74,13 +74,13 @@ export function retryingFetcher(
   const maxDelayMs = options.maxDelayMs ?? DEFAULTS.maxDelayMs;
   const sleep = options.sleep ?? wait;
 
-  return async (url, signal, headers) => {
+  return async (url, signal, headers, intent) => {
     for (let attempt = 1; attempt <= attempts; attempt++) {
       // Cancelled before the first attempt, or while waiting between two: in
       // both cases the caller is gone and the feed must not be asked again.
       if (signal?.aborted) throw abortError();
       try {
-        const response = await fetchJson(url, signal, headers);
+        const response = await fetchJson(url, signal, headers, intent);
         if (attempt === attempts || !worthRepeating(response.status)) return response;
         const asked = retryAfterMs(response.retryAfter);
         await sleep(Math.min(asked ?? delayMs, maxDelayMs), signal);

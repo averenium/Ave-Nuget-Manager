@@ -13,7 +13,10 @@ export function AvailableList() {
     return null;
   }
 
-  const sorted = sortByRelevance(available, searchQuery);
+  // The feed already ranked these by relevance and popularity; the local score
+  // only ever pulls an exact or prefix match above the rest, never reshuffles
+  // what it scores equally.
+  const sorted = sortByRelevance(available, searchQuery, { keepOrderOnTies: true });
 
   return (
     <section className="pkg-section" aria-label="Available packages">

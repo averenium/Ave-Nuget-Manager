@@ -23,6 +23,7 @@ Visual Studio has a package manager window. VS Code has a terminal. Everything b
 | Remember to run `--vulnerable` now and then | **⚠** marks kept in sync after every install, with the advisory explained in the details panel |
 | `dotnet add package` per id, per project — and a failed restore leaves the repo half-bumped | Update a package **family** or the **whole solution** in one pass, with automatic rollback on `NU1605` |
 | Find which `nuget.config` in the chain actually wins, then edit XML | The resolved chain in one editor: sources, credentials, API keys, `packageSourceMapping` |
+| A bump changes the package's licence and nothing reports it | **Problems** names both licences before you install, and a batch update asks before the first write |
 | "Is this bump safe?" — read the release notes yourself | A bundled **agent skill** that collects the release notes for every changed package and drafts a breaking-changes review |
 
 No account, no sign-in, no telemetry: the extension shells out to your local `dotnet` and nothing else. It stays usable under **High Contrast** themes and Windows **forced colors**, which most webview panels do not.
@@ -65,6 +66,18 @@ Update **All**, a package **family** (`Microsoft.Extensions.*`, `OpenTelemetry.*
 Marks come from `dotnet list package --vulnerable` and follow the restore graph, so a package you only pull in transitively is still flagged. `averenium.nugetManager.vulnerabilityScript` can add findings from your own source (an internal feed, a corporate scanner) over a simple JSON protocol — see [docs/vulnerability-script.md](docs/vulnerability-script.md).
 
 ![Vulnerability details](https://raw.githubusercontent.com/averenium/Ave-Nuget-Manager/main/media/vulnerabilities.png)
+
+### Licences — a bump can change one, and nothing else says so
+
+A version bump can move a package from one licence to another. Restore succeeds, `dotnet list package --outdated` is silent, and the manifest diff shows a version number. `SixLabors.ImageSharp` states `Apache-2.0` through 2.x and carries a split licence — commercial for a range of uses — from 3.x: taking that major on an "update all" acquires a licensing obligation with no warning anywhere in the process.
+
+When the version you select declares a different licence from the one installed, the details panel says so in **Problems**, naming both — `Apache-2.0 → LICENSE (file)`. A licence shipped as a file inside the package is the stronger case, because it is one this extension cannot name or read; it is marked as something to open rather than summarised.
+
+A batch update asks before the first write instead of after the last. The confirmation lists every package in the set whose licence would move, and any row can be left out while the rest of the batch goes ahead. If the feeds cannot answer in time there is no question and the update proceeds, with the skip recorded in the **Log** — a batch you asked for is never held up by something that could not be established.
+
+Two things it deliberately does not do. It never calls a change safe, an improvement or acceptable: those are readings of the licences themselves, and this is a package manager. And a version that merely *adds* an alternative — `MIT` becoming `MIT OR Apache-2.0` — is not reported at all, since the terms you already comply with are still offered; only a change that takes something away, replaces the licence, or moves it into a file is worth interrupting you for.
+
+Needs `averenium.nugetManager.experimentalHttpCatalog`, below: the licence of a version you have not installed exists only on the feed, and `dotnet package search` does not return it at any verbosity.
 
 ### Multi-targeting — a version per framework, not one for all
 
@@ -130,11 +143,12 @@ The gear on the **NuGet** title bar (or **NuGet: Open Settings**) opens them.
 | `averenium.nugetManager.onFailedUpdate` | `rollback` | After a failed restore (`NU1605`): roll back the project file, or keep the version and show **Rollback**. |
 | `averenium.nugetManager.vulnerabilityScript` | `""` | Optional script adding extra vulnerability findings (JSON on stdin/stdout). See [docs/vulnerability-script.md](docs/vulnerability-script.md). |
 | `averenium.nugetManager.blockedPackages` | `[]` | Workspace package ids that must not change version. Right-click a row to block or unblock. |
+| `averenium.nugetManager.experimentalHttpCatalog` | `false` | Read versions, details, search and advisories from the feed over HTTP instead of the CLI. Every step falls back to the CLI, so switching it off restores the previous behaviour exactly. Licence comparison needs it. |
 
 ## Requirements and limits
 
 - The **.NET SDK** must be on `PATH`; VS Code **1.85** or newer.
-- CLI backend only (no NuGet HTTP catalog yet): **↑**, Groups and the version list use feed latest from `dotnet package search`, without checking whether that version is compatible with the frameworks the project targets. The **Current Dependencies** tree is the restore graph of the *installed* version.
+- The CLI is the default backend: **↑**, Groups and the version list use feed latest from `dotnet package search`, without checking whether that version is compatible with the frameworks the project targets. The **Current Dependencies** tree is the restore graph of the *installed* version. Reading the feed directly is available behind `experimentalHttpCatalog` and off until you turn it on.
 - **Groups** will not target `Microsoft.CodeAnalysis.*` above the Roslyn version bundled with the active SDK. **Packages** still lists nuget.org latest and asks before an over-cap upgrade.
 - Scope is `.csproj` / `.fsproj` in the first workspace folder — a solution, a project, or a folder of loose projects.
 - `packages.config` projects are skipped. Legacy non-SDK `.csproj` using `PackageReference` is updated in the XML, then restored.

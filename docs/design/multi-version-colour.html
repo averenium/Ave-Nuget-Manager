@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Colour for several versions in a row</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px;
+    background: #181818; color: #cccccc;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #e6e6e6; margin: 0 0 6px; }
+  .lede { color: #8a8a8a; font-size: 12px; margin: 0 0 22px; max-width: 80ch; }
+  h2 { font-size: 12px; font-weight: 400; color: #8a8a8a; margin: 24px 0 4px; }
+  .cap { color: #6a6a6a; font-size: 11px; margin: 0 0 10px; max-width: 80ch; }
+  .opt { display: flex; gap: 18px; align-items: flex-start; margin-bottom: 18px; flex-wrap: wrap; }
+  .opt__why { width: 330px; font-size: 11px; color: #7a7a7a; }
+  .opt__why b { color: #b4b4b4; font-weight: 600; display: block; margin-bottom: 2px; font-size: 11px; }
+  .opt__why .cost { color: #6a6a6a; display: block; margin-top: 4px; }
+
+  /* ── one pane, two skins ─────────────────────────────────────────────────── */
+  .pane {
+    width: 268px; border-radius: 4px; overflow: hidden; border: 0.5px solid;
+    --fg: #cccccc; --dim: #8a8a8a; --dimmer: #6e6e6e;
+    --warn: #cca700; --listwarn: #cca700; --ok: #4ec994; --name: #e6e6e6;
+    background: #1f1f1f; border-color: #2f2f2f;
+  }
+  /* The list lives in a panel, not in the editor, so the light skin is the
+     panel's off-white rather than paper white — pure #fff was harsher here
+     than anything the extension actually renders on. */
+  .pane.light {
+    --fg: #3b3b3b; --dim: #6b6b6b; --dimmer: #8a8a8a;
+    --warn: #bf8803; --listwarn: #855f00; --ok: #17803d; --name: #1f1f1f;
+    background: #f8f8f8; border-color: #e0e0e0;
+  }
+  /* Derived rather than branched: mixing the warning hue toward the foreground
+     darkens it on a light theme and lightens it on a dark one, from one rule.
+     The stylesheet has no `.vscode-light` branch anywhere and should not grow
+     its first one for this. */
+  .pane { --warn-soft: color-mix(in srgb, var(--warn) 62%, var(--fg)); }
+  .chip {
+    font-size: 11px; border-radius: 3px; padding: 0 4px;
+    color: var(--warn-soft); background: color-mix(in srgb, var(--warn) 16%, transparent);
+  }
+  .skin { font-size: 10px; color: #5f5f5f; margin: 0 0 3px; letter-spacing: .04em; }
+  .r { padding: 4px 8px; border-left: 2px solid transparent; }
+  .r1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .nm { font-weight: 500; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25; color: var(--name); }
+  .src { font-size: 10px; color: var(--dimmer); flex: 0 0 auto; }
+  .r2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); column-gap: 8px; min-height: 15px; align-items: baseline; }
+  .v { font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums; line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .v.right { justify-self: end; text-align: right; color: var(--ok); }
+  .sep { color: var(--dimmer); padding: 0 3px; }
+  .rest { color: var(--dim); }
+  .more { font-size: 11px; }
+  .mark { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: 3px; vertical-align: super; font-size: 11px; line-height: 1; color: var(--ok); }
+  .tag { font-size: 10px; color: #5f5f5f; padding: 2px 8px 0; }
+
+  /* K0 — today */
+  .k0 .v.multi, .k0 .v.multi .rest, .k0 .v.multi .sep { color: var(--warn); }
+  /* K1 — ink only on the count */
+  .k1 .more { color: var(--warn); }
+  /* K2 — no colour at all */
+  .k2 .more { color: var(--dim); }
+  /* K3 — colour only when a major is crossed */
+  .k3 .more { color: var(--dim); }
+  .k3 .major .more, .k3 .major .rest, .k3 .major .sep { color: var(--warn); }
+  /* K4 — the axis decides */
+  .k4 .more { color: var(--warn); }
+  .k4 .tfm .more, .k4 .tfm .rest, .k4 .tfm .sep { color: var(--dim); }
+  /* K5 — the list token instead of the editor token */
+  .k5 .more { color: var(--listwarn); }
+  /* ── K3 on a light theme: four ways to tint the count ───────────────────── */
+  .l1 .major .more { color: var(--warn); }
+  .l2 .major .more { color: var(--listwarn); }
+  .l3 .major .more { color: var(--warn-soft); }
+  .l1 .more, .l2 .more, .l3 .more { color: var(--dim); }
+  .l4 .more { color: var(--dim); }
+  .l4 .major .more { color: var(--warn-soft); background: color-mix(in srgb, var(--warn) 16%, transparent); border-radius: 3px; padding: 0 4px; }
+  /* ── asymmetric: dark keeps the gold it has, light gets a darker one ─────── */
+  .o .more { color: var(--dim); }
+  .o .major .more { color: var(--warn); }
+  .o .pane.light .major .more { color: #7a5300; }
+  /* ── the decision: K3's rule, L4's chip ─────────────────────────────────── */
+  .fin .more { color: var(--dim); }
+  .fin .major .more {
+    color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 16%, transparent);
+    border-radius: 3px; padding: 0 4px;
+  }
+  .fin .pane.light .major .more { color: color-mix(in srgb, var(--warn) 55%, var(--fg)); }
+  pre.css {
+    background: #1b1b1b; border: 0.5px solid #2f2f2f; border-radius: 4px;
+    padding: 10px 12px; font-family: Consolas, monospace; font-size: 11px;
+    color: #b4b4b4; line-height: 1.6; overflow-x: auto; max-width: 620px;
+  }
+  pre.css .c { color: #6a9955; }
+  /* ── no ink in the cell at all: the condition joins the marks ───────────── */
+  .m .more { color: var(--dim); }
+  .m .mark--spread {
+    border: 1px solid currentColor; border-radius: 2px; width: 14px; height: 14px;
+    font-size: 9px; color: var(--warn);
+  }
+  .m .pane.light .mark--spread { color: #7a5300; }
+
+  .legend { margin-top: 8px; font-size: 11px; color: #6a6a6a; line-height: 1.75; max-width: 80ch; }
+  .note { color: #6a6a6a; font-size: 11px; margin-top: 10px; max-width: 80ch; }
+  code { font-family: Consolas, monospace; font-size: 11px; color: #b4b4b4; }
+  .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
+</style>
+</head>
+<body>
+
+<h1>Colour for a row with several versions</h1>
+<p class="lede">Variant D of the cell &mdash; newest first at full contrast, the rest stepped back, a middle dot between them, a count for what did not fit. The question left is the ink. Each option below is the same three rows on a dark and a light pane, because this is exactly the kind of colour decision that looked fine in Dark+ and broke in Light+ once before (<a href="https://github.com/averenium/Ave-Nuget-Manager/pull/110">#108</a>).</p>
+<p class="cap">Three rows in every pane: a spread <b>between projects</b>, a spread <b>between the frameworks of one project</b>, and a spread that <b>crosses a major</b>. Light values are the theme&rsquo;s, shown here at their approximate Light+ defaults &mdash; what matters is the relative contrast, not the exact hex.</p>
+
+<h2>Decided &mdash; K3&rsquo;s rule, L4&rsquo;s chip</h2>
+<p class="cap">The count of the versions the cell could not show carries the mark, and only when the spread crosses a major line; a patch apart is housekeeping. The hue sits in the <em>background</em> rather than in the ink, so on a pale row there is no saturated text to vibrate, and on a dark one the gold stays the gold it already was.</p>
+<div class="opt fin">
+  <div>
+    <p class="skin">DARK</p>
+    <div class="pane">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+      <div class="r"><div class="r1"><span class="nm">Example.Diagnostics</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right" style="color:var(--dim);">8.0.4</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT</p>
+    <div class="pane light">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+      <div class="r"><div class="r1"><span class="nm">Example.Diagnostics</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.4</span><span class="v right" style="color:var(--dim);">8.0.4</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>Three rows, three states</b>
+    A spread inside a major: counted, not coloured. A spread across one: the chip. One version everywhere: nothing at all, which is most rows.
+  </div>
+</div>
+<pre class="css"><span class="c">/* The versions this cell could not show. Plain until the spread crosses a
+   major line — a patch apart between projects is housekeeping, a major apart
+   is a difference in behaviour (the same rule `frameworkPins` uses for #82). */</span>
+.pkg-row__more { font-size: 11px; color: var(--color-tab-inactive); }
+
+<span class="c">/* The hue goes into the background rather than into the ink: as text on a pale
+   row a saturated warning colour vibrates instead of contrasting, and the wash
+   leaves the dark theme's gold exactly as it was. The outline is transparent in
+   every theme but High Contrast, where it is what keeps the chip a shape. */</span>
+.pkg-row__more--major {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  border-radius: var(--radius);
+  padding: 0 4px;
+  outline: 1px solid var(--color-contrast-border);
+}
+
+<span class="c">/* Light themes tune `editorWarning.foreground` to be seen as a squiggle under
+   code; on an off-white list row it glares. Deepened for this element only, and
+   derived from whatever gold the theme actually gave us — never a literal
+   standing in for a theme's own value, which is what produced #108. */</span>
+body.vscode-light .pkg-row__more--major {
+  color: color-mix(in srgb, var(--color-warning) 55%, var(--color-fg));
+}</pre>
+<p class="note">One new token-free rule, one class, one light-theme line. <code>--color-warning</code> itself is untouched, so the nineteen other places that use it keep the appearance they have.</p>
+
+<h2>What the colour is being asked to mean</h2>
+<div class="legend">
+  <div><code>.pkg-row__version--multi</code> uses <code>--color-warning</code>, which is <code>--vscode-editorWarning-foreground</code> &mdash; the same token as a deprecated version, a vulnerability reached through a dependency, a downgrade, a timed-out process and an HTTP log row. Nineteen other places in the stylesheet say &ldquo;warning&rdquo; with it.</div>
+  <div>But several versions across projects is a <em>condition</em>, and across the frameworks of one project it is usually a <em>decision</em>. Painting it with the warning colour files it under problems, next to a vulnerability.</div>
+  <div>Whatever is chosen, it must be a token of its own rather than a redefinition of <code>--color-warning</code>: the other nineteen users of that token keep the appearance they have.</div>
+</div>
+
+<h2>K0 &middot; Today &mdash; the whole enumeration in the warning colour</h2>
+<div class="opt k0">
+  <div>
+    <p class="skin">DARK</p>
+    <div class="pane">
+      <div class="tag">between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v multi">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks of one project</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v multi">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v multi">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT</p>
+    <div class="pane light">
+      <div class="tag">between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v multi">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks of one project</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v multi">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v multi">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>Everything the same weight</b>
+    All three rows shout equally, and the colour overrides the contrast hierarchy variant D was built on &mdash; the newest version and the older ones end up the same colour again.
+    <span class="cost">On light the yellow sits on white, which is the worst contrast pairing in the palette.</span>
+  </div>
+</div>
+
+<h2>K1 &middot; Ink only on the count</h2>
+<div class="opt k1">
+  <div>
+    <p class="skin">DARK</p>
+    <div class="pane">
+      <div class="tag">between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks of one project</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT</p>
+    <div class="pane light">
+      <div class="tag">between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks of one project</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>The versions are text, the count is the signal</b>
+    Contrast does the ordering, colour does the flagging, and the two stop fighting. The coloured element is also the smallest one on the row, so a low-contrast theme costs the least here.
+    <span class="cost">A row with exactly two versions and no overflow has nothing coloured at all unless the count is always rendered &mdash; so it always is, even at <code>+1</code>.</span>
+  </div>
+</div>
+
+<h2>K2 &middot; No colour at all</h2>
+<div class="opt k2">
+  <div>
+    <p class="skin">DARK</p>
+    <div class="pane">
+      <div class="tag">between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks of one project</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT</p>
+    <div class="pane light">
+      <div class="tag">between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks of one project</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>The quietest, and the only one that survives every theme untouched</b>
+    Several versions is legible from the cell&rsquo;s own shape &mdash; there is more than one of them, and a count says how many. Nothing to tune per theme, nothing to confuse with the green in the next column.
+    <span class="cost">Loses the scan: today a solution with drifted versions can be spotted by colour while scrolling, and this gives that up.</span>
+  </div>
+</div>
+
+<h2>K3 &middot; Colour only when the spread crosses a major</h2>
+<div class="opt k3">
+  <div>
+    <p class="skin">DARK</p>
+    <div class="pane">
+      <div class="tag">between projects &mdash; same major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks &mdash; same major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.2</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major</div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT</p>
+    <div class="pane light">
+      <div class="tag">between projects &mdash; same major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks &mdash; same major</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.2</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major</div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>The colour starts meaning something</b>
+    Two projects a patch apart is housekeeping; two projects a major apart is a real difference in behaviour, and only the second is worth a colour. Reuses the major-line rule <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/82">#82</a> already has in <code>frameworkPins</code>.
+    <span class="cost">A rule the reader has to learn: an uncoloured row with two versions no longer means &ldquo;nothing to see&rdquo;, it means &ldquo;nothing major&rdquo;.</span>
+  </div>
+</div>
+
+<h2>K4 &middot; The axis decides &mdash; projects coloured, frameworks not</h2>
+<div class="opt k4">
+  <div>
+    <p class="skin">DARK</p>
+    <div class="pane">
+      <div class="tag">between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks of one project</div>
+      <div class="r tfm"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major, between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT</p>
+    <div class="pane light">
+      <div class="tag">between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">between frameworks of one project</div>
+      <div class="r tfm"><div class="r1"><span class="nm">Example.Payments.Client<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="tag">crosses a major, between projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>Colour where it is a drift, plain where it is a design</b>
+    A project targeting two frameworks at two versions is usually deliberate, and marking it the same as an accidental divergence trains the reader to ignore the mark.
+    <span class="cost">The mixed case &mdash; several projects, one of them also split by framework &mdash; has to pick one, and it picks the project reading.</span>
+  </div>
+</div>
+
+<h2>K5 &middot; The same idea, from the list token instead of the editor token</h2>
+<p class="cap">Orthogonal to all of the above: whichever elements end up coloured, the value can come from <code>--vscode-list-warningForeground</code> rather than <code>--vscode-editorWarning-foreground</code>. That token exists precisely for warning text inside a list &mdash; it is what the Explorer tints a file with. Themes that tune their lists tune it; themes that do not fall back the same way.</p>
+<div class="opt k5">
+  <div>
+    <p class="skin">DARK</p>
+    <div class="pane">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT</p>
+    <div class="pane light">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">2.8.1</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>A darker, calmer yellow on light</b>
+    The list token is defined for text on a list background rather than for a squiggle in the editor, so on light themes it lands closer to brown than to gold.
+    <span class="cost">Needs checking on a handful of popular themes before it is adopted &mdash; a token a theme leaves undefined falls back to our own literal, and then we have picked the colour after all.</span>
+  </div>
+</div>
+
+<h2>K3 on a light theme &mdash; four ways to tint the count</h2>
+<p class="cap">The gold the light themes give <code>editorWarning.foreground</code> is tuned to be seen as a squiggle under code, and on a pale list row it is both glaring and low-contrast at once. Each option below is the same two rows &mdash; one spread inside a major, one crossing it &mdash; on light and on dark, so a treatment that fixes light without wrecking dark is visible as such.</p>
+<div class="opt">
+  <div class="l1">
+    <p class="skin">L1 &mdash; THE EDITOR TOKEN, AS TODAY</p>
+    <div class="pane light" style="margin-bottom:6px;">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+    <div class="pane">
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+    <p class="opt__why" style="width:240px;"><b>What we have</b>Gold on off-white: it catches the eye by vibrating rather than by contrasting.</p>
+  </div>
+
+  <div class="l2">
+    <p class="skin">L2 &mdash; THE LIST TOKEN</p>
+    <div class="pane light" style="margin-bottom:6px;">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+    <div class="pane">
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+    <p class="opt__why" style="width:240px;"><b>Darker, but the theme&rsquo;s to give</b>Calmer where a theme defines it; where one does not, the fallback is a literal we chose ourselves.</p>
+  </div>
+
+  <div class="l3">
+    <p class="skin">L3 &mdash; MIXED TOWARD THE FOREGROUND</p>
+    <div class="pane light" style="margin-bottom:6px;">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+    <div class="pane">
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+    <p class="opt__why" style="width:240px;"><b>One rule, both themes</b><code>color-mix(in srgb, var(--color-warning) 62%, var(--color-fg))</code> darkens on light and lightens on dark by itself &mdash; no theme branch, and the hue survives.</p>
+  </div>
+
+  <div class="l4">
+    <p class="skin">L4 &mdash; THE HUE AS A CHIP, NOT AS TEXT</p>
+    <div class="pane light" style="margin-bottom:6px;">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+    <div class="pane">
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+    <p class="opt__why" style="width:240px;"><b>Saturation goes to the background</b>A 16% wash behind dark text reads as a mark without any bright ink on a pale row &mdash; the same trick <code>.pkg-row__tfm</code> already uses.</p>
+  </div>
+</div>
+<p class="note">L3 and L4 combine: the chip&rsquo;s text can be the mixed colour, which is what the pane above shows. Neither needs a light-theme branch, and that matters &mdash; <code>global.css</code> has no <code>.vscode-light</code> rule anywhere today, and the one time this stylesheet did assume a theme&rsquo;s values it produced <a href="https://github.com/averenium/Ave-Nuget-Manager/pull/110">#108</a>.</p>
+
+<h2>O &middot; Dark keeps the gold it has; only light is darkened</h2>
+<p class="cap">&ldquo;Darker on light, and the gold was better on dark&rdquo; is an asymmetric requirement, and no single <code>color-mix</code> can satisfy it: mixing toward the foreground darkens on light &mdash; which is wanted &mdash; but on dark the foreground is pale, so the same rule washes the gold out, which is exactly the part that was better before. The asymmetry has to be stated, and the webview has a supported way to state it: VS Code puts <code>vscode-light</code>, <code>vscode-dark</code> or <code>vscode-high-contrast</code> on the body of every webview it renders.</p>
+<div class="opt o">
+  <div>
+    <p class="skin">DARK &mdash; UNCHANGED FROM TODAY</p>
+    <div class="pane">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT &mdash; ONE RULE DEEPER</p>
+    <div class="pane light">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>Two rules, and the second one is small</b>
+    The dark list is untouched, so nothing anyone already likes changes. Only <code>body.vscode-light</code> deepens the count.
+    <span class="cost">This is the stylesheet&rsquo;s first theme branch, so it is worth being precise about what it may contain: a colour for <em>our own</em> element, never an assumption about what a theme&rsquo;s token is worth &mdash; that assumption is what produced #108.</span>
+  </div>
+</div>
+
+<h2>M &middot; No ink in the cell at all &mdash; the condition joins the marks</h2>
+<p class="cap">If none of the tints convince, the honest reading is that the version cell is the wrong place for the signal. Every other condition in this list already lives in the marks strip beside the package name &mdash; update, blocked, vulnerable, deprecated, unmapped &mdash; and they are shapes with borders, which is what keeps them legible when a High Contrast theme flattens the palette (<a href="https://github.com/averenium/Ave-Nuget-Manager/issues/44">#44</a>). The versions then stay plain text in both themes, and nothing in the cell needs a colour decision.</p>
+<div class="opt m">
+  <div>
+    <p class="skin">DARK</p>
+    <div class="pane">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="mark mark--spread" title="Versions differ across a major">&ne;</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT</p>
+    <div class="pane light">
+      <div class="r"><div class="r1"><span class="nm">Example.Core<span class="mark">&#8593;</span></span><span class="src">internal</span></div>
+        <div class="r2"><span class="v">3.1.0<span class="sep">&middot;</span><span class="rest">3.0.4</span> <span class="more">+1</span></span><span class="v right">3.4.0</span></div></div>
+      <div class="r major"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="mark mark--spread" title="Versions differ across a major">&ne;</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span><span class="rest">6.0.0</span> <span class="more">+2</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>The colour question disappears</b>
+    The cell becomes plain text in every theme, and the condition sits where the reader already looks for conditions, with the breakdown in its tooltip.
+    <span class="cost">It costs a fifth mark shape, and <code>PkgListRow</code> deliberately refused a fifth once already &mdash; deprecation reuses the vulnerability glyph rather than inventing one. So this trades a colour problem for a shape budget, and that is the trade to weigh.</span>
+  </div>
+</div>
+
+<h2>Two constraints on any of these</h2>
+<div class="legend">
+  <div><b>Green is already in the row.</b> <span class="sw" style="background:#4ec994;"></span>The available-update colour sits in the right-hand column while <span class="sw" style="background:#cca700;"></span>amber sits in the left. Green and amber are the classic pair a red-green colour deficiency merges, so the two are kept apart by position and by the &#8593; mark rather than by hue alone &mdash; and that is an argument against introducing a third hue here.</div>
+  <div><b>High Contrast themes flatten the palette.</b> <code>global.css</code> already requires a shape rather than a colour for the row marks (<a href="https://github.com/averenium/Ave-Nuget-Manager/issues/44">#44</a>). The count is text, which is a shape, so K1&ndash;K5 all keep their meaning when the hue collapses. K0 does not: strip its colour and the enumeration is just three versions again.</div>
+</div>
+
+<div class="note">
+  <b>Settled: K3 + L4</b>, written out at the top of this page. L3 was withdrawn &mdash; it darkens light, which was wanted, but washes out the dark gold, which was not. O and M stay on the page as the alternatives that were weighed: O for keeping the tint in the ink, M for dropping it from the cell entirely.
+</div>
+
+</body>
+</html>

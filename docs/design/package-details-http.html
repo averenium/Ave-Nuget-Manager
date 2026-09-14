@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Package details over HTTP — what the feed adds</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px;
+    background: #181818; color: #cccccc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #e6e6e6; margin: 0 0 6px; }
+  .lede { color: #8a8a8a; font-size: 12px; margin: 0 0 26px; max-width: 74ch; }
+  h2 { font-size: 12px; font-weight: 400; color: #8a8a8a; margin: 26px 0 4px; }
+  .cap { color: #6a6a6a; font-size: 11px; margin: 0 0 10px; max-width: 74ch; }
+  .row { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 8px; }
+  .panel {
+    background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 6px;
+    padding: 12px 14px; font-size: 13px;
+  }
+  .wide { width: 620px; }
+  .narrow { width: 300px; }
+  .title { font-size: 13px; font-weight: 600; color: #e6e6e6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; }
+  .icon-btn { width: 24px; height: 24px; border-radius: 3px; display: flex; align-items: center; justify-content: center; flex: 0 0 24px; color: #8a8a8a; }
+  .icon-btn.accent { background: #0e639c; color: #fff; }
+  .icon-btn.idle { background: #313131; color: #6e6e6e; font-weight: bold; }
+  .field { border: 0.5px solid #3c3c3c; border-radius: 3px; padding: 5px 8px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vrow { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+  .vrow .field { flex: 1 1 0; }
+  .label { font-size: 11px; color: #8a8a8a; letter-spacing: .05em; }
+  .desc { font-size: 12px; color: #b4b4b4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .sub { font-size: 11px; color: #8a8a8a; }
+  a { color: #4daafc; text-decoration: none; }
+  .problems { border-left: 2px solid #f14c4c; background: #2a1d1d; padding: 5px 9px; }
+  .problems.warn { border-left-color: #b58a4a; background: #2a241a; }
+  .attrs { flex: 0 0 150px; border-left: 0.5px solid #2f2f2f; padding-left: 13px; }
+  .arow { height: 23px; display: flex; align-items: center; gap: 5px; }
+  .badge { background: #2d2d2d; border-radius: 3px; padding: 1px 6px; font-size: 11px; color: #d4d4d4; }
+  .badge.dim { color: #9a9a9a; }
+  .divider { border-top: 0.5px solid #2f2f2f; margin: 11px -14px 0; }
+  .drow { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 3px 0; gap: 10px; }
+  .did { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dmeta { display: flex; gap: 9px; align-items: center; flex: 0 0 auto; }
+  .muted { color: #9a9a9a; }
+  .range { color: #7a7a7a; font-size: 11px; }
+  .hint { color: #b58a4a; font-size: 11px; }
+  .bad { color: #f14c4c; }
+  .good { color: #73a95c; }
+  .note { color: #6a6a6a; font-size: 11px; margin-top: 9px; max-width: 74ch; }
+  .legend { margin-top: 10px; font-size: 11px; color: #6a6a6a; line-height: 1.7; }
+
+  /* ── new elements only ─────────────────────────────────────────────── */
+  /* One line of feed-only facts about the version in the field above it. */
+  .vfacts { font-size: 11px; color: #7a7a7a; margin-top: 4px; }
+  .vfacts .sep { color: #4a4a4a; padding: 0 5px; }
+  .vfacts b { color: #9a9a9a; font-weight: 400; }
+  /* The "what changes" band: one row per difference, glyph in a fixed gutter. */
+  .chg { display: flex; gap: 8px; font-size: 12px; padding: 2px 0; align-items: baseline; }
+  .chg__op { flex: 0 0 12px; text-align: center; font-weight: bold; }
+  .chg__id { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chg__to { flex: 0 0 auto; color: #9a9a9a; font-size: 11px; }
+  .group-pill { font-size: 11px; color: #6a6a6a; }
+  table.facts { border-collapse: collapse; font-size: 12px; margin: 0 0 8px; }
+  table.facts td, table.facts th { border-bottom: 0.5px solid #2a2a2a; padding: 4px 14px 4px 0; text-align: left; vertical-align: top; }
+  table.facts th { color: #8a8a8a; font-weight: 400; font-size: 11px; letter-spacing: .05em; }
+  table.facts td.free { color: #73a95c; }
+  table.facts td.cost { color: #b58a4a; }
+</style>
+</head>
+<body>
+
+<h1>Package details over HTTP</h1>
+<p class="lede">What the catalog read over HTTP (<a href="https://github.com/averenium/Ave-Nuget-Manager/issues/27">#27</a>) lets the details panel say that the CLI path cannot, and where each fact lands. Type scale, colours and control sizes follow <a href="package-details-panel.html">the #86 panel design</a> unchanged &mdash; everything already on screen is drawn exactly as it is today, and only the marked blocks are new.</p>
+
+<h2>Where each new fact comes from, and what it costs</h2>
+<table class="facts">
+  <tr><th>Fact</th><th>Resource</th><th>Extra requests</th></tr>
+  <tr><td>Publication date of a version</td><td>registration entry</td><td class="free">none &mdash; already parsed, currently dropped before the UI</td></tr>
+  <tr><td>Declared dependencies per target framework</td><td>registration entry</td><td class="free">none &mdash; already parsed</td></tr>
+  <tr><td>Advisory id, severity and link per version</td><td>registration entry</td><td class="free">none &mdash; today flattened to a yes/no mark</td></tr>
+  <tr><td>Unlisted version</td><td>registration entry</td><td class="free">none &mdash; already read to filter version lists</td></tr>
+  <tr><td>Licence as an SPDX expression</td><td>registration entry</td><td class="free">none &mdash; already mapped</td></tr>
+  <tr><td>Version count, age, nearest unaffected version</td><td>registration pages</td><td class="free">none &mdash; computed from entries already in hand</td></tr>
+  <tr><td>Advisories for a package nothing has installed</td><td>vulnerability database</td><td class="free">none while the database is already loaded</td></tr>
+  <tr><td>Total downloads, owners, reserved prefix</td><td>search</td><td class="cost">free for a package found by search; a request for one found by id</td></tr>
+  <tr><td>Files actually shipped per framework</td><td>package content</td><td class="cost">a package download &mdash; not proposed</td></tr>
+</table>
+
+<h2>1 &middot; Today &mdash; a package that is not installed</h2>
+<p class="cap">The baseline. The same panel is what a feed with no metadata resource, a local folder source, or the experimental flag switched off keeps showing: every block below is added only when the feed answered, and its absence removes the block rather than leaving an empty one.</p>
+<div class="row">
+  <div class="panel wide">
+    <div class="head">
+      <span class="title">Example.Payments.Client</span>
+      <span class="actions">
+        <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg></span>
+      </span>
+    </div>
+    <div class="vrow"><span class="field">4.1.0</span></div>
+    <div style="display:flex; gap:14px; align-items:stretch; margin-top:10px;">
+      <div style="flex:1 1 0; min-width:0;">
+        <div class="desc">Client library for the Example payments gateway: idempotent charges, refunds and webhook verification</div>
+        <div class="sub"><a>more</a> &middot; Example Corp</div>
+      </div>
+      <div class="attrs">
+        <div class="arow"><span class="badge">MIT</span></div>
+        <div class="arow" style="font-size:12px;">
+          <a><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline-block; vertical-align:-2px;"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg> Project</a>
+        </div>
+      </div>
+    </div>
+    <div class="note">Nothing here says when the version was published, what it will pull in, or whether it is the version the dropdown marks as vulnerable. A package the workspace has never restored has no restore graph to read, so the Dependencies section does not exist at all.</div>
+  </div>
+</div>
+
+<h2>2 &middot; Before install &mdash; with the feed answering</h2>
+<p class="cap">Three additions, all from entries the version walk already downloaded: a facts line under the version, the advisory the picked version actually carries together with the nearest version that does not, and the dependencies the version <em>declares</em>.</p>
+<div class="row">
+  <div class="panel wide">
+    <div class="head">
+      <span class="title">Example.Payments.Client</span>
+      <span class="actions">
+        <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg></span>
+      </span>
+    </div>
+    <div class="vrow"><span class="field">4.1.0</span></div>
+    <!-- NEW -->
+    <div class="vfacts">
+      published <b>12 Aug 2025</b><span class="sep">&middot;</span>3rd of <b>47</b> versions<span class="sep">&middot;</span>newest <b>4.3.2</b>, 6 days ago<span class="sep">&middot;</span>Example Feed
+    </div>
+
+    <div style="display:flex; gap:14px; align-items:stretch; margin-top:10px;">
+      <div style="flex:1 1 0; min-width:0;">
+        <div class="desc">Client library for the Example payments gateway: idempotent charges, refunds and webhook verification</div>
+        <div class="sub"><a>more</a> &middot; Example Corp</div>
+
+        <!-- NEW: an advisory about a package nothing has installed -->
+        <div class="problems" style="margin-top:9px;">
+          <div class="label">PROBLEMS</div>
+          <div style="font-size:12px; margin-top:2px;">
+            <span class="bad">HIGH</span>
+            <a>GHSA-0000-example-0000</a>
+            <span style="color:#8a8a8a;">&middot; affects &lt; 4.1.3 &middot; Example Feed</span>
+          </div>
+          <div style="font-size:12px; margin-top:2px;">
+            <span class="good">&#8593;</span>
+            <span style="color:#b4b4b4;">4.1.3 is the nearest version this advisory does not cover</span>
+            <a style="font-size:11px;">pick it</a>
+          </div>
+        </div>
+      </div>
+      <div class="attrs">
+        <div class="arow"><span class="badge">MIT</span></div>
+        <div class="arow" style="font-size:12px;">
+          <a><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline-block; vertical-align:-2px;"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg> Project</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+    <!-- NEW: declared, not resolved -->
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:10px;">
+      <span class="label">DEPENDENCIES</span>
+      <span class="group-pill">declared for net10.0</span>
+    </div>
+    <div class="drow"><span class="did">Example.Core</span><span class="dmeta"><span class="range">[3.1.0, 4.0.0)</span></span></div>
+    <div class="drow"><span class="did">System.Text.Json</span><span class="dmeta"><span class="range">&ge; 8.0.4</span></span></div>
+    <div class="drow"><span class="did">Microsoft.Extensions.Http</span><span class="dmeta"><span class="range">&ge; 8.0.0</span></span></div>
+    <div class="note">Ranges, not versions: what restore picks inside them is not knowable before the restore runs. The section switches to the resolved tree the moment the package is installed &mdash; the same rows with one column more, so nothing moves under the reader.</div>
+  </div>
+</div>
+
+<h2>3 &middot; Before install &mdash; the framework group the package has nothing for</h2>
+<p class="cap">The one finding worth stating carefully. A dependency group per framework is what the feed declares, and a package may still ship assets for a framework it declares no dependencies for &mdash; so this reports what the feed said and stops there, instead of claiming the package is incompatible.</p>
+<div class="row">
+  <div class="panel wide">
+    <div class="head">
+      <span class="title">Example.Legacy.Adapter</span>
+      <span class="actions">
+        <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg></span>
+      </span>
+    </div>
+    <div class="vrow"><span class="field">2.4.0</span></div>
+    <div class="vfacts">published <b>3 Nov 2021</b><span class="sep">&middot;</span>newest of <b>9</b> versions<span class="sep">&middot;</span>nothing published in 4 years<span class="sep">&middot;</span>Example Feed</div>
+
+    <div style="display:flex; gap:14px; align-items:stretch; margin-top:10px;">
+      <div style="flex:1 1 0; min-width:0;">
+        <div class="desc">Adapter for the retired Example v1 endpoints</div>
+        <div class="sub"><a>more</a> &middot; Example Corp</div>
+        <div class="problems warn" style="margin-top:9px;">
+          <div class="label">PROBLEMS</div>
+          <div style="font-size:12px; margin-top:2px;">
+            <span class="hint">DEPRECATED</span>
+            <span style="color:#b4b4b4;">Legacy &mdash; use <a>Example.Payments.Client</a> instead</span>
+          </div>
+        </div>
+      </div>
+      <div class="attrs">
+        <div class="arow"><span class="badge">Apache-2.0</span></div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:10px;">
+      <span class="label">DEPENDENCIES</span>
+      <span class="group-pill">no group for net10.0</span>
+    </div>
+    <div class="note" style="margin-top:6px;">
+      The feed declares dependency groups for <span class="badge dim">netstandard2.0</span> <span class="badge dim">net472</span> only. That usually means no assets for this project&rsquo;s framework &mdash; but a package can ship a framework it declares no dependencies for, so the panel says what the feed said and leaves the verdict to restore.
+    </div>
+  </div>
+</div>
+
+<h2>4 &middot; Installed &mdash; what an update would change</h2>
+<p class="cap">Only reachable once a version is installed, and the reason these additions matter for installed packages too: both entries come out of the same registration pages, so the difference between the installed version and the picked one is free to compute. The band replaces nothing &mdash; it sits under the version row, appears only while the picked version differs from the installed one, and disappears when they match.</p>
+<div class="row">
+  <div class="panel wide">
+    <div class="head">
+      <span class="title">Example.Payments.Client</span>
+      <span class="actions">
+        <span class="icon-btn accent">&#8593;</span>
+        <span class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+      </span>
+    </div>
+    <div class="vrow"><span class="field">4.3.2</span></div>
+    <div class="vfacts">
+      installed <b>3.9.2</b>, published 4 Mar 2023<span class="sep">&middot;</span><b>11 versions</b> behind<span class="sep">&middot;</span>4.3.2 published 6 days ago
+    </div>
+
+    <div class="divider"></div>
+    <!-- NEW -->
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:10px;">
+      <span class="label">WHAT CHANGES</span>
+      <span class="group-pill">3.9.2 &rarr; 4.3.2 &middot; declared for net10.0</span>
+    </div>
+    <div class="chg"><span class="chg__op good">+</span><span class="chg__id">System.Text.Json</span><span class="chg__to">&ge; 8.0.4 &mdash; new dependency</span></div>
+    <div class="chg"><span class="chg__op hint">&#8593;</span><span class="chg__id">Example.Core</span><span class="chg__to">[2.0.0, 3.0.0) &rarr; [3.1.0, 4.0.0)</span></div>
+    <div class="chg"><span class="chg__op muted">&minus;</span><span class="chg__id muted">Newtonsoft.Json</span><span class="chg__to">no longer declared</span></div>
+    <div class="chg"><span class="chg__op muted">&middot;</span><span class="chg__id">Licence</span><span class="chg__to">MIT &rarr; MIT OR Apache-2.0</span></div>
+    <div class="chg"><span class="chg__op hint">!</span><span class="chg__id">Declared frameworks</span><span class="chg__to">drops net6.0, adds net10.0</span></div>
+    <div class="note">Five row kinds, one gutter: added, raised, dropped, changed, and a framework line that appears only when a framework the workspace actually targets stops being declared. A raised range keeps the amber the Dependencies section already uses for the same meaning.</div>
+
+    <div class="divider"></div>
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:10px;">
+      <span class="label">DEPENDENCIES</span>
+      <span style="font-size:11px; color:#6a6a6a;">net10.0 &middot; lib/net10.0</span>
+    </div>
+    <div class="drow"><span class="did">Example.Core</span><span class="dmeta"><span class="range">[2.0.0, 3.0.0)</span><span>2.8.1</span></span></div>
+    <div class="drow muted"><span class="did" style="padding-left:16px;">&#8627; Newtonsoft.Json</span><span class="dmeta"><span>13.0.3</span></span></div>
+    <div class="note">Unchanged: the resolved tree still describes what is installed now, not what an update would leave behind. The band above is the only thing on the panel that speaks about the picked version.</div>
+  </div>
+</div>
+
+<h2>5 &middot; Installed &mdash; the version under you was withdrawn</h2>
+<p class="cap">The one fact nothing else in the extension can produce. An unlisted version restores and builds exactly as before, so nothing fails &mdash; it simply stops being findable, and a machine that has never restored it may not get it at all.</p>
+<div class="row">
+  <div class="panel wide">
+    <div class="head">
+      <span class="title">Example.Diagnostics</span>
+      <span class="actions">
+        <span class="icon-btn accent">&#8593;</span>
+        <span class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+      </span>
+    </div>
+    <div class="vrow"><span class="field">2.1.4</span></div>
+    <div class="vfacts">installed <b>2.1.4</b>, published 19 Jan 2024<span class="sep">&middot;</span>3 versions behind</div>
+    <div style="display:flex; gap:14px; align-items:stretch; margin-top:10px;">
+      <div style="flex:1 1 0; min-width:0;">
+        <div class="desc">Structured diagnostics helpers for Example services</div>
+        <div class="sub"><a>more</a> &middot; Example Corp</div>
+        <div class="problems warn" style="margin-top:9px;">
+          <div class="label">PROBLEMS</div>
+          <div style="font-size:12px; margin-top:2px;">
+            <span class="hint">UNLISTED</span>
+            <span style="color:#b4b4b4;">2.1.4 is no longer listed on Example Feed &mdash; it still restores from the cache, but a clean machine may not find it</span>
+          </div>
+        </div>
+      </div>
+      <div class="attrs">
+        <div class="arow"><span class="badge">MIT</span></div>
+      </div>
+    </div>
+    <div class="note">Unlisted is amber, not red: nothing is broken yet. It sits in the same Problems band as deprecation and advisories, so the panel keeps one place where anything worth knowing is said.</div>
+  </div>
+</div>
+
+<h2>6 &middot; Narrow &mdash; sidebar width</h2>
+<p class="cap">Everything new is line-shaped rather than column-shaped, which is what makes it survive the 300px panel: the facts line wraps to two, and the change band keeps its gutter while the annotation moves to its own line.</p>
+<div class="row">
+  <div class="panel narrow">
+    <div class="head">
+      <span class="title">Example.Payments.Client</span>
+      <span class="actions">
+        <span class="icon-btn accent"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg></span>
+      </span>
+    </div>
+    <div class="vrow"><span class="field">4.1.0</span></div>
+    <div class="vfacts">published <b>12 Aug 2025</b><span class="sep">&middot;</span>3rd of <b>47</b><br>newest <b>4.3.2</b>, 6 days ago</div>
+    <div class="desc" style="margin-top:9px;">Client library for the Example payments gateway: idempotent charges, refunds and webhook verification</div>
+    <div class="sub"><a>more</a> &middot; Example Corp</div>
+    <div class="problems" style="margin-top:9px;">
+      <div class="label">PROBLEMS</div>
+      <div style="font-size:12px; margin-top:2px;"><span class="bad">HIGH</span> <a>GHSA-0000-example-0000</a></div>
+      <div class="range">affects &lt; 4.1.3</div>
+      <div style="font-size:12px; margin-top:2px;"><span class="good">&#8593;</span> <span style="color:#b4b4b4;">4.1.3 is unaffected</span> <a style="font-size:11px;">pick it</a></div>
+    </div>
+    <div class="divider" style="margin:10px -14px 0;"></div>
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:10px;">
+      <span class="label">DEPENDENCIES</span>
+      <span class="group-pill">declared &middot; net10.0</span>
+    </div>
+    <div class="drow"><span class="did">Example.Core</span><span class="range">[3.1.0, 4.0.0)</span></div>
+    <div class="drow"><span class="did">System.Text.Json</span><span class="range">&ge; 8.0.4</span></div>
+  </div>
+
+  <div class="panel narrow">
+    <div class="head">
+      <span class="title">Example.Payments.Client</span>
+      <span class="actions">
+        <span class="icon-btn accent">&#8593;</span>
+        <span class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>
+      </span>
+    </div>
+    <div class="vrow"><span class="field">4.3.2</span></div>
+    <div class="vfacts">installed <b>3.9.2</b><span class="sep">&middot;</span>11 versions behind</div>
+    <div class="divider" style="margin:10px -14px 0;"></div>
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:10px;">
+      <span class="label">WHAT CHANGES</span>
+      <span class="group-pill">3.9.2 &rarr; 4.3.2</span>
+    </div>
+    <div class="chg"><span class="chg__op good">+</span><span class="chg__id">System.Text.Json</span></div>
+    <div class="range" style="padding-left:20px;">&ge; 8.0.4 &mdash; new dependency</div>
+    <div class="chg"><span class="chg__op hint">&#8593;</span><span class="chg__id">Example.Core</span></div>
+    <div class="range" style="padding-left:20px;">[2.0.0, 3.0.0) &rarr; [3.1.0, 4.0.0)</div>
+    <div class="chg"><span class="chg__op muted">&minus;</span><span class="chg__id muted">Newtonsoft.Json</span></div>
+    <div class="range" style="padding-left:20px;">no longer declared</div>
+  </div>
+</div>
+
+<h2>What is deliberately left out</h2>
+<div class="legend">
+  <div><b>The package icon.</b> A remote image in the webview means widening the content security policy for every feed, for decoration.</div>
+  <div><b>Download counts and reserved-prefix marks.</b> Search-only, and a private feed usually answers neither &mdash; a number that appears for one source and not another reads as a fact about the package rather than about the feed.</div>
+  <div><b>Owners.</b> In the protocol, absent from most feeds, and already covered by authors for the question a reader is actually asking.</div>
+  <div><b>The real per-framework asset list before install.</b> Only the package itself knows it, and reading it means downloading the package to look inside &mdash; which is the install.</div>
+</div>
+
+<div class="note" style="margin-top:20px;">
+  Every block on this page is drawn only when the feed answered. With the experimental catalog off, a source that is a local folder, or a feed without the metadata resource, the panel is state 1 &mdash; no placeholders, no empty labels, no &ldquo;unknown&rdquo;.
+</div>
+
+</body>
+</html>

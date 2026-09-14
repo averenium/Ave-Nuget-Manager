@@ -23,9 +23,11 @@ import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
 import { ActivityStrip } from './ActivityStrip';
 import { DetailHeader } from './DetailHeader';
 import { BlockedPackageMenu } from './BlockedPackageMenu';
+import { BatchLicensePopup } from './BatchLicensePopup';
 import { PackagesSkeleton } from './InstalledList';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from '../../blockedPackages';
 import type { BatchUpdateItem, BatchUpdateJob, BatchUpdateItemView } from '../../types';
+import type { BatchLicenseFinding } from '../../packageLicense';
 import { searchableConfigFiles } from '../../searchConfigFiles';
 import { mergeFamilyVersionFlags } from '../utils/familyVersionFlags';
 import { IconCheck } from '../utils/icons';
@@ -333,31 +335,92 @@ export function UpdatesTab() {
   const resultJob = runningJob
     ?? (lockedJob && !lockedJob.stale && lockedJob.finishedAt ? lockedJob : undefined);
 
+  /** The batch the licence check is standing in front of, if any (#89). */
+  const [pendingBatch, setPendingBatch] = useState<
+    { requestId: string; kind: 'all' | 'family' | 'other'; family?: string; items: BatchUpdateItem[] } | null
+  >(null);
+  const [licenseFindings, setLicenseFindings] = useState<BatchLicenseFinding[] | null>(null);
+  const batchRequests = useRef(0);
+
+  const sendBatch = useCallback((
+    batch: { kind: 'all' | 'family' | 'other'; family?: string; items: BatchUpdateItem[] },
+  ) => {
+    setResultLockKey(selKey);
+    send({
+      type: 'UPDATE_PACKAGES_BATCH',
+      kind: batch.kind,
+      family: batch.family,
+      includePrerelease: prerelease,
+      items: batch.items,
+    });
+  }, [selKey, prerelease, send]);
+
+  // The answer to the check, matched against the click that asked for it. An
+  // answer to a superseded click is dropped rather than opening a popup over a
+  // batch that is already running.
+  useEffect(() => {
+    const answer = state.updates.licenseCheck;
+    if (!pendingBatch || !answer || answer.requestId !== pendingBatch.requestId) return;
+    if (answer.findings.length === 0) {
+      // Nothing moved, or nothing could be established in time — either way the
+      // batch was already asked for and goes ahead. The skip is in the log.
+      setPendingBatch(null);
+      sendBatch(pendingBatch);
+      return;
+    }
+    setLicenseFindings(answer.findings);
+  }, [state.updates.licenseCheck, pendingBatch, sendBatch]);
+
   const startBatch = () => {
     if (blockedOnly) {
       send({ type: 'SHOW_TOAST', message: BLOCKED_UPDATES_TOOLTIP });
       return;
     }
     if (previewItems.length === 0) return;
-    setResultLockKey(selKey);
-    if (selection?.type === 'all' || selection?.type === 'other') {
-      send({
-        type: 'UPDATE_PACKAGES_BATCH',
-        kind: selection.type,
-        includePrerelease: prerelease,
-        items: previewItems,
-      });
+    const kind = selection?.type === 'family' ? 'family' : selection?.type;
+    if (kind !== 'all' && kind !== 'other' && kind !== 'family') return;
+    if (kind === 'family' && !selectedFamily) return;
+    const batch: { kind: 'all' | 'family' | 'other'; family?: string; items: BatchUpdateItem[] } = {
+      kind,
+      family: kind === 'family' ? selectedFamily?.family : undefined,
+      items: previewItems,
+    };
+
+    // A batch crosses majors for most of its packages, and a major is where a
+    // licence moves — so the question is asked before the first `dotnet add`
+    // rather than after all of them. Without a config chain there is no feed to
+    // ask, and the batch is not held up for a question that cannot be answered.
+    const configFiles = searchableConfigFiles(state.sources.configChain);
+    if (configFiles.length === 0) {
+      sendBatch(batch);
       return;
     }
-    if (selection?.type === 'family' && selectedFamily) {
-      send({
-        type: 'UPDATE_PACKAGES_BATCH',
-        kind: 'family',
-        family: selectedFamily.family,
-        includePrerelease: prerelease,
-        items: previewItems,
-      });
-    }
+    batchRequests.current += 1;
+    const requestId = `batch-licence-${batchRequests.current}`;
+    setPendingBatch({ requestId, ...batch });
+    send({
+      type: 'CHECK_BATCH_LICENSES',
+      requestId,
+      configFiles,
+      items: previewItems.map((i) => ({
+        packageId: i.packageId, fromVersion: i.fromVersion, toVersion: i.toVersion,
+      })),
+    });
+  };
+
+  const confirmLicenses = (excluded: string[]) => {
+    const batch = pendingBatch;
+    setLicenseFindings(null);
+    setPendingBatch(null);
+    if (!batch) return;
+    const items = batch.items.filter((i) => !excluded.includes(i.packageId));
+    if (items.length === 0) return;
+    sendBatch({ ...batch, items });
+  };
+
+  const cancelLicenses = () => {
+    setLicenseFindings(null);
+    setPendingBatch(null);
   };
 
   // All / Other targets are always filtered to latest > resolved, so they're
@@ -378,6 +441,14 @@ export function UpdatesTab() {
 
   return (
     <div className="split-tab">
+      {licenseFindings && pendingBatch && (
+        <BatchLicensePopup
+          findings={licenseFindings}
+          totalItems={pendingBatch.items.length}
+          onConfirm={confirmLicenses}
+          onCancel={cancelLicenses}
+        />
+      )}
       <div className="pkg-toolbar">
         <ToolbarRestoreRefresh disabled={batchBusy} />
         <span className="pkg-toolbar__spacer" />

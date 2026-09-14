@@ -37,6 +37,7 @@ import type {
 import type { INuGetBackend } from './INuGetBackend';
 import { getConfig } from '../config';
 import { compareSemVer, versionsEqual } from '../semver';
+import { severityFromInt } from '../nugetHttpCacheVdb';
 import type { CatalogVersionEntry, CatalogDeprecation } from '../nugetRegistration';
 import { normalizeSourceKey, type ProbeTarget, type SourceCapabilityStore } from '../nugetSourceCapabilities';
 import type { VersionLadder } from '../nugetVersionLadder';
@@ -66,10 +67,17 @@ function deprecationText(deprecation: CatalogDeprecation): string {
 }
 
 function flagsFrom(entry: CatalogVersionEntry): SearchedVersionMetadata | undefined {
-  const vulnerable = (entry.vulnerabilities?.length ?? 0) > 0;
   const deprecation = entry.deprecation ? deprecationText(entry.deprecation) : undefined;
+  // The advisories are carried, not reduced to a flag. The version dropdown
+  // needs only the flag, but the details panel has to name which advisory and
+  // how bad — and the feed states both, per version, for free.
+  const advisories = entry.vulnerabilities?.map((v) => ({
+    url: v.advisoryUrl,
+    severity: severityFromInt(v.severity ?? -1),
+  }));
+  const vulnerable = (advisories?.length ?? 0) > 0;
   if (!vulnerable && !deprecation) return undefined;
-  return { vulnerable: vulnerable || undefined, deprecation };
+  return { vulnerable: vulnerable || undefined, deprecation, advisories };
 }
 
 /**
@@ -310,15 +318,21 @@ export class HttpCatalogBackend implements INuGetBackend {
 
         // The exact lookup exists for one situation: a feed whose search sees
         // only what it has already cached, where a package can be installable
-        // and invisible at the same time. A search that returns anything
-        // *starting with* the query proves it is not blind to this namespace —
-        // so if the package existed there, search would have returned it, and
-        // the lookup would be a request for nothing. Typing a name one letter
-        // at a time made that the common case.
+        // and invisible at the same time. A search that returns ids *containing*
+        // the query proves it is not blind to this namespace — so if the package
+        // existed there, search would have returned it, and the lookup is a
+        // request for nothing.
+        //
+        // `startsWith` was too narrow to show that. On a query where every
+        // result merely ended with it, the guard never fired: the lookup ran,
+        // and what it found was a placeholder package at version 0.0.0 that then
+        // outranked the one with three hundred million downloads. Containment is
+        // the signal that matters, and it also stops a 404 on every intermediate
+        // letter of a name being typed.
         //
         // This pass stays sequential: whether the lookup is needed at all
         // depends on what the sources before it already produced.
-        const coveredBySearch = found?.some((hit) => hit.id.toLowerCase().startsWith(wanted));
+        const coveredBySearch = found?.some((hit) => hit.id.toLowerCase().includes(wanted));
         if (!coveredBySearch && !hits.some((hit) => hit.id.toLowerCase() === wanted)) {
           const exact = await this._exactHit(target, query, prerelease, sourceName);
           if (exact) hits.push(exact);
@@ -432,6 +446,7 @@ export class HttpCatalogBackend implements INuGetBackend {
         projectUrl: entry.projectUrl,
         authors: entry.authors,
         licenseUrl: entry.licenseUrl,
+        license: entry.licenseExpression ? { type: 'expression', value: entry.licenseExpression } : undefined,
         tags: entry.tags?.join(' '),
         ...flagsFrom(entry),
       };

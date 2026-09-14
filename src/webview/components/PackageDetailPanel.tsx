@@ -1,5 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
+import { searchableConfigFiles } from '../../searchConfigFiles';
+import { fileNameNoExt } from '../utils/pathUtils';
 import { VersionSelector } from './VersionSelector';
 import { ProjectSelectionPopup } from './ProjectSelectionPopup';
 import { ProjectListSection } from './ProjectListSection';
@@ -20,7 +22,11 @@ import { versionTone } from '../utils/versionTone';
 import { IconCheck, IconInstall, IconTrash } from '../utils/icons';
 import { buildPackageProblems } from '../utils/packageProblems';
 import { resolveVersionSpread } from '../../packageResolvedVersions';
+import { LicenseSideText } from './LicenseSideText';
 import type { VulnerabilityFinding } from '../../types';
+
+/** How long the version selection has to hold still before the licence question goes out (#89). */
+const LICENSE_CHANGE_DEBOUNCE_MS = 500;
 
 export function PackageDetailPanel() {
   const { state, dispatch, send } = useNugetManager();
@@ -70,6 +76,66 @@ export function PackageDetailPanel() {
     setSelectedVersion('');
     setDescExpanded(false);
   }, [selectedPackageId]);
+
+  // What was selected, and how the panel reads it. `installed` here is the
+  // panel's own answer, not the list's — when the two disagree the log is the
+  // only place that shows it, and that disagreement is exactly what once made a
+  // package look absent from a list that held it.
+  useEffect(() => {
+    if (!selectedPackageId) return;
+    send({
+      type: 'WEBVIEW_ACTION',
+      action: 'select',
+      packageId: selectedPackageId,
+      version: selectedVersion || allVersions[0] || metadata?.version || undefined,
+      counts: {
+        installed: [
+          state.packages.installed.filter((p) => packageIdsEqual(p.id, selectedPackageId)).length,
+          state.packages.installed.length,
+        ],
+        implicit: [
+          state.packages.implicit.filter((p) => packageIdsEqual(p.id, selectedPackageId)).length,
+          state.packages.implicit.length,
+        ],
+        available: state.packages.available.length,
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPackageId]);
+
+  // The licence question is about the version the selector is offering, which
+  // on entry is the newest rather than the installed one — so it cannot ride on
+  // the metadata request, which asks about the installed version. Re-asked
+  // whenever that offer changes, including on returning to a package.
+  useEffect(() => {
+    const configFiles = searchableConfigFiles(state.sources.configChain);
+    // The same expression `effectiveVersion` uses below; it cannot be read here
+    // because hooks run before the early return that guards it.
+    const offered = selectedVersion || allVersions[0] || metadata?.version || '';
+    if (!selectedPackageId || !offered || configFiles.length === 0) return;
+    // What was asked about lives in state rather than a ref, so it clears with
+    // the package: a ref survives the switch, and coming back to a package
+    // whose answer `SELECT_PACKAGE` had just cleared would look like it had
+    // already been asked and leave the row permanently absent.
+    if (state.detail.licenseChange?.version === offered) return;
+    // Held back until the selection settles. Arrowing through a version list
+    // passes every version on the way, and a version whose expression the feed
+    // leaves empty costs a nuspec request each — so the ones merely scrolled
+    // past are never asked about at all. The broker cancels whatever is still
+    // in flight on the next question; this stops most of them being asked.
+    // Same device as the package search in `PackagesTab`, one notch longer
+    // because a keypress here is a step in a list rather than a letter.
+    const timer = setTimeout(() => {
+      // Recorded before the request goes out: answers come back out of order
+      // when the version list is scrolled, and the reducer matches each against
+      // the version still being asked about rather than letting a late one take
+      // its place.
+      dispatch({ type: 'ASK_LICENSE_CHANGE', version: offered });
+      send({ type: 'GET_LICENSE_CHANGE', packageId: selectedPackageId, version: offered, configFiles });
+    }, LICENSE_CHANGE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPackageId, selectedVersion, allVersions, metadata?.version, state.sources.configChain]);
 
   // "more" only appears when the two-line clamp actually hides something.
   // Whether it does depends on the pane width and the theme's font, so it is
@@ -145,6 +211,16 @@ export function PackageDetailPanel() {
     // actually showing, which for a nuspec is the installed one.
     deprecation: metadata?.deprecation
       ?? state.detail.versionFlags[metadata?.version ?? effectiveVersion]?.deprecation,
+    // Only the answer about the version on screen. One about a version the
+    // user has since moved away from describes a comparison they are no longer
+    // looking at.
+    licenseChange: state.detail.licenseChange?.version === effectiveVersion
+      ? state.detail.licenseChange.change ?? undefined
+      : undefined,
+    // What the feed says about the version the user is looking at, which the
+    // restore-graph scan cannot know: it only ever describes what is installed.
+    selectedVersion: effectiveVersion,
+    selectedVersionAdvisories: state.detail.versionFlags[effectiveVersion]?.advisories,
   });
 
   // Metadata arrives a moment after the selection does. Sections that don't
@@ -292,12 +368,32 @@ export function PackageDetailPanel() {
     startInstall(projects, frameworks);
   };
 
+  /** A decision the user made in a popup, or the set they applied (#27 follow-up). */
+  const logDecision = (action: 'confirm' | 'apply', detail: string[]) => {
+    send({
+      type: 'WEBVIEW_ACTION',
+      action,
+      packageId: selectedPackageId ?? undefined,
+      version: effectiveVersion || undefined,
+      detail,
+    });
+  };
+
   const handlePopupConfirm = (projects: string[], frameworks?: Record<string, string[]>) => {
     if (showPopup === 'install' && updatesBlocked) {
       setShowPopup(null);
       return;
     }
     if (showPopup === 'install') {
+      // The set as it stood when Apply was pressed. `dotnet add` records the
+      // projects that were taken; nothing records the ones that were unticked,
+      // and "why was this project not touched" is the question that needs them.
+      const narrowed = Object.entries(frameworks ?? {})
+        .map(([project, tfms]) => `${fileNameNoExt(project)}: ${tfms.join(', ')}`);
+      logDecision('apply', [
+        `${projects.length} project(s)`,
+        ...(narrowed.length > 0 ? [`narrowed to ${narrowed.join(' · ')}`] : []),
+      ]);
       // A narrowing the project file cannot express as it stands asks before
       // anything else: it rebuilds the reference, which is a change the user
       // did not ask for on its own (#82).
@@ -483,6 +579,25 @@ export function PackageDetailPanel() {
                           </>
                         ) : p.kind === 'deprecation' ? (
                           p.message
+                        ) : p.kind === 'feed-advisory' ? (
+                          <>
+                            {p.url ? (
+                              <a href={p.url} target="_blank" rel="noopener noreferrer">
+                                {p.url.split('/').pop()}
+                              </a>
+                            ) : 'Advisory'}
+                            {' · '}the feed flags <strong>{p.version}</strong>
+                            {isInstalled ? ', the version selected here' : ''}
+                          </>
+                        ) : p.kind === 'licence' ? (
+                          <>
+                            <strong><LicenseSideText side={p.change.from} /></strong>
+                            {' → '}
+                            <strong><LicenseSideText side={p.change.to} /></strong>
+                            {p.change.unnamed
+                              ? ' — this version carries its licence as a file, which this extension cannot read. Open it before taking the update.'
+                              : ''}
+                          </>
                         ) : (
                           <>
                             Updates are blocked for this package in this workspace. Right-click the row and choose{' '}
@@ -535,10 +650,14 @@ export function PackageDetailPanel() {
           version={effectiveVersion}
           onConfirm={() => {
             const pending = splitConfirm;
+            logDecision('confirm', ['split the shared reference', 'confirmed']);
             setSplitConfirm(null);
             askThenInstall(pending.projects, pending.frameworksByProject);
           }}
-          onCancel={() => setSplitConfirm(null)}
+          onCancel={() => {
+            logDecision('confirm', ['split the shared reference', 'cancelled']);
+            setSplitConfirm(null);
+          }}
         />
       )}
 
@@ -549,10 +668,14 @@ export function PackageDetailPanel() {
           toVersion={effectiveVersion}
           onConfirm={() => {
             const pending = crossLine;
+            logDecision('confirm', ['cross a pinned major line', 'confirmed']);
             setCrossLine(null);
             startInstall(pending.projects, pending.frameworksByProject, true);
           }}
-          onCancel={() => setCrossLine(null)}
+          onCancel={() => {
+            logDecision('confirm', ['cross a pinned major line', 'cancelled']);
+            setCrossLine(null);
+          }}
         />
       )}
 

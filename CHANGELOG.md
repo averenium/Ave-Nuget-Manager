@@ -5,6 +5,9 @@
 ### Added
 
 - Experimental setting: read package versions, details, search and advisories over HTTP instead of the CLI, off by default (#27)
+- **Log**: a **Panel** filter recording what was searched, selected, confirmed and applied, and every update refused or skipped without a CLI call
+- **Package details**: a row in **Problems** when the selected version's licence differs from the installed one, naming both (#89)
+- **Updates**: a confirmation before a batch update lists every package whose licence would change, with rows you can leave out (#89)
 
 ### Fixed
 

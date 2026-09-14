@@ -10,12 +10,8 @@
  * `8.0.0` among them). So the mark names the members it came from.
  */
 
-export interface VersionFlag {
-  vulnerable?: boolean;
-  deprecation?: string;
-  /** Members the flag came from, in the order the family lists them. Absent for a single package. */
-  packages?: string[];
-}
+export type { VersionFlag } from '../../types';
+import type { VersionFlag } from '../../types';
 
 export function mergeFamilyVersionFlags(
   members: ReadonlyArray<{ packageId: string; flags: Record<string, VersionFlag> | undefined }>,

@@ -110,9 +110,15 @@ describe('HttpCatalogBackend when HTTP can answer', () => {
 
     expect(cli.calls).toEqual([]);
     expect(result.versions).toEqual(['3.0.0', '2.0.0', '1.0.0']);
+    // The advisory travels with the mark: a flag alone tells the dropdown to
+    // draw a warning and leaves the details panel unable to say which advisory.
     expect(result.versionFlags).toEqual({
-      '1.0.0': { vulnerable: true, deprecation: undefined },
-      '2.0.0': { vulnerable: undefined, deprecation: 'Use the successor.' },
+      '1.0.0': {
+        vulnerable: true,
+        deprecation: undefined,
+        advisories: [{ url: 'https://example.com/a', severity: 'high' }],
+      },
+      '2.0.0': { vulnerable: undefined, deprecation: 'Use the successor.', advisories: undefined },
     });
   });
 
@@ -360,6 +366,30 @@ describe('HttpCatalogBackend filling the details panel', () => {
     expect(enriched.versions).toEqual(['2.0.0', '1.0.0']);
     expect(enriched.metadataByVersion?.['2.0.0']).toMatchObject({ description: 'Newest.', vulnerable: true });
     expect(enriched.metadataByVersion?.['1.5.0']).toBeUndefined();
+  });
+
+  it('carries the licence expression per version, so a warm cache answers without fetching a nuspec', async () => {
+    // The licence question (#89) is asked on every version selection. The
+    // catalog already states the expression here; dropping it on this path
+    // sent the panel to the package's own nuspec for an answer it was
+    // holding — and left the Info panel without a licence at all whenever the
+    // metadata came from cache rather than a fresh call.
+    const backend = panelBackend({ [FEED_A]: [richEntry] });
+
+    const enriched = await backend.enrichPackage('X', ['a.config']);
+
+    expect(enriched.metadataByVersion?.['13.0.4']?.license).toEqual({ type: 'expression', value: 'MIT' });
+  });
+
+  it('states no licence for a version whose expression the feed leaves empty', async () => {
+    // Empty means either a file licence or a package older than the <license>
+    // element — the nuspec is the only thing that tells those apart, so this
+    // must stay absent rather than become an empty expression.
+    const backend = panelBackend({ [FEED_A]: [entry('1.0.0')] });
+
+    const enriched = await backend.enrichPackage('X', ['a.config']);
+
+    expect(enriched.metadataByVersion?.['1.0.0']?.license).toBeUndefined();
   });
 
   it('skips a feed that does not hold the package and asks the next one', async () => {

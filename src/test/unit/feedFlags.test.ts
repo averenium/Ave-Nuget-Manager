@@ -29,7 +29,9 @@ describe('feedFlags', () => {
         deprecation: 'Deprecated.',
       },
     }));
-    expect(Object.keys(flags!['1.0.0'])).toEqual(['vulnerable', 'deprecation']);
+    // `advisories` is part of the mark, not part of the rest: the panel names
+    // which advisory and how bad, and only the feed states that.
+    expect(Object.keys(flags!['1.0.0'])).toEqual(['vulnerable', 'deprecation', 'advisories']);
   });
 
   it('says nothing at all when no version is marked', () => {

@@ -1471,6 +1471,8 @@ a.badge:hover { text-decoration: underline; }
   color: var(--color-tab-inactive); background: color-mix(in srgb, var(--color-tab-inactive) 16%, transparent);
 }
 .log-row__kind--http { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 16%, transparent); }
+/* What the person did, as opposed to what the extension did. */
+.log-row__kind--ui { color: var(--color-btn-bg); background: color-mix(in srgb, var(--color-btn-bg) 16%, transparent); }
 .log-row__kind--error { color: var(--color-error); background: color-mix(in srgb, var(--color-error) 16%, transparent); }
 .log-row__cmd { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; justify-content: center; }
 .log-row__cmd-main { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1604,6 +1606,39 @@ a.badge:hover { text-decoration: underline; }
   display: flex; flex-direction: column; gap: var(--spacing-xs);
   font-size: 12px;
 }
+/* Batch licence confirmation (#89). One row per package whose licence moves;
+   the checkbox keeps it in the batch, so the row has to stay readable as a
+   single line at the popup's width. */
+.batch-licence__row { padding: 2px 0; }
+.batch-licence__label {
+  display: flex; align-items: baseline; gap: var(--spacing-xs);
+  cursor: pointer;
+}
+.batch-licence__label input { flex-shrink: 0; align-self: center; }
+.batch-licence__pkg { font-weight: 600; }
+.batch-licence__versions { color: var(--color-tab-inactive); white-space: nowrap; }
+.batch-licence__sep { color: var(--color-tab-inactive); }
+/* Kept a link rather than inheriting the row's colour: the reader has to be
+   able to tell that the licence opens, and in a confirmation about licences
+   that is the one affordance worth advertising. */
+.licence-link { color: var(--color-link); text-decoration: none; }
+.licence-link:hover { text-decoration: underline; }
+/* A local file opens in the editor rather than the browser, so it is a button;
+   it has to read as the same affordance as the link beside it. */
+.licence-link--file {
+  padding: 0; border: 0; background: none; font: inherit; cursor: pointer;
+}
+/* Pushed to the end of the row: it is the reason the row is here, and lining
+   the reasons up reads faster than following each one across its own package
+   name. */
+.batch-licence__change { margin-left: auto; text-align: right; }
+/* A file licence is the one this tool cannot name — the case the whole
+   confirmation exists for, so it is not the same weight as expression to
+   expression. Weight rather than colour: the theme's warning gold glares in
+   light themes and would need an asymmetric correction of its own, and the row
+   already says "(file)" in words, which survives forced-colors as well. */
+.batch-licence__change--unnamed { font-weight: 600; }
+
 .popup__tools {
   display: flex; flex-direction: column; gap: var(--spacing-xs);
   flex-shrink: 0;

@@ -1,5 +1,6 @@
 import { packageMatchesAnyMapping } from '../../packageSourceMapping';
-import type { PackageSourceMapping, VulnerabilityFinding } from '../../types';
+import type { PackageSourceMapping, VulnerabilityFinding, VulnerabilitySeverity } from '../../types';
+import type { LicenseChange } from '../../packageLicense';
 
 export type ProblemTone = 'error' | 'warning';
 
@@ -13,7 +14,22 @@ export type ProblemDescriptor =
   | { kind: 'vulnerability'; key: string; tone: ProblemTone; label: string; via?: string; finding: VulnerabilityFinding }
   | { kind: 'mapping'; key: 'mapping'; tone: ProblemTone; label: string; mappedSourceNames: string[] }
   | { kind: 'blocked'; key: 'blocked'; tone: ProblemTone; label: string }
-  | { kind: 'deprecation'; key: 'deprecation'; tone: ProblemTone; label: string; message: string };
+  | { kind: 'deprecation'; key: 'deprecation'; tone: ProblemTone; label: string; message: string }
+  | {
+      kind: 'feed-advisory';
+      key: string;
+      tone: ProblemTone;
+      label: string;
+      version: string;
+      url?: string;
+    }
+  | {
+      kind: 'licence';
+      key: 'licence';
+      tone: ProblemTone;
+      label: string;
+      change: LicenseChange;
+    };
 
 function vulnerabilityProblems(
   findings: VulnerabilityFinding[],
@@ -42,13 +58,64 @@ export function buildPackageProblems(opts: {
   updatesBlocked: boolean;
   /** Feed deprecation notice for the version currently shown in the Info panel (#86) — never from a nuspec. */
   deprecation?: string;
+  /** Set when the selected version's licence differs from the installed one (#89). */
+  licenseChange?: LicenseChange;
+  /**
+   * What the feed says about the version currently selected, and the version it
+   * says it about (#27).
+   *
+   * Deliberately separate from `findings`, which come from the restore-graph
+   * scan and describe what is **installed**. Both belong here, but they are
+   * different statements: one says a problem is already present, the other that
+   * taking this version would introduce one. Merging them would tell a user
+   * browsing versions that they already have a vulnerability they do not.
+   */
+  selectedVersion?: string;
+  selectedVersionAdvisories?: Array<{ url?: string; severity: VulnerabilitySeverity }>;
 }): ProblemDescriptor[] {
-  const { packageId, findings, viaFindings, isInstalled, packageSourceMapping, updatesBlocked, deprecation } = opts;
+  const {
+    packageId, findings, viaFindings, isInstalled, packageSourceMapping, updatesBlocked,
+    deprecation, licenseChange, selectedVersion, selectedVersionAdvisories,
+  } = opts;
 
   const problems: ProblemDescriptor[] = [...vulnerabilityProblems(findings, viaFindings)];
 
   if (deprecation) {
     problems.push({ kind: 'deprecation', key: 'deprecation', tone: 'warning', label: 'deprecated', message: deprecation });
+  }
+
+  // An advisory the scan already reported is not repeated: the scan speaks for
+  // what is installed and names it more fully. Anything the scan did not
+  // mention is shown, including at the installed version — the scan and the
+  // feed do not always cover the same advisories, and silence there would hide
+  // a real one rather than avoid a duplicate.
+  const alreadyReported = new Set(
+    findings.map((f) => f.url).filter((u): u is string => !!u),
+  );
+  if (selectedVersion && selectedVersionAdvisories?.length) {
+    for (const [index, advisory] of selectedVersionAdvisories.entries()) {
+      if (advisory.url && alreadyReported.has(advisory.url)) continue;
+      problems.push({
+        kind: 'feed-advisory',
+        key: `feed-advisory:${advisory.url ?? index}`,
+        tone: advisory.severity === 'low' || advisory.severity === 'moderate' ? 'warning' : 'error',
+        label: advisory.severity,
+        version: selectedVersion,
+        url: advisory.url,
+      });
+    }
+  }
+
+  if (licenseChange) {
+    // A licence the tool cannot name is the stronger case: the user has to open
+    // the file to learn what they would be agreeing to.
+    problems.push({
+      kind: 'licence',
+      key: 'licence',
+      tone: licenseChange.unnamed ? 'error' : 'warning',
+      label: 'licence changes',
+      change: licenseChange,
+    });
   }
 
   const mappingActive = isInstalled && packageSourceMapping.length > 0;

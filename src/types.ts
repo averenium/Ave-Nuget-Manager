@@ -45,6 +45,32 @@ export interface InstalledPackage {
 export type VulnerabilitySeverity = 'critical' | 'high' | 'moderate' | 'low' | 'unknown';
 
 /**
+ * What a feed says about one specific version, before anything is installed.
+ *
+ * Declared once on purpose. This shape used to be written out inline in eleven
+ * places across five files, which is how a channel gets extended in ten of them
+ * and silently not in the eleventh — the same drift that once let a layer drop
+ * the headers it was handed while type-checking cleanly against its own copy.
+ *
+ * Distinct from `VulnerabilityFinding`, which comes from the restore-graph scan
+ * and describes what is **installed**. These describe a version the user is
+ * looking at and has not taken yet, which is a different statement and belongs
+ * in different words.
+ */
+export interface VersionFlag {
+  vulnerable?: boolean;
+  deprecation?: string;
+  /**
+   * The advisories the feed attaches to this version. Kept rather than reduced
+   * to `vulnerable`, which is all the version dropdown needs but leaves the
+   * details panel unable to say which advisory, or how bad.
+   */
+  advisories?: Array<{ url?: string; severity: VulnerabilitySeverity }>;
+  /** Members the flag came from, in the order the family lists them (#92). Absent for a single package. */
+  packages?: string[];
+}
+
+/**
  * One advisory for an installed or transitive package.
  * Built-in `dotnet list --vulnerable` and user scripts both emit this shape.
  */
@@ -101,11 +127,19 @@ export interface SearchedVersionMetadata {
   projectUrl?: string;
   authors?: string;
   licenseUrl?: string;
+  /** SPDX expression the feed states for this exact version (#89). Only the catalog can produce it — `dotnet package search` never returns a licence at any verbosity — so it is absent on the CLI path. Carried here so a warm enrich cache answers the licence question without a nuspec request of its own. */
+  license?: PackageLicense;
   tags?: string;
   /** This exact version, as flagged by the feed at search time — not from the restore-graph vulnerability scan (`dotnet list --vulnerable`), which stays the source of severity/advisory-id detail and the only thing that catches a transitive package. */
   vulnerable?: boolean;
   /** Feed answer, present only when the package (as of this version) is deprecated — the upstream text usually names the replacement. Never in a nuspec. */
   deprecation?: string;
+  /**
+   * The advisories the feed attaches to this exact version (#27). Kept rather
+   * than reduced to `vulnerable`: the flag is enough to mark the dropdown, and
+   * not enough for the details panel to name the advisory or its severity.
+   */
+  advisories?: Array<{ url?: string; severity: VulnerabilitySeverity }>;
 }
 
 export interface EnrichedPackageInfo {
@@ -329,7 +363,7 @@ export interface SourcesSnapshot {
  * decision (e.g. skipped). `info`/`error` — routed from `Logger.info`/`error`,
  * previously Output-Channel-only (#58).
  */
-export type LogEntryKind = 'cli' | 'edit' | 'scan' | 'info' | 'error' | 'http';
+export type LogEntryKind = 'cli' | 'edit' | 'scan' | 'info' | 'error' | 'http' | 'ui';
 
 export interface LogEntry {
   id: string;

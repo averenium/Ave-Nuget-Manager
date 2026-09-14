@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The package list — left pane design</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px;
+    background: #181818; color: #cccccc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #e6e6e6; margin: 0 0 6px; }
+  .lede { color: #8a8a8a; font-size: 12px; margin: 0 0 26px; max-width: 76ch; }
+  h2 { font-size: 12px; font-weight: 400; color: #8a8a8a; margin: 28px 0 4px; }
+  .cap { color: #6a6a6a; font-size: 11px; margin: 0 0 10px; max-width: 76ch; }
+  .row { display: flex; gap: 26px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 6px; }
+  .stack { display: flex; flex-direction: column; gap: 6px; }
+  .tag { font-size: 11px; color: #6a6a6a; }
+
+  /* ── the pane itself: same tokens as global.css ──────────────────────────── */
+  .pane {
+    width: 300px; background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 4px;
+    overflow: hidden;
+  }
+  .pane.narrow { width: 180px; }
+  .pane.clip { height: 232px; overflow: hidden; position: relative; }
+  .pane.clip::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 26px;
+    background: linear-gradient(transparent, #1f1f1f);
+  }
+  .hdr {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 8px 2px; font-size: 11px; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: #8a8a8a;
+  }
+  .r { padding: 4px 8px; border-left: 2px solid transparent; }
+  .r.sel { background: #04395e; border-left-color: #0e639c; }
+  .r1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .nm { font-weight: 500; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25; }
+  .src { font-size: 10px; color: #8a8a8a; flex: 0 0 auto; }
+  .r2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); column-gap: 8px; min-height: 15px; }
+  .ver { font-size: 11px; color: #8a8a8a; font-family: "Cascadia Mono", Consolas, monospace; line-height: 15px; }
+  .ver.right { justify-self: end; text-align: right; }
+  .ver.up { color: #4ec994; }
+  .ver.multi { color: #cca700; }
+  .mark {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; margin-left: 3px; vertical-align: super;
+    border: 1px solid currentColor; border-radius: 2px; font-size: 9px; line-height: 1;
+  }
+  .mark.up { color: #4ec994; border-color: transparent; font-size: 11px; }
+  .mark.warn { color: #cca700; }
+  .mark.vuln { color: #f48771; }
+
+  /* ── new elements ───────────────────────────────────────────────────────── */
+  /* One line of feed description under the name; never more than one. */
+  .sum { font-size: 11px; color: #7a7a7a; line-height: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The matched part of the name, so relevance order explains itself. */
+  .hit { color: #e6e6e6; background: rgba(78, 201, 176, .16); border-radius: 2px; }
+  /* A result the workspace already has. */
+  .have { font-size: 10px; color: #4ec9b0; border: 1px solid currentColor; border-radius: 8px; padding: 0 5px; flex: 0 0 auto; }
+  .pair { font-size: 11px; color: #8a8a8a; font-family: "Cascadia Mono", Consolas, monospace; line-height: 15px; display: flex; gap: 5px; align-items: baseline; }
+  .pair .arrow { color: #6a6a6a; }
+  .foot { padding: 4px 8px 6px; font-size: 10px; color: #6a6a6a; }
+  .note { color: #6a6a6a; font-size: 11px; margin-top: 9px; max-width: 76ch; }
+  .legend { margin-top: 10px; font-size: 11px; color: #6a6a6a; line-height: 1.75; max-width: 76ch; }
+  table.m { border-collapse: collapse; font-size: 12px; margin: 4px 0 10px; }
+  table.m td, table.m th { border-bottom: 0.5px solid #2a2a2a; padding: 4px 16px 4px 0; text-align: left; }
+  table.m th { color: #8a8a8a; font-weight: 400; font-size: 11px; letter-spacing: .05em; }
+  code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; color: #b4b4b4; }
+</style>
+</head>
+<body>
+
+<h1>The package list</h1>
+<p class="lede">The left pane of the Packages tab. The panel it lives in is short &mdash; usually a bottom panel a few hundred pixels tall &mdash; so how many rows fit is the first thing the design is judged on, and today a search result spends a full two-line row to say a package id, a feed name and a version. Everything proposed here is drawn from data the extension already has in state.</p>
+
+<h2>What a row costs today</h2>
+<table class="m">
+  <tr><th>Piece</th><th>Where</th><th>Height</th></tr>
+  <tr><td>Name, marks, feed name</td><td>line 1</td><td>1.25em &asymp; 16px</td></tr>
+  <tr><td>Version columns</td><td>line 2 (<code>.pkg-row__meta</code>)</td><td>15px</td></tr>
+  <tr><td>Padding</td><td><code>--spacing-xs</code> &times; 2 + 1</td><td>9px</td></tr>
+  <tr><td><b>Row</b></td><td><code>min-height</code> in <code>global.css</code></td><td><b>&asymp; 40px</b></td></tr>
+</table>
+<p class="cap">For a search result the left half of line 2 is empty by construction &mdash; <code>PackageRow</code> renders the version only when <code>kind !== 'available'</code> &mdash; so a quarter of the row is reserved for nothing, and a list of twenty results shows four or five of them.</p>
+
+<h2>1 &middot; Today &mdash; twenty results, in the space for four</h2>
+<p class="cap">Drawn exactly as it renders now: the feed name on the first line, the version alone on the second, both against the right edge, with the left half of the second line blank.</p>
+<div class="row">
+  <div class="pane clip">
+    <div class="hdr"><span>Available</span><span>20</span></div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Search.Inside</span><span class="src">nuget.org</span></div>
+      <div class="r2"><span class="ver"></span><span class="ver right">6.6.1</span></div>
+    </div>
+    <div class="r sel">
+      <div class="r1"><span class="nm">Example.Search.Net</span><span class="src">nuget.org</span></div>
+      <div class="r2"><span class="ver"></span><span class="ver right">7.17.5</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Search.Net.Aws</span><span class="src">nuget.org</span></div>
+      <div class="r2"><span class="ver"></span><span class="ver right">7.2.2</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Cdk.Search</span><span class="src">nuget.org</span></div>
+      <div class="r2"><span class="ver"></span><span class="ver right">1.204.0</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.HealthChecks.Search</span><span class="src">nuget.org</span></div>
+      <div class="r2"><span class="ver"></span><span class="ver right">8.0.1</span></div>
+    </div>
+  </div>
+  <div class="stack" style="max-width:420px;">
+    <div class="tag">What the reader cannot tell from this list</div>
+    <div class="legend">
+      <div>&mdash; which of these the solution <b>already has</b>. An installed match is listed again in its own section above, with nothing tying the two rows together.</div>
+      <div>&mdash; that the selected one is <b>deprecated</b>. The details panel says so; the row cannot, because <code>AvailableList</code> passes no version flags and <code>PackageRow</code> short-circuits findings for available rows.</div>
+      <div>&mdash; <b>what any of them are</b>. Search returns a description and <code>AvailablePackage.description</code> carries it into state, where nothing renders it.</div>
+      <div>&mdash; <b>why this order</b>. Relevance decides it, but the matched part of each name is not marked, so the ordering looks arbitrary.</div>
+      <div>&mdash; that the list is <b>cut at twenty</b>. The count is shown; that it is a limit rather than a total is not.</div>
+    </div>
+  </div>
+</div>
+
+<h2>2 &middot; Proposed &mdash; the same twenty results</h2>
+<p class="cap">The version and the feed join the name on one line, which is where the space already was. The second line exists only when the feed gave a description, and holds one clamped line of it. A package with no description is a single-line row.</p>
+<div class="row">
+  <div class="pane clip">
+    <div class="hdr"><span>Available</span><span>20</span></div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.<span class="hit">Search</span>.Inside</span><span class="ver">6.6.1</span><span class="src">nuget.org</span></div>
+      <div class="sum">Embedded search server for integration tests</div>
+    </div>
+    <div class="r sel">
+      <div class="r1">
+        <span class="nm">Example.<span class="hit">Search</span>.Net<span class="mark warn" title="Deprecated">!</span></span>
+        <span class="have">3.9.2 installed</span>
+        <span class="ver">7.17.5</span>
+      </div>
+      <div class="sum">Low-level client for the Example search cluster</div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.<span class="hit">Search</span>.Net.Aws</span><span class="ver">7.2.2</span><span class="src">nuget.org</span></div>
+      <div class="sum">Request signing for clusters behind an AWS endpoint</div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Cdk.<span class="hit">Search</span><span class="mark vuln" title="Advisory">&#9888;</span></span><span class="ver">1.204.0</span><span class="src">nuget.org</span></div>
+      <div class="sum">Infrastructure constructs for search clusters</div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.HealthChecks.<span class="hit">Search</span></span><span class="ver">8.0.1</span><span class="src">nuget.org</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.<span class="hit">Search</span>.Serialization</span><span class="ver">7.17.5</span><span class="src">nuget.org</span></div>
+      <div class="sum">System.Text.Json serializer for the search client</div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.<span class="hit">Search</span>.Diagnostics</span><span class="ver">1.4.0</span><span class="src">internal</span></div>
+    </div>
+    <div class="foot">20 shown &mdash; narrow the query to see more</div>
+  </div>
+  <div class="stack" style="max-width:420px;">
+    <div class="tag">Five additions, in order of what they cost</div>
+    <div class="legend">
+      <div><b>1. The version moves up to the name.</b> Nothing else was using that space, and the second line stops being mandatory. A row with no description drops from 40px to about 24px.</div>
+      <div><b>2. The description fills the line it freed.</b> Already in state, never rendered. One line, clamped, never two &mdash; a wrapping row would give back everything the first change won.</div>
+      <div><b>3. Marks reach available rows.</b> The same glyphs the installed rows already use, so there is nothing new to learn: amber for deprecated, red for an advisory. This is what <a href="package-details-http.html">the HTTP catalog</a> already reads and drops.</div>
+      <div><b>4. An installed result says so, and says which version.</b> The badge is the link between the two rows; clicking it selects the installed one.</div>
+      <div><b>5. The match is marked, and the cut is stated.</b> The highlight explains the ordering; the footer says twenty is a limit, not a total.</div>
+    </div>
+  </div>
+</div>
+<p class="note">Both panes above are the same height, cut at the same place. Today: five rows. Proposed: seven, three of which carry a description the old one had no room for at all.</p>
+
+<h2>3 &middot; Installed &mdash; the two versions stop living at opposite edges</h2>
+<p class="cap">The installed and available versions are a two-column grid today, pinned left and right with a variable gap between them, and both wrap mid-string (<code>overflow-wrap: anywhere</code>) when the pane is narrow &mdash; which changes the row&rsquo;s height. Pairing them as one unit is how the Updates tab already shows the same fact.</p>
+<div class="row">
+  <div class="pane">
+    <div class="hdr"><span>Installed</span><span>9</span></div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span><span class="mark vuln" title="Advisory">&#9888;</span></span><span class="src">nuget.org</span></div>
+      <div class="pair"><span>3.9.2</span><span class="arrow">&rarr;</span><span class="ver up">4.3.2</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span><span class="src">internal</span></div>
+      <div class="pair"><span class="ver multi">2.8.1 / 3.1.0</span><span class="arrow">&rarr;</span><span class="ver up">3.4.0</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Diagnostics<span class="mark warn" title="Unlisted">!</span></span><span class="src">nuget.org</span></div>
+      <div class="pair"><span>2.1.4</span><span class="arrow">&rarr;</span><span>2.1.4</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Serialization</span><span class="src">nuget.org</span></div>
+      <div class="pair"><span>8.0.4</span></div>
+    </div>
+    <div class="hdr" style="margin-top:4px;"><span>Implicit</span><span>34</span></div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Extensions.Logging</span></div>
+      <div class="pair"><span>9.0.0</span></div>
+    </div>
+  </div>
+  <div class="stack" style="max-width:420px;">
+    <div class="legend">
+      <div>A version equal to the available one prints once with no arrow rather than twice &mdash; the arrow is the thing that means &ldquo;there is somewhere to go&rdquo;, and printing <code>8.0.4 &rarr; 8.0.4</code> spends a row saying nothing.</div>
+      <div>Several versions across projects keep the amber they have today, in the left half of the pair, where the tooltip still lists them per project.</div>
+      <div>Versions ellipsize instead of wrapping. A row whose height depends on the pane width makes the list jump while the splitter is dragged, and a version broken across two lines is unreadable anyway.</div>
+      <div>Implicit rows have no feed and no update, so they are single-line by the same rule as a result with no description &mdash; not by a rule of their own.</div>
+    </div>
+  </div>
+</div>
+
+<h2>4 &middot; Narrow &mdash; the pane at its 180px minimum</h2>
+<p class="cap">The pane&rsquo;s width is measured from the longest package id (<code>PackagesTab</code> sizes it from the title row), so the new pieces must never be what decides that width. Each drops in a fixed order as the pane narrows: the description first, the feed name second, the version last &mdash; the name and the marks never drop.</p>
+<div class="row">
+  <div class="pane narrow">
+    <div class="hdr"><span>Available</span><span>20</span></div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.<span class="hit">Search</span>.Inside</span><span class="ver">6.6.1</span></div>
+    </div>
+    <div class="r sel">
+      <div class="r1"><span class="nm">Example.<span class="hit">Search</span>.Net<span class="mark warn">!</span></span><span class="ver">7.17.5</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.<span class="hit">Search</span>.Net.Aws</span><span class="ver">7.2.2</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Cdk.<span class="hit">Search</span><span class="mark vuln">&#9888;</span></span><span class="ver">1.204.0</span></div>
+    </div>
+  </div>
+  <div class="pane narrow">
+    <div class="hdr"><span>Installed</span><span>9</span></div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Payments.Client<span class="mark up">&#8593;</span></span></div>
+      <div class="pair"><span>3.9.2</span><span class="arrow">&rarr;</span><span class="ver up">4.3.2</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Core<span class="mark up">&#8593;</span></span></div>
+      <div class="pair"><span class="ver multi">2.8.1 /&hellip;</span><span class="arrow">&rarr;</span><span class="ver up">3.4.0</span></div>
+    </div>
+    <div class="r">
+      <div class="r1"><span class="nm">Example.Serialization</span></div>
+      <div class="pair"><span>8.0.4</span></div>
+    </div>
+  </div>
+  <div class="stack" style="max-width:340px;">
+    <div class="legend">
+      <div>At this width the description would be three words and an ellipsis, which is worse than nothing; the feed name is the next least useful, because the source filter above already says which feeds are in play.</div>
+      <div>The marks stay at every width. They are the only thing in the list that can stop someone installing the wrong thing.</div>
+    </div>
+  </div>
+</div>
+
+<h2>What is deliberately not changed</h2>
+<div class="legend">
+  <div><b>The order of the sections.</b> Installed, then implicit, then available &mdash; putting results first while a query is active would move the list under the reader every time they type.</div>
+  <div><b>Hiding an installed package from the results.</b> It would remove the duplicate, but a package that vanishes from a result list reads as &ldquo;not found&rdquo;. The badge says the same thing without taking the row away.</div>
+  <div><b>The auto-measured pane width.</b> It is computed from the title row, and every addition here either lives on that row and shortens it (the version, already measured), or drops before it can widen anything.</div>
+  <div><b>Colour as the only carrier.</b> Marks keep their border and shape so High Contrast themes still show them, as <code>global.css</code> already requires.</div>
+  <div><b>Contrast of the list against the search field</b> is <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/112">#112</a> and is fixed there, not here.</div>
+</div>
+
+</body>
+</html>

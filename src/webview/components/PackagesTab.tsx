@@ -7,6 +7,7 @@ import { AvailableList } from './AvailableList';
 import { PackageDetailPanel } from './PackageDetailPanel';
 import { SplitPane } from './SplitPane';
 import { measureTextWidth } from '../utils/measureText';
+import { matchesQuery } from '../utils/search';
 import { PrereleaseToggle } from './PrereleaseToggle';
 import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
 import { ActivityStrip } from './ActivityStrip';
@@ -19,6 +20,18 @@ const MIN_LIST_PX = 160;
 const MIN_DETAIL_PX = 180;
 const LIST_ROW_CHROME_PX = 50;
 const TITLE_GAP_PX = 6;
+
+/** Unique ids in a list, the number the section header shows as its total. */
+function uniqueCount(packages: ReadonlyArray<{ id: string }>): number {
+  return new Set(packages.map((p) => p.id.toLowerCase())).size;
+}
+
+/** Unique ids the query keeps — what the section header shows before the slash. */
+function countMatching(packages: ReadonlyArray<{ id: string }>, query: string): number {
+  return new Set(
+    packages.filter((p) => matchesQuery(p.id, query)).map((p) => p.id.toLowerCase()),
+  ).size;
+}
 
 export function PackagesTab() {
   const { state, dispatch, send } = useNugetManager();
@@ -62,7 +75,23 @@ export function PackagesTab() {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (q.length >= MIN_QUERY_LEN) {
       timerRef.current = setTimeout(
-        () => doSearch(q, selectedSources, prerelease),
+        () => {
+          // Logged from here, not from the search itself: this is the query the
+          // panel is filtering its own lists by, and how those lists read under
+          // it. A search that finds nothing locally looks the same in the log as
+          // one that was never given the text — unless both are recorded.
+          send({
+            type: 'WEBVIEW_ACTION',
+            action: 'search',
+            query: q,
+            counts: {
+              installed: [countMatching(installed, q), uniqueCount(installed)],
+              implicit: [countMatching(implicit, q), uniqueCount(implicit)],
+              available: available.length,
+            },
+          });
+          doSearch(q, selectedSources, prerelease);
+        },
         DEBOUNCE_MS,
       );
     } else {

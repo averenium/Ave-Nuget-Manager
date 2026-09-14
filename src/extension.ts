@@ -30,6 +30,7 @@ import { authorizingFetcher, CredentialRegistry } from './nugetHttpAuth';
 import { ProxyRegistry } from './nugetProxyRegistry';
 import { httpLogSink, loggingFetcher } from './nugetHttpLog';
 import { HttpResponseCache } from './nugetHttpCache';
+import { NuspecReader } from './nugetNuspecFetch';
 import { retryingFetcher } from './nugetHttpRetry';
 
 let logger: Logger | undefined;
@@ -123,13 +124,17 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
     httpFetch,
     capabilityStorage(context.globalState),
   );
+  const resolveSources = createConfigSourceResolver(credentials, proxies);
   const backend = new HttpCatalogBackend(
     new CliBackend(runner),
     new VersionLadder(capabilities, httpFetch, { log: httpLog }),
     capabilities,
-    createConfigSourceResolver(credentials, proxies),
+    resolveSources,
     { search: new PackageSearch(capabilities, httpFetch, { log: httpLog }) },
   );
+  // The licence of a version nobody has installed (#89). Reached only when the
+  // catalog states none, which is the single case its metadata cannot settle.
+  const nuspecs = new NuspecReader(capabilities, httpFetch);
   const vulnerabilityDatabase = new VulnerabilityDatabase(
     capabilities,
     httpFetch,
@@ -199,7 +204,22 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
         httpCache.clear();
         credentials.clear();
         proxies.clear();
+        nuspecs.clear();
         capabilities.forgetAll();
+      },
+    },
+    {
+      // One config file at a time, as everywhere else: the sources a file
+      // enables are the ones that may be asked about a package it resolves.
+      forVersion: async (packageId, version, configFiles, signal) => {
+        for (const configFile of configFiles) {
+          const { targets } = await resolveSources(configFile);
+          for (const target of targets) {
+            const license = await nuspecs.license(target, packageId, version, signal);
+            if (license) return license;
+          }
+        }
+        return undefined;
       },
     },
   );

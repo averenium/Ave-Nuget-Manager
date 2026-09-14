@@ -27,7 +27,7 @@
 import { getConfig } from './config';
 import { SILENT_HTTP_LOG, type HttpLogSink } from './nugetHttpLog';
 import { worthCaching } from './nugetHttpStatus';
-import type { HttpFetcher, HttpJsonResponse } from './nugetSourceCapabilities';
+import type { FetchIntent, HttpFetcher, HttpJsonResponse } from './nugetSourceCapabilities';
 
 interface CacheEntry {
   response: HttpJsonResponse;
@@ -109,7 +109,7 @@ export class HttpResponseCache {
 
   /** Wraps a fetcher so repeats within the window cost nothing. */
   wrap(fetchJson: HttpFetcher): HttpFetcher {
-    return async (url, signal, headers) => {
+    return async (url, signal, headers, intent) => {
       if (signal?.aborted) throw abortError();
 
       const held = this._get(url);
@@ -128,7 +128,7 @@ export class HttpResponseCache {
       // the cache never sees the second one, because it starts before the first
       // has answered.
       const existing = this._inFlight.get(url);
-      const shared = existing ?? this._start(url, fetchJson, headers);
+      const shared = existing ?? this._start(url, fetchJson, headers, intent);
       const response = await this._join(url, shared, signal, !!existing);
       // A revalidated entry answers with the document it always held.
       if (response.status === 304) {
@@ -143,12 +143,13 @@ export class HttpResponseCache {
     url: string,
     fetchJson: HttpFetcher,
     headers?: Record<string, string>,
+    intent?: FetchIntent,
   ): SharedRequest {
     const controller = new AbortController();
     const shared: SharedRequest = { controller, waiters: 0, promise: undefined as never };
     const validators = this._validators(url);
     const generation = this._generation;
-    shared.promise = fetchJson(url, controller.signal, { ...headers, ...validators })
+    shared.promise = fetchJson(url, controller.signal, { ...headers, ...validators }, intent)
       .then((response) => {
         // The caller is still answered; only the storing is skipped, because
         // what arrived describes the configuration as it was before the clear.

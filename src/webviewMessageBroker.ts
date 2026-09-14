@@ -22,12 +22,16 @@ import { sanitizeText, type FileAlias, type SanitizeContext } from './traceSanit
 import { collectScopeSnapshotFiles } from './tracePack';
 import type { WebviewMessage } from './messages';
 import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
-import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, ImplicitPackage, PackageSource, VulnerabilityFinding, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile } from './types';
+import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, ImplicitPackage, PackageSource, VulnerabilityFinding, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile, VersionFlag } from './types';
+import type { PackageLicense } from './types';
+import { licenseChange } from './packageLicense';
+import { versionsEqual } from './semver';
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText, mergeCliResults } from './dotnetOutput';
 import { mergeFindings } from './vulnerabilities';
 import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS, isRetryableCliFailure } from './cliRetry';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked, withoutBlocked } from './blockedPackages';
-import { pathsEqual, normalizeFsPath } from './pathCompare';
+import { pathsEqual, normalizeFsPath, packageIdsEqual } from './pathCompare';
+import { resolveVersionSpread } from './packageResolvedVersions';
 import { compareSemVer } from './semver';
 import {
   listWorkspaceDotnetFiles,
@@ -42,7 +46,7 @@ import {
 } from './dotnetWorkspace';
 import { readProjectAssets, readPackageFolders, readAssetsJson } from './projectAssets';
 import { computeEntangledCluster } from './batchUpdates';
-import { findNuspecFile, listRuntimeIdentifiers } from './nuspecLocator';
+import { findNuspecFile, findLicenseFile, listRuntimeIdentifiers } from './nuspecLocator';
 import { parseNuspec } from './nuspecParser';
 import { searchedMetadataToPackageMetadata } from './searchMetadataMapping';
 import { resolvePackageDependencyTree, packageSupportedFrameworks } from './packageDependencyTree';
@@ -78,12 +82,16 @@ function scopeIdentityPath(scope: WorkspaceScope): string {
  */
 export function feedFlags(
   metadataByVersion: Record<string, import('./types').SearchedVersionMetadata> | undefined,
-): Record<string, { vulnerable?: boolean; deprecation?: string }> | undefined {
+): Record<string, VersionFlag> | undefined {
   if (!metadataByVersion) return undefined;
-  const flags: Record<string, { vulnerable?: boolean; deprecation?: string }> = {};
+  const flags: Record<string, VersionFlag> = {};
   for (const [version, metadata] of Object.entries(metadataByVersion)) {
     if (!metadata?.vulnerable && !metadata?.deprecation) continue;
-    flags[version] = { vulnerable: metadata.vulnerable, deprecation: metadata.deprecation };
+    flags[version] = {
+      vulnerable: metadata.vulnerable,
+      deprecation: metadata.deprecation,
+      advisories: metadata.advisories,
+    };
   }
   return Object.keys(flags).length > 0 ? flags : undefined;
 }
@@ -199,6 +207,18 @@ interface BatchItemOutcome {
   error?: string;
 }
 
+/**
+ * How long the licence check may stand between the "update all" click and the
+ * first `dotnet add` (#89).
+ *
+ * Most of the work is free — the catalog states an expression per version and
+ * the version walk already has those pages — so the budget only ever bites when
+ * several packages declare no expression and each costs a nuspec. When it does
+ * bite there is no popup and the batch proceeds: a batch must never be blocked
+ * on an unknown, and a user who clicked update is entitled to have it happen.
+ */
+const BATCH_LICENSE_BUDGET_MS = 8_000;
+
 /** Worst status wins, in this order — matches how a partial multi-project failure already reads. */
 const BATCH_STATUS_RANK: Record<BatchItemStatus, number> = {
   error: 4, timeout: 3, cancelled: 2, running: 1, pending: 1, ok: 0,
@@ -237,7 +257,7 @@ interface CacheEntry {
    * selection had just shown were reported as "none" on the next selection,
    * blanking the ⚠ in the version dropdown until the window was reloaded.
    */
-  versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
+  versionFlags?: Record<string, VersionFlag>;
 }
 
 type RefreshOpts = {
@@ -263,6 +283,10 @@ export class WebviewMessageBroker {
   /** Cancellation token for the current enrich job — replaced on each new job */
   private _enrichAbort: AbortController = new AbortController();
   private _vulnAbort: AbortController = new AbortController();
+  /** The licence question in flight (#89) — replaced, not queued, as the selection moves. */
+  private _licenseAbort: AbortController = new AbortController();
+  /** Field rather than a bare constant so a test can shorten the wait it is about. */
+  private _licenseBudgetMs = BATCH_LICENSE_BUDGET_MS;
   /** Bumped on every `_cancelVulnScan()` — belt-and-suspenders against a
    *  superseded scan posting stale findings after a newer one already did,
    *  the same shape as `_restoreGeneration`/`_beginRestore` (#53). Needed
@@ -342,6 +366,19 @@ export class WebviewMessageBroker {
      * the Sources tab would keep answering from what was true before it.
      */
     private readonly httpCatalog?: { invalidate: () => void },
+    /**
+     * The licence a version declares, for a version nobody has installed (#89).
+     * Only consulted when the catalog's own answer states none, which is the
+     * one case a feed's metadata cannot settle.
+     */
+    private readonly licenseLookup?: {
+      forVersion: (
+        packageId: string,
+        version: string,
+        configFiles: string[],
+        signal?: AbortSignal,
+      ) => Promise<PackageLicense | undefined>;
+    },
   ) {
   }
 
@@ -411,6 +448,7 @@ export class WebviewMessageBroker {
   detach(): void {
     this._cancelEnrich();
     this._cancelVulnScan();
+    this._cancelLicenseLookup();
     this._batchAbort?.abort();
     this._messageDisposable?.dispose();
     this._messageDisposable = undefined;
@@ -447,6 +485,12 @@ export class WebviewMessageBroker {
     this._vulnScanGeneration++;
   }
 
+  /** Drop the licence lookup still in flight and issue a fresh token (#89). */
+  private _cancelLicenseLookup(): void {
+    this._licenseAbort.abort();
+    this._licenseAbort = new AbortController();
+  }
+
   private _postBlockedPackages(): void {
     this.provider.postMessage({ type: 'BLOCKED_PACKAGES', packageIds: getBlockedPackages() });
   }
@@ -456,10 +500,35 @@ export class WebviewMessageBroker {
     this.provider.postMessage({ type: 'BLOCKED_PACKAGES', packageIds });
   }
 
+
+  /**
+   * A decision that leaves no other trace (#27 follow-up).
+   *
+   * Installing and removing already write their own rows — `dotnet add` carries
+   * the version and the framework it landed on. What had no record at all was a
+   * click that produced nothing: an update refused because the package is
+   * blocked, or skipped because the file already says what was asked for. From
+   * the log those were indistinguishable from never having clicked.
+   */
+  private _logDecision(command: string, args: string[]): void {
+    this.logger.logCliOperation({
+      timestamp: new Date(),
+      kind: 'ui',
+      command,
+      args,
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+      durationMs: 0,
+    });
+  }
+
   /** True when this id is blocked and already installed — first-time install stays allowed. */
   private _rejectBlockedVersionChange(packageId: string): boolean {
     if (!isPackageBlocked(packageId, getBlockedPackages())) return false;
     if (!this._installedIds.has(packageId.toLowerCase())) return false;
+    this._logDecision('update refused', [packageId, 'updates blocked in this workspace']);
     void vscode.window.showInformationMessage(
       `${packageId}: ${BLOCKED_UPDATES_TOOLTIP}`,
     );
@@ -490,6 +559,34 @@ export class WebviewMessageBroker {
 
       case 'GET_PACKAGE_METADATA':
         await this._handleGetMetadata(msg.packageId, msg.version, msg.configFiles, msg.projectPath);
+        break;
+
+      case 'GET_LICENSE_CHANGE': {
+        // One question at a time: scrolling the version list asks about every
+        // version it passes, and each may cost a request to the feed. The
+        // answer to a version already left behind is of no use to anyone, so
+        // the previous lookup is dropped rather than raced.
+        this._cancelLicenseLookup();
+        const signal = this._licenseAbort.signal;
+        const change = await this._licenseChangeFor(
+          msg.packageId, msg.version, msg.configFiles, signal,
+        );
+        if (signal.aborted) break;
+        this.provider.postMessage({
+          type: 'LICENSE_CHANGE',
+          packageId: msg.packageId,
+          version: msg.version,
+          change,
+        });
+        break;
+      }
+
+      case 'CHECK_BATCH_LICENSES':
+        this.provider.postMessage({
+          type: 'BATCH_LICENSE_CHANGES',
+          requestId: msg.requestId,
+          findings: await this._batchLicenseChanges(msg.items, msg.configFiles),
+        });
         break;
 
       case 'GET_ALL_VERSIONS':
@@ -560,6 +657,17 @@ export class WebviewMessageBroker {
 
       case 'OPEN_CONFIG_FILE':
         await this._handleOpenConfigFile(msg.filePath, msg.sourceName);
+        break;
+
+      case 'OPEN_LICENSE_FILE':
+        // Read-only: it is a file inside the package cache, and nothing good
+        // comes of editing one there.
+        try {
+          const doc = await vscode.workspace.openTextDocument(msg.filePath);
+          await vscode.window.showTextDocument(doc, { preview: true });
+        } catch (err) {
+          this.logger.error(`Could not open the licence file at ${msg.filePath}`, err);
+        }
         break;
 
       case 'COPY_TEXT':
@@ -635,6 +743,29 @@ export class WebviewMessageBroker {
         await this.skill?.install({ updateExisting: !!msg.updateExisting });
         await this.postSkillStatus();
         break;
+
+      case 'WEBVIEW_ACTION': {
+        const detail: string[] = [];
+        if (msg.query !== undefined) detail.push(`query "${msg.query}"`);
+        if (msg.packageId) detail.push(msg.version ? `${msg.packageId} ${msg.version}` : msg.packageId);
+        if (msg.counts) {
+          const { installed, implicit, available } = msg.counts;
+          detail.push(
+            `installed ${installed[0]}/${installed[1]}`,
+            `implicit ${implicit[0]}/${implicit[1]}`,
+            `available ${available}`,
+          );
+        }
+        if (msg.detail?.length) detail.push(...msg.detail);
+        const wording = {
+          search: 'search box',
+          select: 'package selected',
+          confirm: 'confirmation',
+          apply: 'apply',
+        } as const;
+        this._logDecision(wording[msg.action], detail);
+        break;
+      }
 
       case 'WEBVIEW_ERROR':
         this.logger.error(
@@ -970,6 +1101,144 @@ export class WebviewMessageBroker {
     }
   }
 
+
+  /**
+   * Whether taking the selected version would change the package's licence (#89).
+   *
+   * A bump can move a package from one licence to another and nothing in the
+   * toolchain says so: restore succeeds, `--outdated` is silent, the manifest
+   * diff shows a version number. So the two are compared here, where the
+   * installed package's own `.nuspec` and the feed are both reachable.
+   *
+   * Nothing is said unless there is something to say. Not installed, or showing
+   * the version already installed, and there is no comparison to make at all;
+   * and the comparison itself stays quiet whenever either side declares no
+   * licence, since `<license>` only arrived in 2019 and a package old enough
+   * predates it — reading that as a change would fire on almost every
+   * long-lived package.
+   */
+  /**
+   * The same comparison, for every package a batch would move (#89).
+   *
+   * The checks run together rather than in turn: a batch is tens of packages,
+   * and run one after another even a cheap check would keep the user waiting on
+   * a click they have already made. The budget covers the whole set — if it runs
+   * out, the answer is "nothing found" and the batch goes ahead, with the skip
+   * recorded in the log so the silence is at least accounted for. Nothing here
+   * fails the batch: an unknown licence is not a reason to refuse an update the
+   * user asked for.
+   */
+  private async _batchLicenseChanges(
+    items: ReadonlyArray<{ packageId: string; fromVersion: string; toVersion: string }>,
+    configFiles: string[],
+  ): Promise<import('./packageLicense').BatchLicenseFinding[]> {
+    if (items.length === 0) return [];
+    const budget = new AbortController();
+    const expiry = setTimeout(() => budget.abort(), this._licenseBudgetMs);
+    try {
+      const checked = await Promise.race([
+        // Capped, not merely bounded in time. The budget limits how long this
+        // may take and says nothing about how many connections it opens at once:
+        // an "All" of forty packages would otherwise put forty requests to the
+        // feed in the same instant, and a feed that answers 429 to the fortieth
+        // does so well inside eight seconds. The same cap the rest of the broker
+        // uses, and the natural place for the HTTP gateway of #116 to take over.
+        runWithConcurrency(items.map((item) => async () => {
+          const change = await this
+            ._licenseChangeFor(item.packageId, item.toVersion, configFiles, budget.signal)
+            .catch(() => undefined);
+          return change ? { ...item, change } : undefined;
+        }), getConfig().dotnetConcurrency),
+        new Promise<undefined>((resolve) => {
+          budget.signal.addEventListener('abort', () => resolve(undefined), { once: true });
+        }),
+      ]);
+      if (!checked) {
+        this.logger.info(
+          `Licence check skipped: ${items.length} package(s) did not answer within ${this._licenseBudgetMs}ms — the update proceeds`,
+        );
+        return [];
+      }
+      return checked.filter((f): f is import('./packageLicense').BatchLicenseFinding => !!f);
+    } finally {
+      clearTimeout(expiry);
+    }
+  }
+
+  private async _licenseChangeFor(
+    packageId: string,
+    selectedVersion: string,
+    configFiles: string[],
+    signal?: AbortSignal,
+  ): Promise<import('./packageLicense').LicenseChange | undefined> {
+    if (!selectedVersion) return undefined;
+
+    // The same version the panel says it is describing. A solution resolves a
+    // package per project and those versions differ, so taking whichever entry
+    // the CLI listed first would compare against a version that is not on
+    // screen — the case `resolveVersionSpread` exists for (#90, #115).
+    const direct = this._lastListed?.installed.filter((p) => packageIdsEqual(p.id, packageId)) ?? [];
+    const transitive = this._lastListed?.implicit.filter((p) => packageIdsEqual(p.id, packageId)) ?? [];
+    const spread = resolveVersionSpread(direct, transitive);
+    const installedEntry = [...direct, ...transitive]
+      .find((p) => p.resolvedVersion === spread?.primary);
+    if (!installedEntry) return undefined;
+    if (versionsEqual(installedEntry.resolvedVersion, selectedVersion)) return undefined;
+
+    const installedMetadata = await this._tryReadNuspecMetadata(
+      installedEntry.projectPath, packageId, installedEntry.resolvedVersion,
+    );
+    const installed = installedMetadata?.license;
+    if (!installed) return undefined;
+
+    // The catalog states an SPDX expression per version and costs nothing extra
+    // here. It cannot state a file licence at all — measured, the registration
+    // leaf has no such key — so only then is the package's own nuspec worth a
+    // request of its own.
+    const catalogMetadata = await this._getSearchMetadata(packageId, selectedVersion, configFiles)
+      .catch(() => undefined);
+    if (signal?.aborted) return undefined;
+    const selected = catalogMetadata?.license
+      ?? await this.licenseLookup?.forVersion(packageId, selectedVersion, configFiles, signal)
+        .catch(() => undefined);
+
+    // Only ever to give a file licence somewhere to be read — a file licence is
+    // bundled in the package and has no address of its own, and this is the one
+    // field that points at it. Never compared: see `licenseChange`.
+    return licenseChange(
+      installed,
+      selected,
+      { installed: installedMetadata?.licenseUrl, selected: catalogMetadata?.licenseUrl },
+      installed.type === 'file'
+        ? await this._installedLicenseFile(
+          installedEntry.projectPath, packageId, installedEntry.resolvedVersion, installed.value,
+        )
+        : undefined,
+    );
+  }
+
+  /**
+   * The installed version's licence file, inside the extracted package (#89).
+   *
+   * The installed side is the one that is on disk, so its file licence — the
+   * kind nothing on the web can name — can be opened and read. Undefined on any
+   * miss: a pruned cache, or a package that never shipped the file it names.
+   */
+  private async _installedLicenseFile(
+    projectPath: string,
+    packageId: string,
+    version: string,
+    relativePath: string,
+  ): Promise<string | undefined> {
+    try {
+      const packageFolders = await readPackageFolders(projectPath);
+      const nuspecPath = await findNuspecFile(packageFolders, packageId, version);
+      return nuspecPath ? await findLicenseFile(nuspecPath, relativePath) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Undefined on any failure (missing packageFolders, pruned cache, unparsable nuspec) — caller falls back to search. */
   private async _tryReadNuspecMetadata(
     projectPath: string,
@@ -1042,15 +1311,17 @@ export class WebviewMessageBroker {
   /** Vulnerable/deprecated marks for the version dropdown (#86) — undefined when nothing is flagged, so the message stays lean in the common case. */
   private _versionFlagsFor(
     entry: CacheEntry | undefined,
-  ): Record<string, { vulnerable?: boolean; deprecation?: string }> | undefined {
+  ): Record<string, VersionFlag> | undefined {
     if (!entry) return undefined;
     // Both halves are the same answer from the same feed, held apart only
     // because one of them may not be written into `metadataByVersion`. An entry
     // that has only ever been through `getAllVersions` carries the second half
     // alone, and reporting "nothing is marked" for it blanks the dropdown.
-    const out: Record<string, { vulnerable?: boolean; deprecation?: string }> = { ...entry.versionFlags };
+    const out: Record<string, VersionFlag> = { ...entry.versionFlags };
     for (const [v, m] of Object.entries(entry.metadataByVersion ?? {})) {
-      if (m.vulnerable || m.deprecation) out[v] = { vulnerable: m.vulnerable, deprecation: m.deprecation };
+      if (m.vulnerable || m.deprecation) {
+        out[v] = { vulnerable: m.vulnerable, deprecation: m.deprecation, advisories: m.advisories };
+      }
     }
     return Object.keys(out).length > 0 ? out : undefined;
   }
@@ -1113,12 +1384,16 @@ export class WebviewMessageBroker {
         // The outgoing message's marks combine any richer cached flags with
         // this call's own fresh ones — but that merge is never written back
         // into `metadataByVersion` (see above), only sent on the wire.
-        const mergedFlags: Record<string, { vulnerable?: boolean; deprecation?: string }> = {
+        const mergedFlags: Record<string, VersionFlag> = {
           ...this._versionFlagsFor(this._cache.get(key)),
         };
         for (const [v, flags] of Object.entries(versionFlags)) {
           if (flags.vulnerable || flags.deprecation) {
-            mergedFlags[v] = { vulnerable: flags.vulnerable, deprecation: flags.deprecation };
+            mergedFlags[v] = {
+              vulnerable: flags.vulnerable,
+              deprecation: flags.deprecation,
+              advisories: flags.advisories,
+            };
           }
         }
         this.provider.postMessage({
@@ -1314,6 +1589,11 @@ export class WebviewMessageBroker {
     if (previousVersion !== null && compareSemVer(previousVersion, version) === 0) {
       // The one line already reads the target, so every framework is on it
       // and there is nothing a rebuild would change.
+      this._logDecision('update skipped', [
+        `${packageId} ${version}`,
+        'the shared reference already states this version',
+        path.basename(projectPath),
+      ]);
       return { result: skippedInstallResult(), skipped: true };
     }
 
@@ -1594,6 +1874,11 @@ export class WebviewMessageBroker {
     const duplicateLegacy = style === 'legacy-packageref'
       && countPackageReferences(xml, packageId) > 1;
     if (sameVersion && !duplicateLegacy) {
+      this._logDecision('update skipped', [
+        `${packageId} ${version}`,
+        'the project already states this version',
+        path.basename(projectPath),
+      ]);
       return { result: skippedInstallResult(), skipped: true };
     }
 

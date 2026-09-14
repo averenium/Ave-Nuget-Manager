@@ -47,6 +47,36 @@ export async function findNuspecFile(
 }
 
 /**
+ * The file a `<license type="file">` names, inside the extracted package (#89).
+ *
+ * The installed version is the one side of a licence comparison that is on disk
+ * by definition, so the file it calls its licence can actually be opened — which
+ * is the difference between telling someone their licence may have changed and
+ * letting them read what it changed from. The nuspec states the path relative to
+ * the package root, which is the nuspec's own directory, and it may name a
+ * subdirectory.
+ *
+ * Undefined when the file is not there: the path is stated by the package and
+ * nothing guarantees the file was shipped.
+ */
+export async function findLicenseFile(
+  nuspecPath: string,
+  relativePath: string,
+): Promise<string | undefined> {
+  const root = path.dirname(nuspecPath);
+  const resolved = path.resolve(root, relativePath);
+  // A nuspec is package-supplied data, so a path that climbs out of the package
+  // is refused rather than followed.
+  if (!resolved.toLowerCase().startsWith(`${root.toLowerCase()}${path.sep}`)) return undefined;
+  try {
+    const stat = await fs.stat(resolved);
+    return stat.isFile() ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Runtime identifiers a package ships native assets for — the directory
  * names directly under the extracted package folder's `runtimes/` (a
  * sibling of the `.nuspec`), e.g. `win-x64`, `linux-x64`. No parsing beyond

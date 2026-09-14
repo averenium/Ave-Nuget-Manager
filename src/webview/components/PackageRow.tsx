@@ -1,6 +1,6 @@
 import React from 'react';
 import { compareSemVer } from '../utils/search';
-import type { InstalledPackage, ImplicitPackage, AvailablePackage, VulnerabilityFinding, PackageSourceMapping } from '../../types';
+import type { InstalledPackage, ImplicitPackage, AvailablePackage, VulnerabilityFinding, PackageSourceMapping, VersionFlag } from '../../types';
 import { findingsAffectingPackage } from '../../vulnerabilities';
 import { packageMatchesAnyMapping } from '../../packageSourceMapping';
 import { PkgListRow } from './PkgListRow';
@@ -27,7 +27,7 @@ interface Props {
    * Only the deprecation of the version this row actually shows is used: a
    * newer version being deprecated says nothing about the one installed.
    */
-  versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
+  versionFlags?: Record<string, VersionFlag>;
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
 }

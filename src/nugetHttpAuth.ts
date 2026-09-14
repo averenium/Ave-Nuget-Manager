@@ -79,11 +79,11 @@ export function authorizingFetcher(
   fetchJson: AuthorizedFetcher,
   registry: CredentialRegistry,
 ): AuthorizedFetcher {
-  return async (url, signal, headers) => {
+  return async (url, signal, headers, intent) => {
     const header = await registry.headerFor(url);
     // The headers passed in belong to whoever wrapped this — the cache asking
     // whether its copy is still current, for one. Building a fresh object here
     // silently dropped them, and a dropped validator is a full download.
-    return fetchJson(url, signal, header ? { ...headers, authorization: header } : headers);
+    return fetchJson(url, signal, header ? { ...headers, authorization: header } : headers, intent);
   };
 }

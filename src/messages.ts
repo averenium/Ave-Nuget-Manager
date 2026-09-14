@@ -13,6 +13,7 @@ import type {
   BatchUpdateJob,
   BatchItemStatus,
   VulnerabilityFinding,
+  VersionFlag,
 } from './types';
 import type { SkillFamily, SkillInstallRow } from './agentSkillInstall';
 import type { RoslynCap } from './roslynSdkCap';
@@ -33,6 +34,29 @@ export type WebviewMessage =
   // (offline, complete) over the search response for the Info panel (#86).
   | { type: 'GET_PACKAGE_METADATA'; packageId: string; version?: string; configFiles: string[]; projectPath?: string }
   | { type: 'GET_ALL_VERSIONS'; packageId: string; configFiles: string[]; prerelease: boolean }
+  /**
+   * Would taking `version` change the package's licence (#89)?
+   *
+   * Its own message rather than a field on the metadata answer, because the two
+   * are about different versions. The Info panel describes the version that is
+   * installed; the question here is about the version the selector is offering,
+   * which on entry is the newest rather than the installed one. Tying the
+   * comparison to the metadata compared the installed version with itself.
+   */
+  | { type: 'GET_LICENSE_CHANGE'; packageId: string; version: string; configFiles: string[] }
+
+  /**
+   * Ask which of a batch's packages would change licence, before the first
+   * `dotnet add` (#89). Sent on the "update all" click; the batch waits for the
+   * answer, and the answer always comes — an unknown never blocks a batch.
+   */
+  | {
+      type: 'CHECK_BATCH_LICENSES';
+      /** Echoed back, so an answer to a click the user has already moved past is ignored. */
+      requestId: string;
+      configFiles: string[];
+      items: Array<{ packageId: string; fromVersion: string; toVersion: string }>;
+    }
 
   // Install / Remove — Project scope (single project)
   // `framework` confines the write to one conditional PackageReference group,
@@ -102,6 +126,13 @@ export type WebviewMessage =
 
   // Sources tab
   | { type: 'OPEN_CONFIG_FILE'; filePath: string; sourceName?: string }
+
+  /**
+   * Open the licence file an installed package carries (#89). The path is one
+   * the extension host found inside the extracted package, never one the
+   * webview composed.
+   */
+  | { type: 'OPEN_LICENSE_FILE'; filePath: string }
   | { type: 'COPY_TEXT'; text: string }
   | { type: 'OPEN_URL'; url: string }
   | { type: 'SET_SOURCE_ENABLED'; name: string; configFilePath: string; enabled: boolean; kind?: 'package' | 'audit'; url?: string }
@@ -158,6 +189,33 @@ export type WebviewMessage =
   | { type: 'SHOW_TOAST'; message: string }
   /** Agents tab — Install… (QuickPick) or Update in place when `updateExisting`. */
   | { type: 'INSTALL_AGENT_SKILL'; updateExisting?: boolean }
+  /**
+   * Something the person did in the panel, for the log (#27 follow-up).
+   *
+   * The log records everything the extension does — every `dotnet` call, every
+   * request — and nothing about what was asked of it. That gap cost a whole
+   * investigation: a search that plainly should have matched an installed
+   * package reported none, and the record could not say what the panel had been
+   * given or what it made of it.
+   */
+  | {
+      type: 'WEBVIEW_ACTION';
+      /**
+       * `search` and `select` record what was asked for; `confirm` and `apply`
+       * record a decision that leaves no other trace. Installing and removing
+       * are not here — `dotnet add`/`remove` already write their own rows with
+       * the version and the framework, and a second row would only repeat them.
+       */
+      action: 'search' | 'select' | 'confirm' | 'apply';
+      /** What was typed, exactly as the panel holds it — quoted in the row, so stray spaces show. */
+      query?: string;
+      packageId?: string;
+      version?: string;
+      /** How the panel read its own lists at that moment: matches out of total. */
+      counts?: { installed: [number, number]; implicit: [number, number]; available: number };
+      /** Already-worded parts of the row: what was decided, over what. */
+      detail?: string[];
+    }
   /** React / window crash in the webview — host writes Output Channel. */
   | { type: 'WEBVIEW_ERROR'; source: string; message: string; stack?: string };
 
@@ -209,7 +267,7 @@ export type ExtensionMessage =
        * mark a row before anything is selected; `ALL_VERSIONS` carries the same
        * shape for one package at a time.
        */
-      versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
+      versionFlags?: Record<string, VersionFlag>;
     }
   | { type: 'ENRICH_PROGRESS'; done: number; total: number }
   | { type: 'VULNERABILITIES'; findings: VulnerabilityFinding[] }
@@ -223,16 +281,37 @@ export type ExtensionMessage =
     }
   | { type: 'BLOCKED_PACKAGES'; packageIds: string[] }
   | { type: 'SEARCH_RESULTS'; query: string; packages: AvailablePackage[] }
-  | { type: 'PACKAGE_METADATA'; metadata: PackageMetadata }
+  | {
+      type: 'PACKAGE_METADATA';
+      metadata: PackageMetadata;
+    }
   // `versionFlags` marks versions the feed already reports as vulnerable or
   // deprecated, keyed by exact version string — best-effort (only present
   // for versions a detailed search actually returned flags for) so the
   // version dropdown can warn before a version is even chosen (#86).
   | {
+      type: 'LICENSE_CHANGE';
+      packageId: string;
+      /** The version asked about — an answer can arrive after the selection moved on. */
+      version: string;
+      /** Absent when the licence does not change, or cannot be compared. */
+      change?: import('./packageLicense').LicenseChange;
+    }
+  | {
+      type: 'BATCH_LICENSE_CHANGES';
+      requestId: string;
+      /**
+       * Empty both when no licence moves and when the check could not be
+       * finished in time — the batch proceeds either way, and the skip is
+       * recorded in the log rather than shown as a question with no answer.
+       */
+      findings: import('./packageLicense').BatchLicenseFinding[];
+    }
+  | {
     type: 'ALL_VERSIONS';
     packageId: string;
     versions: string[];
-    versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
+    versionFlags?: Record<string, VersionFlag>;
   }
 
   /** Restore / Force refresh re-read of the SDK compiler. */

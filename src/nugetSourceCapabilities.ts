@@ -97,6 +97,13 @@ export interface HttpJsonResponse {
   retryAfter?: string;
   /** The start of the body as text — what an answer that surprised us looked like. */
   preview?: string;
+  /**
+   * The body in full, present only when the caller asked for it. Everything in
+   * this feature reads JSON; a package's `.nuspec` is XML, and it is the only
+   * place a file licence is named (#89). Kept off by default so a registration
+   * document of half a megabyte is not held twice.
+   */
+  text?: string;
 }
 
 export type JsonFetcher = (url: string, signal?: AbortSignal) => Promise<HttpJsonResponse>;
@@ -106,10 +113,16 @@ export type JsonFetcher = (url: string, signal?: AbortSignal) => Promise<HttpJso
  * copies of this type drifted apart, and the layer that dropped the headers it
  * was handed type-checked cleanly against its own copy.
  */
+export interface FetchIntent {
+  /** Keep the body as text on the result; for a document that is not JSON. */
+  wantText?: boolean;
+}
+
 export type HttpFetcher = (
   url: string,
   signal?: AbortSignal,
   headers?: Record<string, string>,
+  intent?: FetchIntent,
 ) => Promise<HttpJsonResponse>;
 
 export interface CapabilityStorage {

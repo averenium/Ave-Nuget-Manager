@@ -80,3 +80,56 @@ describe('buildPackageProblems', () => {
     expect(problems.map((p) => p.kind)).toEqual(['vulnerability', 'deprecation', 'mapping', 'blocked']);
   });
 });
+
+describe('what the feed says about the version being looked at', () => {
+  // Measured on `SixLabors.ImageSharp`: the feed attaches
+  // `GHSA-rxmq-m78w-7wmc` (severity 1, moderate) to 3.1.10 and nothing to
+  // 3.1.12. The restore-graph scan cannot know this — it only ever describes
+  // what is installed — so without this row a user selecting 3.1.10 sees the
+  // dropdown warn and the panel say nothing.
+  const advisory = { url: 'https://github.com/advisories/GHSA-rxmq-m78w-7wmc', severity: 'moderate' as const };
+
+  it('reports an advisory the feed attaches to the selected version', () => {
+    const problems = buildPackageProblems({
+      ...NO_MAPPING,
+      selectedVersion: '3.1.10',
+      selectedVersionAdvisories: [advisory],
+    });
+    expect(problems).toEqual([
+      expect.objectContaining({ kind: 'feed-advisory', tone: 'warning', version: '3.1.10', url: advisory.url }),
+    ]);
+  });
+
+  it('marks a high advisory as an error rather than a warning', () => {
+    const [problem] = buildPackageProblems({
+      ...NO_MAPPING,
+      selectedVersion: '1.0.0',
+      selectedVersionAdvisories: [{ url: 'https://example.com/a', severity: 'high' }],
+    });
+    expect(problem).toMatchObject({ kind: 'feed-advisory', tone: 'error' });
+  });
+
+  it('does not repeat an advisory the restore-graph scan already reported', () => {
+    const problems = buildPackageProblems({
+      ...NO_MAPPING,
+      findings: [finding({ packageId: 'Pkg', url: advisory.url, id: 'GHSA-rxmq-m78w-7wmc' })],
+      selectedVersion: '3.1.10',
+      selectedVersionAdvisories: [advisory],
+    });
+    expect(problems.map((p) => p.kind)).toEqual(['vulnerability']);
+  });
+
+  it('still reports one the scan did not mention, which is a gap rather than a duplicate', () => {
+    const problems = buildPackageProblems({
+      ...NO_MAPPING,
+      findings: [finding({ packageId: 'Pkg', url: 'https://example.com/other' })],
+      selectedVersion: '3.1.10',
+      selectedVersionAdvisories: [advisory],
+    });
+    expect(problems.map((p) => p.kind)).toEqual(['vulnerability', 'feed-advisory']);
+  });
+
+  it('says nothing when the feed flags the selected version with no advisory', () => {
+    expect(buildPackageProblems({ ...NO_MAPPING, selectedVersion: '3.1.12' })).toEqual([]);
+  });
+});

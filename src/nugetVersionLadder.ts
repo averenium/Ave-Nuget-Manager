@@ -36,11 +36,12 @@ import {
   type CatalogVersionEntry,
   type RegistrationPage,
 } from './nugetRegistration';
-import type {
-  JsonFetcher,
-  ProbeTarget,
-  ProbedBaseType,
-  SourceCapabilityStore,
+import {
+  normalizeSourceKey,
+  type JsonFetcher,
+  type ProbeTarget,
+  type ProbedBaseType,
+  type SourceCapabilityStore,
 } from './nugetSourceCapabilities';
 import { SILENT_HTTP_LOG, type HttpLogSink } from './nugetHttpLog';
 
@@ -64,6 +65,19 @@ export interface VersionQuery {
    * difference between one document and a dozen.
    */
   version?: string;
+  /**
+   * The caller wants the newest version and nothing else, so only the page that
+   * can hold it is read.
+   *
+   * This is a **separate flag on purpose**, never inferred from `version` being
+   * absent. Three callers share this walk and only one of them wants a single
+   * version: the version list and the enrich answer both name no version and
+   * need every page. Reading "no version named" as "the newest will do" would
+   * quietly cut a package's history down to its most recent page for those two
+   * — and it would not fall back to the CLI, because a short answer still looks
+   * like a successful one.
+   */
+  newestOnly?: boolean;
   /**
    * Pre-releases are excluded unless asked for, which is what the CLI does
    * without `--prerelease`. Leaving them in by default would put a release
@@ -157,6 +171,27 @@ export function excerpt(preview: string | undefined, max = 400): string {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
+/**
+ * What makes two catalog walks the same walk.
+ *
+ * The scope has to be part of it. A walk for one named version reads the single
+ * page that covers it, and a walk for the whole history reads every page; they
+ * ask the same resource about the same package and return different things, so
+ * sharing one answer between them would hand somebody a catalog that is not the
+ * one they asked for.
+ */
+function walkKey(target: ProbeTarget, query: VersionQuery): string {
+  // JSON rather than a joined string: no separator can then collide with a
+  // character that is legal inside a URL or a package id.
+  return JSON.stringify([
+    normalizeSourceKey(target.url),
+    lowerId(query.packageId),
+    query.includePrerelease === true ? 'pre' : 'rel',
+    query.version?.trim() ?? '',
+    query.newestOnly ? 'newest' : 'all',
+  ]);
+}
+
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const out: string[] = [];
@@ -183,6 +218,13 @@ export class VersionLadder {
    * bytes that were parsed only once.
    */
   private readonly _pages = new WeakMap<object, RegistrationPage[]>();
+
+  /**
+   * Catalog walks in flight, by what makes a walk the same walk. Selecting a
+   * package asks for its version list and its details in the same tick, and
+   * both walk this document; without this the second one repeats the first.
+   */
+  private readonly _walks = new Map<string, Promise<CatalogVersionEntry[] | undefined>>();
   private readonly _entries = new WeakMap<object, CatalogVersionEntry[]>();
 
   /** The experimental flag; while it is off the ladder makes no request. */
@@ -311,6 +353,25 @@ export class VersionLadder {
     if (!this._isEnabled()) return undefined;
     if (!query.packageId.trim()) return undefined;
 
+    // Selecting a package asks for its version list and its details in the same
+    // tick, and both walk this document. The response cache already keeps that
+    // from being two downloads, but the walk itself ran twice: two index reads,
+    // two page loops, two sets of log rows. Sharing it here makes the second
+    // caller wait on the first instead of repeating it.
+    const key = walkKey(target, query);
+    const running = this._walks.get(key);
+    if (running) return running;
+
+    const walk = this._catalogWalk(target, query, signal).finally(() => this._walks.delete(key));
+    this._walks.set(key, walk);
+    return walk;
+  }
+
+  private async _catalogWalk(
+    target: ProbeTarget,
+    query: VersionQuery,
+    signal?: AbortSignal,
+  ): Promise<CatalogVersionEntry[] | undefined> {
     const capabilities = await this._capabilities.ensure(target, signal);
     if (capabilities.index !== 'ok') return undefined;
 
@@ -342,7 +403,12 @@ export class VersionLadder {
 
       const entries: CatalogVersionEntry[] = [];
       const wanted = query.version?.trim();
-      for (const page of pages) {
+      // Pages are published in ascending version order, so the newest version a
+      // package has is on the last of them. Asked for that alone, the rest of
+      // the history is a download nobody reads: measured at 1 MB across four
+      // pages where the last one, at 169 KB, held the answer.
+      const chosen = query.newestOnly && !wanted ? pages.slice(-1) : pages;
+      for (const page of chosen) {
         // A page whose stated range cannot hold the wanted version has nothing
         // to contribute, and skipping it skips a request.
         if (wanted && !pageMayHold(page, wanted)) continue;

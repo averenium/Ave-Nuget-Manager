@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Choosing a solution or project — design for #113</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px;
+    background: #181818; color: #cccccc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #e6e6e6; margin: 0 0 6px; }
+  .lede { color: #8a8a8a; font-size: 12px; margin: 0 0 26px; max-width: 74ch; }
+  h2 { font-size: 12px; font-weight: 400; color: #8a8a8a; margin: 30px 0 8px; }
+  .note { color: #6a6a6a; font-size: 11px; margin-top: 9px; max-width: 78ch; }
+  .note b { color: #9a9a9a; font-weight: 600; }
+
+  /* ── the panel chrome, exactly as it is today ───────────────────────────── */
+  .panel { width: 940px; background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 6px; overflow: hidden; }
+  .tabbar {
+    display: flex; align-items: center; gap: 2px;
+    background: #181818; border-bottom: 0.5px solid #2f2f2f; padding: 0 8px;
+  }
+  .tab { padding: 7px 10px; font-size: 12px; color: #8a8a8a; }
+  .tab.active { color: #e6e6e6; box-shadow: inset 0 -1px 0 #0078d4; }
+  .scope { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 8px; }
+  .scope.faint { color: #6a6a6a; }
+  .scope.action { color: #ffffff; background: #0e639c; border-radius: 3px; font-weight: 600; }
+  .scope.chosen { color: #cccccc; background: #2d2d2d; border-radius: 3px; }
+
+  .toolbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 8px; border-bottom: 0.5px solid #2f2f2f; background: #1f1f1f;
+  }
+  .iconbtn { width: 20px; height: 20px; border-radius: 3px; display: grid; place-items: center; color: #8a8a8a; font-size: 12px; }
+  .search { flex: 1 1 auto; border: 0.5px solid #3c3c3c; border-radius: 3px; padding: 3px 8px; color: #6a6a6a; font-size: 12px; }
+  .chip { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #9a9a9a; }
+  .chip.warn { color: #b58a4a; }
+  .checkbox { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #9a9a9a; }
+  .box { width: 12px; height: 12px; border: 1px solid #6a6a6a; border-radius: 2px; }
+
+  .body { display: flex; min-height: 250px; }
+  .list { width: 230px; border-right: 0.5px solid #2f2f2f; padding: 8px 0; }
+  .list .head { font-size: 11px; color: #8a8a8a; letter-spacing: .06em; padding: 3px 10px; }
+  .skel { height: 9px; border-radius: 2px; background: #2a2a2a; margin: 9px 10px; }
+  .skel.s1 { width: 96px; } .skel.s2 { width: 132px; } .skel.s3 { width: 74px; }
+  .skel.s4 { width: 118px; } .skel.s5 { width: 88px; }
+  .skel.right { width: 26px; float: right; margin-right: 10px; }
+  .detail { flex: 1 1 auto; display: grid; place-items: center; color: #6a6a6a; font-size: 12px; }
+
+  /* ── the chooser ────────────────────────────────────────────────────────── */
+  .chooser { flex: 1 1 auto; padding: 22px 26px; }
+  .chooser h3 { font-size: 14px; font-weight: 600; color: #e6e6e6; margin: 0 0 3px; }
+  .chooser p { margin: 0 0 16px; font-size: 12px; color: #8a8a8a; }
+  .cols { display: flex; gap: 22px; align-items: flex-start; }
+  .col-left { flex: 0 0 38%; min-width: 0; }
+  .col-right { flex: 1 1 auto; border-left: 0.5px solid #2f2f2f; padding-left: 22px; min-width: 0; }
+  .group { font-size: 11px; color: #8a8a8a; letter-spacing: .06em; margin: 0 0 5px; }
+  .group.later { margin-top: 16px; }
+  .opt {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px; border: 0.5px solid #2f2f2f; border-radius: 4px;
+    background: #232323; margin-bottom: 5px; min-width: 0;
+  }
+  .opt.first { border-color: #3a5878; background: #1e2a35; }
+  .opt.hover { border-color: #4a7ba8; background: #22303c; }
+  .opt.dim { opacity: .4; }
+  .opt .ico { width: 16px; text-align: center; color: #9a9a9a; flex: 0 0 16px; }
+  .opt .name { font-size: 13px; color: #e6e6e6; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opt .covers { font-size: 11px; color: #9a9a9a; flex: 0 0 auto; }
+  .opt .where { margin-left: auto; font-size: 11px; color: #6a6a6a; flex: 0 0 auto; }
+  .more { font-size: 12px; color: #4daafc; padding: 4px 10px; }
+  .chooser-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .chooser-head h3 { margin: 0; }
+  .back { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .back .btn { border: 0.5px solid #3c3c3c; border-radius: 3px; padding: 2px 9px; color: #cccccc; }
+  .back .kbd { font-size: 11px; color: #6a6a6a; }
+  .current { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #6a9955; }
+  .opt.current { border-color: #3a5c40; background: #1e2a20; }
+  .opt .mark { font-size: 11px; color: #6a9955; flex: 0 0 auto; }
+  .list.behind { opacity: .55; }
+  /* Beside the package list there is less width, so the project rows drop the
+     path and keep the two things that identify a project: name and frameworks. */
+  .chooser.tight .cols { gap: 16px; }
+  .chooser.tight .col-left { flex: 0 0 46%; }
+  .chooser.tight .col-right { padding-left: 16px; }
+  .chooser.tight .col-right .where { display: none; }
+  .chooser.tight .opt { padding: 6px 8px; gap: 8px; }
+  .search-inline { border: 0.5px solid #3c3c3c; border-radius: 3px; padding: 3px 8px; color: #6a6a6a; font-size: 12px; margin: 0 0 8px; }
+
+  .legend { margin-top: 10px; font-size: 11px; color: #6a6a6a; line-height: 1.8; max-width: 92ch; }
+  .legend b { color: #9a9a9a; font-weight: 600; }
+  .legend em { color: #b4b4b4; font-style: normal; }
+  .bad { color: #f14c4c; }
+  .ok { color: #6a9955; }
+</style>
+</head>
+<body>
+
+<h1>Choosing a solution or project — #113</h1>
+<p class="lede">
+  A folder holding several solutions <em>and</em> loose projects. The tab bar, the toolbar and the source chip are
+  drawn exactly as they are today; the proposal changes what the body says while there is no scope, and how the
+  corner control reads.
+</p>
+
+<h2>Today — four statements, none of them the one that matters</h2>
+
+<div class="panel">
+  <div class="tabbar">
+    <span class="tab active">Packages</span>
+    <span class="tab">Groups</span>
+    <span class="tab">Sources</span>
+    <span class="tab">Log</span>
+    <span class="tab">Agents</span>
+    <span class="scope faint">▤ Select project…</span>
+  </div>
+  <div class="toolbar">
+    <span class="iconbtn">◷</span>
+    <span class="iconbtn">⟳</span>
+    <span class="search">Search packages… (min 2 chars)</span>
+    <span class="chip warn">🔍 No sources selected ▾</span>
+    <span class="checkbox"><span class="box"></span> Pre-release</span>
+  </div>
+  <div class="body">
+    <div class="list">
+      <div class="head">INSTALLED</div>
+      <div><span class="skel right"></span><div class="skel s1"></div></div>
+      <div><span class="skel right"></span><div class="skel s2"></div></div>
+      <div><span class="skel right"></span><div class="skel s3"></div></div>
+      <div><span class="skel right"></span><div class="skel s4"></div></div>
+      <div><span class="skel right"></span><div class="skel s5"></div></div>
+      <div class="head" style="margin-top:14px">IMPLICIT</div>
+    </div>
+    <div class="detail">Select a package to see details</div>
+  </div>
+</div>
+
+<div class="legend">
+  <b class="bad">Skeletons</b> promise arriving data; nothing is loading and nothing can, so the animation is a lie.<br>
+  <b class="bad">“Select a package to see details”</b> advises an action that is impossible before a scope exists.<br>
+  <b class="bad">“No sources selected”</b> warns about the configuration chain of a scope that has not been chosen.<br>
+  <b class="bad">“Select project…”</b> is the only way forward, sits in the corner at the lowest contrast on screen,
+  and is named for one of the two kinds of thing it picks.
+</div>
+
+<h2>Proposed — two columns, and the package list not drawn at all</h2>
+
+<div class="panel">
+  <div class="tabbar">
+    <span class="tab active">Packages</span>
+    <span class="tab">Groups</span>
+    <span class="tab">Sources</span>
+    <span class="tab">Log</span>
+    <span class="tab">Agents</span>
+    <span class="scope action">▤ Solution or project…</span>
+  </div>
+  <div class="toolbar">
+    <span class="iconbtn">◷</span>
+    <span class="iconbtn">⟳</span>
+    <span class="search">Search packages… (min 2 chars)</span>
+    <span class="chip">🔍 Sources ▾</span>
+    <span class="checkbox"><span class="box"></span> Pre-release</span>
+  </div>
+  <div class="body">
+    <div class="chooser">
+      <h3>Choose what to manage</h3>
+      <p>This folder holds 3 solutions and 12 projects.</p>
+
+      <div class="cols">
+        <div class="col-left">
+          <div class="group">SOLUTIONS</div>
+          <div class="opt first">
+            <span class="ico">▤</span><span class="name">Example.Shop.sln</span>
+            <span class="covers">5 projects</span><span class="where">./</span>
+          </div>
+          <div class="opt hover">
+            <span class="ico">▤</span><span class="name">Example.Tools.slnx</span>
+            <span class="covers">3 projects</span><span class="where">tools/</span>
+          </div>
+          <div class="opt">
+            <span class="ico">▤</span><span class="name">Example.Legacy.sln</span>
+            <span class="covers">4 projects</span><span class="where">legacy/</span>
+          </div>
+
+          <div class="group later">EVERYTHING</div>
+          <div class="opt">
+            <span class="ico">🗀</span><span class="name">All 12 projects</span>
+            <span class="covers">ignores solution boundaries</span>
+          </div>
+        </div>
+
+        <div class="col-right">
+          <div class="group">OR ONE PROJECT — 12</div>
+          <div class="search-inline">Filter projects…</div>
+          <div class="opt dim"><span class="ico">▷</span><span class="name">Example.Shop.Api</span><span class="covers">net10.0</span><span class="where">src/api/</span></div>
+          <div class="opt dim"><span class="ico">▷</span><span class="name">Example.Shop.Core</span><span class="covers">net9.0 · net10.0</span><span class="where">src/core/</span></div>
+          <div class="opt dim"><span class="ico">▷</span><span class="name">Example.Shop.Workers</span><span class="covers">net10.0</span><span class="where">src/workers/</span></div>
+          <div class="opt"><span class="ico">▷</span><span class="name">Example.Tools.Cli</span><span class="covers">net10.0</span><span class="where">tools/cli/</span></div>
+          <div class="opt"><span class="ico">▷</span><span class="name">Example.Tools.Migrate</span><span class="covers">net10.0</span><span class="where">tools/migrate/</span></div>
+          <div class="opt"><span class="ico">▷</span><span class="name">Example.Tools.Shared</span><span class="covers">net9.0</span><span class="where">tools/shared/</span></div>
+          <div class="opt dim"><span class="ico">▷</span><span class="name">Example.Legacy.Web</span><span class="covers">net48</span><span class="where">legacy/web/</span></div>
+          <div class="more">▾ 5 more</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <b>Two axes, side by side.</b> Left: the groupings — solutions, then everything. Right: the projects themselves.
+  Neither is hidden behind the other, and the width goes to the only decision the panel needs.<br>
+  <b class="ok">The package list column is not drawn while there is no scope</b> — no headings for lists that cannot
+  exist, and nothing shimmering to promise data that is not coming. It returns unchanged the moment a scope is set.<br>
+  <b>Pointing at a solution shows what it holds.</b> Here <em>Example.Tools.slnx</em> is under the pointer and its
+  three projects stay lit while the rest dim. Which projects a solution covers is exactly what a reader is trying to
+  work out, and side-by-side columns are what make it showable at all.<br>
+  <b>Solutions first</b>, the one at the folder root ahead of the rest, then by depth, then by modification time.<br>
+  <b>Each option says what it covers</b> — the project count for a solution, “ignores solution boundaries” for the
+  folder, target frameworks for a project. That is what turns an ambiguous choice into an obvious one.
+</div>
+
+<h2>Second visit — the choice is remembered, and visibly so</h2>
+
+<div class="panel">
+  <div class="tabbar">
+    <span class="tab active">Packages</span>
+    <span class="tab">Groups</span>
+    <span class="tab">Sources</span>
+    <span class="tab">Log</span>
+    <span class="tab">Agents</span>
+    <span class="scope chosen">▤ Example.Shop.sln ▾</span>
+  </div>
+  <div class="toolbar">
+    <span class="iconbtn">◷</span>
+    <span class="iconbtn">⟳</span>
+    <span class="search">Search packages… (min 2 chars)</span>
+    <span class="chip">🔍 2 sources ▾</span>
+    <span class="checkbox"><span class="box"></span> Pre-release</span>
+  </div>
+  <div class="body">
+    <div class="list">
+      <div class="head">INSTALLED <span style="float:right;margin-right:10px;color:#6a6a6a">0/21</span></div>
+      <div class="skel s1"></div>
+      <div class="skel s2"></div>
+      <div class="skel s3"></div>
+      <div class="head" style="margin-top:14px">IMPLICIT <span style="float:right;margin-right:10px;color:#6a6a6a">0/39</span></div>
+    </div>
+    <div class="detail">Select a package to see details</div>
+  </div>
+</div>
+
+<div class="legend">
+  The scope of the previous visit is restored without asking, and the corner control shows which one — so the
+  restoration is visible and one click from being changed. <b>Here the skeletons are honest</b>: a scope exists and
+  the list really is loading, which is the whole difference from the first panel above.
+</div>
+
+<h2>Changing the scope later — the way back is on screen the whole time</h2>
+
+<div class="panel">
+  <div class="tabbar">
+    <span class="tab active">Packages</span>
+    <span class="tab">Groups</span>
+    <span class="tab">Sources</span>
+    <span class="tab">Log</span>
+    <span class="tab">Agents</span>
+    <span class="scope action">&#9636; Example.Shop.sln &#9662;</span>
+  </div>
+  <div class="toolbar">
+    <span class="iconbtn">&#9719;</span>
+    <span class="iconbtn">&#10227;</span>
+    <span class="search">Search packages&#8230; (min 2 chars)</span>
+    <span class="chip">&#128269; 2 sources &#9662;</span>
+    <span class="checkbox"><span class="box"></span> Pre-release</span>
+  </div>
+  <div class="body">
+    <div class="list behind">
+      <div class="head">INSTALLED <span style="float:right;margin-right:10px;color:#6a6a6a">0/21</span></div>
+      <div class="opt" style="margin:4px 8px;padding:4px 8px;background:transparent;border:none"><span class="name" style="font-size:12px">Newtonsoft.Json</span><span class="where">13.0.4</span></div>
+      <div class="opt" style="margin:4px 8px;padding:4px 8px;background:transparent;border:none"><span class="name" style="font-size:12px">Serilog</span><span class="where">4.1.0</span></div>
+      <div class="opt" style="margin:4px 8px;padding:4px 8px;background:transparent;border:none"><span class="name" style="font-size:12px">Serilog.Sinks.File</span><span class="where">6.0.0</span></div>
+      <div class="head" style="margin-top:12px">IMPLICIT <span style="float:right;margin-right:10px;color:#6a6a6a">0/39</span></div>
+    </div>
+    <div class="chooser tight" style="padding:18px 20px">
+      <div class="chooser-head">
+        <h3>Choose what to manage</h3>
+        <span class="back">
+          <span class="btn">&#8592; Keep Example.Shop.sln</span>
+          <span class="kbd">Esc</span>
+        </span>
+      </div>
+
+      <div class="cols">
+        <div class="col-left">
+          <div class="group">SOLUTIONS</div>
+          <div class="opt current">
+            <span class="ico">&#9636;</span><span class="name">Example.Shop.sln</span>
+            <span class="mark">&#10003; current</span><span class="where">./</span>
+          </div>
+          <div class="opt">
+            <span class="ico">&#9636;</span><span class="name">Example.Tools.slnx</span>
+            <span class="covers">3 projects</span><span class="where">tools/</span>
+          </div>
+          <div class="opt">
+            <span class="ico">&#9636;</span><span class="name">Example.Legacy.sln</span>
+            <span class="covers">4 projects</span><span class="where">legacy/</span>
+          </div>
+
+          <div class="group later">EVERYTHING</div>
+          <div class="opt">
+            <span class="ico">&#128448;</span><span class="name">All 12 projects</span>
+            <span class="covers">ignores solution boundaries</span>
+          </div>
+        </div>
+
+        <div class="col-right">
+          <div class="group">OR ONE PROJECT &#8212; 12</div>
+          <div class="search-inline">Filter projects&#8230;</div>
+          <div class="opt"><span class="ico">&#9655;</span><span class="name">Example.Shop.Api</span><span class="covers">net10.0</span><span class="where">src/api/</span></div>
+          <div class="opt"><span class="ico">&#9655;</span><span class="name">Example.Shop.Core</span><span class="covers">net9.0 &#183; net10.0</span><span class="where">src/core/</span></div>
+          <div class="opt"><span class="ico">&#9655;</span><span class="name">Example.Shop.Workers</span><span class="covers">net10.0</span><span class="where">src/workers/</span></div>
+          <div class="opt"><span class="ico">&#9655;</span><span class="name">Example.Tools.Cli</span><span class="covers">net10.0</span><span class="where">tools/cli/</span></div>
+          <div class="more">&#9662; 8 more</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <b>Three ways back, and none of them is a guess.</b> The button says what returning means by naming the scope it
+  returns to &#8212; <em>Keep Example.Shop.sln</em> &#8212; rather than saying <em>Cancel</em> and leaving the reader
+  to work out what that undoes. <kbd>Esc</kbd> does the same, and the corner control is a toggle: the press that
+  opened this closes it.<br>
+  <b class="ok">The package list stays on screen, dimmed.</b> That is the difference from the first-open state, and it
+  is deliberate: seeing the packages of the current scope behind the chooser is what makes it obvious that nothing
+  has been given up yet. An empty body here would read as though the scope had already been dropped.<br>
+  <b>The current scope is marked rather than hidden</b> &#8212; it stays in the list, checked, so the reader can see
+  where they are in the set of choices. Choosing it again simply closes the chooser.<br>
+  <b>Nothing is committed until a row is clicked.</b> Opening the chooser changes nothing; the reload happens on the
+  choice, which is also when the dimmed list is replaced.<br>
+  <b>Same layout as the first open</b>, so the second encounter needs no relearning: what changed is the header line
+  and the check mark, not the shape.
+</div>
+
+<h2>The long case — many projects, no solution</h2>
+
+<div class="panel">
+  <div class="body">
+    <div class="chooser">
+      <h3>Choose what to manage</h3>
+      <p>This folder holds 24 projects and no solution.</p>
+
+      <div class="cols">
+        <div class="col-left">
+          <div class="group">EVERYTHING</div>
+          <div class="opt first">
+            <span class="ico">🗀</span><span class="name">All 24 projects</span>
+            <span class="covers">no solution here</span>
+          </div>
+        </div>
+        <div class="col-right">
+          <div class="group">OR ONE PROJECT — 24</div>
+          <div class="search-inline">Filter projects…</div>
+          <div class="opt"><span class="ico">▷</span><span class="name">Example.Shop.Api</span><span class="covers">net10.0</span><span class="where">src/api/</span></div>
+          <div class="opt"><span class="ico">▷</span><span class="name">Example.Shop.Core</span><span class="covers">net9.0 · net10.0</span><span class="where">src/core/</span></div>
+          <div class="opt"><span class="ico">▷</span><span class="name">Example.Shop.Workers</span><span class="covers">net10.0</span><span class="where">src/workers/</span></div>
+          <div class="opt"><span class="ico">▷</span><span class="name">Example.Shop.Tests</span><span class="covers">net10.0</span><span class="where">tests/</span></div>
+          <div class="more">▾ 20 more</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  The same two columns hold when there is nothing to group by: the left one carries a single answer rather than a
+  list, and the right one keeps its place, so the layout does not rearrange itself between folders. Nothing dims
+  here — there is no solution to point at.
+</div>
+
+<p class="note">
+  <b>Not changed by this design:</b> the tab bar, the toolbar and its controls, the details area once a scope exists,
+  and the behaviour of the corner control after a choice — it still shows the current scope and still reopens the
+  picker. The package list column is unchanged too; it is simply absent while there is nothing it could list.
+</p>
+
+</body>
+</html>

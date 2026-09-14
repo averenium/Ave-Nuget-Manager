@@ -866,6 +866,63 @@ describe('WebviewMessageBroker', () => {
     expect(implicit.map((p: { id: string }) => p.id)).toEqual(['System.Text.Encodings.Web']);
   });
 
+  /**
+   * A database that matched nothing has only answered the CLI's question when
+   * the CLI would have read that same database — which is to say, when an audit
+   * source is configured. Without one the CLI reads each package source's
+   * registration instead, and the feed's own per-version advisories live there,
+   * not in the database. Treating the two as the same answer hid a real finding
+   * until the HTTP sources were switched off.
+   */
+  const auditResolver = (auditSources: Array<{ name: string; url: string; enabled: boolean }>) => ({
+    resolve: jest.fn().mockResolvedValue([
+      { filePath: '/p/nuget.config', sources: [], auditSources, credentialKeys: [] },
+    ]),
+  } as any);
+
+  it('still runs the CLI when the database matched nothing and no audit source is configured', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Example.App', '/p/App.csproj')],
+      implicit: [],
+    });
+    const fromDatabase = jest.fn().mockResolvedValue([]);
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), auditResolver([]), logger,
+      undefined, undefined, undefined, undefined, { fromDatabase },
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(fromDatabase).toHaveBeenCalled();
+    expect(backend.listVulnerable).toHaveBeenCalled();
+  });
+
+  it('trusts an empty database when an audit source is what the CLI would read too', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Example.App', '/p/App.csproj')],
+      implicit: [],
+    });
+    const fromDatabase = jest.fn().mockResolvedValue([]);
+
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(),
+      auditResolver([{ name: 'audit', url: 'https://audit.example/v3/index.json', enabled: true }]),
+      logger, undefined, undefined, undefined, undefined, { fromDatabase },
+    );
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(fromDatabase).toHaveBeenCalled();
+    expect(backend.listVulnerable).not.toHaveBeenCalled();
+  });
+
   it('falls back to the CLI when the database could not be read at all', async () => {
     const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
@@ -886,7 +943,13 @@ describe('WebviewMessageBroker', () => {
     expect(backend.listVulnerable).toHaveBeenCalled();
   });
 
-  it('treats an empty database answer as an answer, not as a reason to run the CLI', async () => {
+  /**
+   * Narrowed after a real miss: this used to hold for any configuration, and a
+   * package the CLI flags went unmarked because the database happened to match
+   * nothing. An empty answer is an answer only where the CLI reads that same
+   * database, which is to say where an audit source is configured.
+   */
+  it('treats an empty database answer as an answer where the CLI would read it too', async () => {
     const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
     backend.listAllForProject.mockResolvedValue({
@@ -895,7 +958,9 @@ describe('WebviewMessageBroker', () => {
     });
 
     const broker = new WebviewMessageBroker(
-      stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      stub, backend, makeSolutionParser(),
+      auditResolver([{ name: 'audit', url: 'https://audit.example/v3/index.json', enabled: true }]),
+      logger,
       undefined, undefined, undefined, undefined, { fromDatabase: async () => [] },
     );
     broker.attach();
@@ -4041,5 +4106,68 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       expect(backend.installPackage).not.toHaveBeenCalled();
     });
   });
+
+
+  /**
+   * The feed's per-version marks have to survive a second selection.
+   *
+   * A cache entry built by `getAllVersions` alone has no `metadataByVersion`,
+   * and the marks used to be read only from there. So the second selection
+   * reported "nothing is marked", the dropdown cleared its warnings, and the
+   * freshness check then kept the real answer from being fetched again — the ⚠
+   * stayed gone until the window was reloaded.
+   */
+  describe('version marks across repeated selections', () => {
+    const askTwice = async (backend: jest.Mocked<INuGetBackend>) => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      for (let i = 0; i < 2; i++) {
+        simulateMessage({
+          type: 'GET_ALL_VERSIONS',
+          packageId: 'Example.Client',
+          configFiles: ['a.config'],
+          prerelease: false,
+        });
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      return posted.filter((m) => m.type === 'ALL_VERSIONS') as Array<{
+        versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
+      }>;
+    };
+
+    it('reports the same marks the second time, from a cache that never saw a detailed search', async () => {
+      const backend = makeBackend();
+      backend.getAllVersions.mockResolvedValue({
+        versions: ['7.17.5', '7.17.4'],
+        versionFlags: { '7.17.5': { deprecation: 'Goes end of life.' } },
+      });
+
+      const sent = await askTwice(backend);
+
+      expect(sent).toHaveLength(2);
+      for (const message of sent) {
+        expect(message.versionFlags).toEqual({ '7.17.5': { deprecation: 'Goes end of life.' } });
+      }
+      // The second selection is served from cache, so the marks have to come
+      // from the entry rather than from another round trip.
+      expect(backend.getAllVersions).toHaveBeenCalledTimes(1);
+    });
+
+    it('still says nothing when the feed marks nothing', async () => {
+      const backend = makeBackend();
+      backend.getAllVersions.mockResolvedValue({ versions: ['1.0.0'], versionFlags: {} });
+
+      for (const message of await askTwice(backend)) {
+        expect(message.versionFlags).toBeUndefined();
+      }
+    });
+  });
+
 
 });

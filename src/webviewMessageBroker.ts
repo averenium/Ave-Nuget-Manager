@@ -130,6 +130,7 @@ import {
 } from './roslynSdkCap';
 import {
   AUDIT_SOURCES_HINT,
+  databaseSpeaksForTheCli,
   shouldRunDotnetListVulnerable,
 } from './vulnerabilityScanPolicy';
 import { findingsFromNuGetHttpCache, nugetHttpCacheDirs } from './nugetHttpCacheVdb';
@@ -224,6 +225,19 @@ interface CacheEntry {
   versions: string[];
   /** Per-version description/projectUrl/etc. from the same detailed search that built `versions` (#86) — absent when this entry only came from the lighter `getAllVersions` path. */
   metadataByVersion?: Record<string, import('./types').SearchedVersionMetadata>;
+  /**
+   * The feed's per-version marks, kept apart from `metadataByVersion` on
+   * purpose.
+   *
+   * They cannot simply be folded into that map: `_getSearchMetadata` reads any
+   * entry there as a complete search result, so a flags-only entry would cost
+   * that version its description the next time the Info panel asked (#86). But
+   * they must be kept *somewhere*, because an entry built by `getAllVersions`
+   * alone has no `metadataByVersion` at all — and without this the marks a
+   * selection had just shown were reported as "none" on the next selection,
+   * blanking the ⚠ in the version dropdown until the window was reloaded.
+   */
+  versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }>;
 }
 
 type RefreshOpts = {
@@ -1029,9 +1043,13 @@ export class WebviewMessageBroker {
   private _versionFlagsFor(
     entry: CacheEntry | undefined,
   ): Record<string, { vulnerable?: boolean; deprecation?: string }> | undefined {
-    if (!entry?.metadataByVersion) return undefined;
-    const out: Record<string, { vulnerable?: boolean; deprecation?: string }> = {};
-    for (const [v, m] of Object.entries(entry.metadataByVersion)) {
+    if (!entry) return undefined;
+    // Both halves are the same answer from the same feed, held apart only
+    // because one of them may not be written into `metadataByVersion`. An entry
+    // that has only ever been through `getAllVersions` carries the second half
+    // alone, and reporting "nothing is marked" for it blanks the dropdown.
+    const out: Record<string, { vulnerable?: boolean; deprecation?: string }> = { ...entry.versionFlags };
+    for (const [v, m] of Object.entries(entry.metadataByVersion ?? {})) {
       if (m.vulnerable || m.deprecation) out[v] = { vulnerable: m.vulnerable, deprecation: m.deprecation };
     }
     return Object.keys(out).length > 0 ? out : undefined;
@@ -1075,8 +1093,19 @@ export class WebviewMessageBroker {
           metadataByVersion[v] = { ...metadataByVersion[v], ...flags };
         }
         cached.metadataByVersion = metadataByVersion;
+        cached.versionFlags = versionFlags;
       } else {
-        this._cache.set(key, { latestVersion: versions[0] ?? '', sourceName: '', versions, fetchedAt: Date.now() });
+        // The marks travel on their own field rather than inside
+        // `metadataByVersion`, which must keep meaning "a full search result
+        // for this version". Without them here, the next selection read this
+        // entry, found nothing marked, and said so — blanking the dropdown.
+        this._cache.set(key, {
+          latestVersion: versions[0] ?? '',
+          sourceName: '',
+          versions,
+          versionFlags,
+          fetchedAt: Date.now(),
+        });
       }
 
       const changed = versions.length !== prev.length || versions.some((v, i) => v !== prev[i]);
@@ -2645,7 +2674,14 @@ export class WebviewMessageBroker {
         ).catch(() => undefined)
       : undefined;
 
-    if (fromDatabase) {
+    // An empty answer only settles the question when the CLI would have asked
+    // the same database. Without an audit source it reads package registration
+    // instead, which carries advisories the database need not have — so
+    // "nothing matched" there is not "nothing is wrong", and the CLI still runs.
+    const databaseSettlesIt = fromDatabase
+      && (fromDatabase.length > 0 || databaseSpeaksForTheCli(auditSources));
+
+    if (databaseSettlesIt) {
       this.logger.logCliOperation({
         timestamp: new Date(),
         kind: 'scan',
@@ -2659,6 +2695,21 @@ export class WebviewMessageBroker {
       });
       providers.push({ id: 'vulnerability-database', scan: async () => fromDatabase });
     } else if (runCli) {
+      if (fromDatabase) {
+        // Worth a row of its own: the database was reachable and matched
+        // nothing, and the reason the CLI still ran is not otherwise visible.
+        this.logger.logCliOperation({
+          timestamp: new Date(),
+          kind: 'scan',
+          command: 'vulnerability database matched nothing',
+          args: ['no audit source, so the CLI reads package registration instead'],
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          timedOut: false,
+          durationMs: 0,
+        });
+      }
       providers.push(new DotnetVulnerableProvider(this.backend));
     } else {
       this.logger.logCliOperation({

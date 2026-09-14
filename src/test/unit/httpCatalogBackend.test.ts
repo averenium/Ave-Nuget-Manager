@@ -661,3 +661,58 @@ describe('HttpCatalogBackend delegation', () => {
     ]);
   });
 });
+
+/**
+ * Which callers may narrow a paged history, and which must never.
+ *
+ * The details panel answers about one version and can read one page. The
+ * version list and the enrich answer must read every page, and if either ever
+ * starts narrowing, the picker silently loses a package's older versions —
+ * without failing, and so without falling back to the CLI. These cases pin
+ * that down at the caller, where the intent lives.
+ */
+describe('the scope each caller asks the catalog for', () => {
+  function recordingLadder(entries: CatalogVersionEntry[]) {
+    const queries: Array<{ version?: string; newestOnly?: boolean }> = [];
+    const ladder = {
+      catalogFromSource: async (_t: { url: string }, query: { version?: string; newestOnly?: boolean }) => {
+        queries.push({ version: query.version, newestOnly: query.newestOnly });
+        return entries;
+      },
+      versionsFromSource: async () => undefined,
+    } as unknown as VersionLadder;
+    return { ladder, queries };
+  }
+
+  const backendWith = (ladder: VersionLadder) => new HttpCatalogBackend(
+    cliStub({}).backend,
+    ladder,
+    capabilityStub([FEED_A]),
+    resolverFor({ 'a.config': httpOnly(FEED_A) }),
+    { isEnabled: () => true },
+  );
+
+  it('asks for every page when building the version list', async () => {
+    const { ladder, queries } = recordingLadder([entry('1.0.0'), entry('2.0.0')]);
+    await backendWith(ladder).getAllVersions('X', ['a.config']);
+    expect(queries).toEqual([{ version: undefined, newestOnly: undefined }]);
+  });
+
+  it('asks for every page when enriching', async () => {
+    const { ladder, queries } = recordingLadder([entry('1.0.0'), entry('2.0.0')]);
+    await backendWith(ladder).enrichPackage('X', ['a.config']);
+    expect(queries).toEqual([{ version: undefined, newestOnly: undefined }]);
+  });
+
+  it('narrows to the page holding the version the details panel names', async () => {
+    const { ladder, queries } = recordingLadder([entry('2.0.0')]);
+    await backendWith(ladder).getMetadata('X', '2.0.0', ['a.config']);
+    expect(queries).toEqual([{ version: '2.0.0', newestOnly: false }]);
+  });
+
+  it('narrows to the last page when the details panel names no version', async () => {
+    const { ladder, queries } = recordingLadder([entry('2.0.0')]);
+    await backendWith(ladder).getMetadata('X', '', ['a.config']);
+    expect(queries).toEqual([{ version: '', newestOnly: true }]);
+  });
+});

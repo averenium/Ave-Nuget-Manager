@@ -388,8 +388,12 @@ export class HttpCatalogBackend implements INuGetBackend {
       true,
       (entries) => !version || entries.some((e) => versionsEqual(e.version, version)),
       // Naming the version lets the reader fetch the one page that covers it
-      // instead of the whole paged history.
-      version,
+      // instead of the whole paged history. This method answers about exactly
+      // one version either way, so when none is named the newest will do — and
+      // that lives on the last page. The flag is set here, where the contract
+      // is known, and never derived inside the walk, which serves callers that
+      // do need every page.
+      { version, newestOnly: !version },
     );
     if (!found) return this._inner.getMetadata(packageId, version, configFiles);
 
@@ -452,9 +456,14 @@ export class HttpCatalogBackend implements INuGetBackend {
     configFiles: string[],
     prerelease: boolean,
     accept: (entries: CatalogVersionEntry[]) => boolean = (entries) => entries.length > 0,
-    version?: string,
+    /**
+     * How much of a paged history this caller needs. The default — nothing —
+     * is every page, which is what the version list and the enrich answer
+     * require; only a caller that answers about one version narrows it.
+     */
+    scope: { version?: string; newestOnly?: boolean } = {},
   ): Promise<{ entries: CatalogVersionEntry[]; sourceName: string } | undefined> {
-    const query = { packageId, includePrerelease: prerelease, version };
+    const query = { packageId, includePrerelease: prerelease, ...scope };
     const asked = new Set<string>();
     for (const configFile of configFiles) {
       let resolved: ResolvedConfigSources;

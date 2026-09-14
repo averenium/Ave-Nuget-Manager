@@ -16,11 +16,11 @@
  * at 3.1 and nothing new targets it. Sorting these badges by age would put a
  * dead moniker above a live one.
  */
-const FAMILY_MODERN = 0;
-const FAMILY_STANDARD = 1;
-const FAMILY_CORE = 2;
-const FAMILY_FRAMEWORK = 3;
-const FAMILY_OTHER = 4;
+export const FAMILY_MODERN = 0;
+export const FAMILY_STANDARD = 1;
+export const FAMILY_CORE = 2;
+export const FAMILY_FRAMEWORK = 3;
+export const FAMILY_OTHER = 4;
 
 export interface ParsedTargetFramework {
   family: number;

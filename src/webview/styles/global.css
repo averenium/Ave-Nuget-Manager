@@ -897,6 +897,14 @@ a.badge:hover { text-decoration: underline; }
 /* ── Dependencies section (#86) — declared range vs. resolved version, from project.assets.json ── */
 .dep-section__header { display: flex; justify-content: space-between; align-items: baseline; gap: var(--spacing-sm); }
 .dep-section__context { font-size: 11px; color: var(--color-tab-inactive); }
+/* Qualifies the rows above it rather than reporting anything, so it is quieter
+   than they are — same weight as `.pkg-info__elsewhere` (#114). */
+.dep-section__note {
+  font-size: 11px; color: var(--color-tab-inactive);
+  margin-top: var(--spacing-xs); line-height: 1.5;
+}
+.dep-section__note .badge { margin: 0 2px; }
+.dep-row--none { font-size: 12px; color: var(--color-tab-inactive); }
 /* Own container: the rows are a dense list, so they must not inherit the
    section's gap between every one of them. */
 .dep-list { display: flex; flex-direction: column; }
@@ -1606,6 +1614,23 @@ a.badge:hover { text-decoration: underline; }
   display: flex; flex-direction: column; gap: var(--spacing-xs);
   font-size: 12px;
 }
+/* The facts line under the version field (#114): publication date, where the
+   version sits in its own history, and the feed that answered. Quiet by
+   design — it qualifies the version above it rather than competing with it. */
+.version-facts {
+  font-size: 11px; color: var(--color-tab-inactive);
+  padding: 2px var(--spacing-md) 0;
+  display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline;
+}
+.version-facts__sep { opacity: 0.6; }
+/* Out of the flow, so however long the count grows it can never move the facts
+   to its left; `min-width: 0` on nothing here, because it never shrinks them
+   either — it is the part that gives way. */
+.version-facts__position {
+  margin-left: auto; padding-left: var(--spacing-sm);
+  font-size: 10px; opacity: 0.75; white-space: nowrap;
+}
+
 /* Batch licence confirmation (#89). One row per package whose licence moves;
    the checkbox keeps it in the batch, so the row has to stay readable as a
    single line at the popup's width. */
@@ -1944,3 +1969,13 @@ a.badge:hover { text-decoration: underline; }
   .sources-repo__actions { border-left-color: ButtonText; }
   .sources-popover { forced-color-adjust: none; border-color: ButtonText; }
 }
+
+/* The one-click correction under a feed advisory (#114). Inside the Problems
+   band, so it inherits the band's weight — it is an offer about what was just
+   reported, not a finding of its own. */
+.problems-band__offer { font-size: 12px; color: var(--color-fg); }
+.problems-band__pick {
+  padding: 0; border: 0; background: none; font: inherit; font-size: 11px;
+  color: var(--color-link); cursor: pointer;
+}
+.problems-band__pick:hover { text-decoration: underline; }

@@ -76,9 +76,11 @@ function scopeIdentityPath(scope: WorkspaceScope): string {
  * `enrichPackage` returns a description, authors and links for every version,
  * which the panel reads one version at a time and the package list never reads
  * at all. Sending that for each of a solution's packages would be a large
- * message carrying almost nothing the list can use, so only the two fields that
- * mark a version travel: what the feed calls vulnerable, and what it calls
- * deprecated. Versions the feed marks in neither way are left out entirely.
+ * message carrying almost nothing the list can use, so only the fields that say
+ * something about a version travel: what the feed calls vulnerable, what it
+ * calls deprecated, and when it says the version was published (#114 — the
+ * panel needs the newest version's date, which is not the version it fetched
+ * metadata for). Versions the feed says none of those about are left out.
  */
 export function feedFlags(
   metadataByVersion: Record<string, import('./types').SearchedVersionMetadata> | undefined,
@@ -86,11 +88,12 @@ export function feedFlags(
   if (!metadataByVersion) return undefined;
   const flags: Record<string, VersionFlag> = {};
   for (const [version, metadata] of Object.entries(metadataByVersion)) {
-    if (!metadata?.vulnerable && !metadata?.deprecation) continue;
+    if (!metadata?.vulnerable && !metadata?.deprecation && !metadata?.published) continue;
     flags[version] = {
       vulnerable: metadata.vulnerable,
       deprecation: metadata.deprecation,
       advisories: metadata.advisories,
+      published: metadata.published,
     };
   }
   return Object.keys(flags).length > 0 ? flags : undefined;

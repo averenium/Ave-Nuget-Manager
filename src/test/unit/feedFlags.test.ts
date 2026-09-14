@@ -30,12 +30,24 @@ describe('feedFlags', () => {
       },
     }));
     // `advisories` is part of the mark, not part of the rest: the panel names
-    // which advisory and how bad, and only the feed states that.
-    expect(Object.keys(flags!['1.0.0'])).toEqual(['vulnerable', 'deprecation', 'advisories']);
+    // which advisory and how bad, and only the feed states that. `published` is
+    // carried for the same reason — the panel needs the newest version's date
+    // and that is not the version it fetched metadata for (#114).
+    expect(Object.keys(flags!['1.0.0']))
+      .toEqual(['vulnerable', 'deprecation', 'advisories', 'published']);
   });
 
   it('says nothing at all when no version is marked', () => {
     expect(feedFlags(enriched({ '1.0.0': { description: 'plain' } }))).toBeUndefined();
+  });
+
+  it('keeps a version the feed only dated, which the facts line needs (#114)', () => {
+    // Nothing is wrong with a version for having a date, but the panel cannot
+    // say how long a package has gone without a release unless the date of the
+    // newest version travels — and that is not the version it fetched.
+    const flags = feedFlags(enriched({ '1.0.0': { published: '2024-05-01T10:00:00Z' } }));
+    expect(flags!['1.0.0'].published).toBe('2024-05-01T10:00:00Z');
+    expect(flags!['1.0.0'].vulnerable).toBeUndefined();
   });
 
   it('says nothing when the enrich answer carried no per-version data', () => {

@@ -68,6 +68,15 @@ export interface VersionFlag {
   advisories?: Array<{ url?: string; severity: VulnerabilitySeverity }>;
   /** Members the flag came from, in the order the family lists them (#92). Absent for a single package. */
   packages?: string[];
+  /**
+   * ISO 8601 publication date of this version (#114). Not a flag in the sense
+   * the others are — nothing is wrong with a version for having a date — but
+   * this record is what the feed said about each version, and the date arrives
+   * on the same entry at no cost. The details panel needs the newest version's
+   * date to say how long a package has gone without a release, and that version
+   * is not the one it fetched metadata for.
+   */
+  published?: string;
 }
 
 /**
@@ -140,6 +149,8 @@ export interface SearchedVersionMetadata {
    * not enough for the details panel to name the advisory or its severity.
    */
   advisories?: Array<{ url?: string; severity: VulnerabilitySeverity }>;
+  /** ISO 8601 publication date of this exact version (#114). Feed-only: the registration entry states it, and the version walk already has the page. */
+  published?: string;
 }
 
 export interface EnrichedPackageInfo {
@@ -204,6 +215,23 @@ export interface PackageMetadata {
   runtimeIdentifiers?: string[];
   /** This package's own dependency tree (declared range vs. resolved version), from `project.assets.json`. Installed packages only — a not-yet-installed package has no restore graph to read one from. */
   dependencyTree?: PackageDependencyInfo;
+  /**
+   * The dependency groups this version *declares*, per target framework (#114).
+   * Feed-only, and the counterpart to `dependencyTree` for a package that is not
+   * installed: these are ranges, and what restore picks inside them is not
+   * knowable until it runs. Kept even when the feed declares an empty group, so
+   * "declares nothing for this framework" can be told from "said nothing at all".
+   */
+  declaredDependencies?: DeclaredDependencyGroup[];
+  /** The feed that answered for this version (#114) — a fact about where the rest of this came from. */
+  sourceName?: string;
+}
+
+/** One `<group targetFramework>` as the feed declares it (#114). */
+export interface DeclaredDependencyGroup {
+  /** Absent on the group that applies to every framework. */
+  targetFramework?: string;
+  dependencies: Array<{ id: string; range?: string }>;
 }
 
 // ─────────────────────────────────────────────

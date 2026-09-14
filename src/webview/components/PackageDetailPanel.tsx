@@ -7,6 +7,7 @@ import { ProjectSelectionPopup } from './ProjectSelectionPopup';
 import { ProjectListSection } from './ProjectListSection';
 import { PackageAttributeColumn } from './PackageAttributeColumn';
 import { PackageDependenciesSection } from './PackageDependenciesSection';
+import { DeclaredDependenciesSection } from './DeclaredDependenciesSection';
 import { DetailHeader } from './DetailHeader';
 import { OperationProgressStrip } from './OperationProgressStrip';
 import { RoslynCapPopup } from './RoslynCapPopup';
@@ -23,6 +24,9 @@ import { IconCheck, IconInstall, IconTrash } from '../utils/icons';
 import { buildPackageProblems } from '../utils/packageProblems';
 import { resolveVersionSpread } from '../../packageResolvedVersions';
 import { LicenseSideText } from './LicenseSideText';
+import { versionFactsParts, versionPositionLabel } from '../utils/versionFacts';
+import { sortTargetFrameworksDesc } from '../../targetFrameworks';
+import { nearestUnaffectedVersion } from '../utils/nearestUnaffected';
 import type { VulnerabilityFinding } from '../../types';
 
 /** How long the version selection has to hold still before the licence question goes out (#89). */
@@ -181,6 +185,34 @@ export function PackageDetailPanel() {
     .find((p) => p.resolvedVersion === spread?.primary);
   // Only meaningful once installed — Install (not yet installed) has no
   // "from" version to compare against, so it keeps its own glyph (#55).
+  // The dates come from the version walk the picker already made, so this line
+  // costs nothing beyond the arithmetic (#114). `metadata.published` is the
+  // authority for the version on screen — it is the entry that was fetched for
+  // it — and the per-version record answers for every other version.
+  const publishedByVersion = Object.fromEntries(
+    Object.entries(state.detail.versionFlags).map(([v, flag]) => [v, flag.published]),
+  );
+  const versionFacts = versionFactsParts({
+    version: effectiveVersion,
+    published: metadata?.version === effectiveVersion
+      ? metadata.published ?? publishedByVersion[effectiveVersion]
+      : publishedByVersion[effectiveVersion],
+    allVersions,
+    publishedByVersion,
+    sourceName: metadata?.sourceName,
+  });
+  const versionPosition = versionPositionLabel(effectiveVersion, allVersions);
+
+  // Newest first, so the framework a declared-dependency group is looked up for
+  // is the one the workspace is most likely to care about.
+  const workspaceFrameworks = sortTargetFrameworksDesc(
+    [...new Set(Object.values(state.packages.projectFrameworks).flat())],
+  );
+
+  const nearestClean = nearestUnaffectedVersion(
+    allVersions, state.detail.versionFlags, effectiveVersion,
+  );
+
   const updateTone = isInstalled ? versionTone(installedFrom, effectiveVersion) : undefined;
   const updateGlyph = updateTone === 'down' ? '↓' : updateTone === 'same' ? '=' : '↑';
   const updateTitle = updatesBlocked
@@ -481,6 +513,28 @@ export function PackageDetailPanel() {
         </div>
       </DetailHeader>
 
+      {/* Drawn only when the feed answered something: with the catalog off, on a
+          local folder source, or on a feed with no metadata resource, the panel
+          stays exactly as it was — no placeholders, no "unknown" (#114). */}
+      {(versionFacts.length > 0 || versionPosition) && (
+        <div className="version-facts">
+          {versionFacts.map((part, at) => (
+            <React.Fragment key={part}>
+              {at > 0 && <span className="version-facts__sep" aria-hidden="true">·</span>}
+              <span>{part}</span>
+            </React.Fragment>
+          ))}
+          {/* Pushed to the end and out of the flow: it is the least of these
+              facts and the longest to say, so in the line it moved the text the
+              reader is actually following. */}
+          {versionPosition && (
+            <span className="version-facts__position" title={versionPosition.full}>
+              {versionPosition.short}
+            </span>
+          )}
+        </div>
+      )}
+
       {(error || isLoading || !metadataSettled) && (
         <div className="detail-panel__status">
           {error && <span className="detail-panel__error" role="alert">{error}</span>}
@@ -609,6 +663,24 @@ export function PackageDetailPanel() {
                     );
                   })}
                 </ul>
+                {/* Every entry is already in memory, so the nearest version the
+                    advisory does not cover is free to work out — and turns a
+                    warning into something the reader can act on in one click
+                    (#114). Offered only alongside a feed advisory: the scan's
+                    own findings are about what is installed and are answered by
+                    the update button, not by moving the picker. */}
+                {nearestClean && problems.some((p) => p.kind === 'feed-advisory') && (
+                  <div className="problems-band__offer">
+                    <span aria-hidden="true">↑</span>{' '}
+                    <strong>{nearestClean}</strong> is the nearest version this advisory does not cover
+                    {' '}
+                    <button
+                      type="button"
+                      className="problems-band__pick"
+                      onClick={() => setSelectedVersion(nearestClean)}
+                    >pick it</button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -640,7 +712,18 @@ export function PackageDetailPanel() {
         </div>
       )}
 
-      {metadata?.dependencyTree && <PackageDependenciesSection info={metadata.dependencyTree} />}
+      {/* The resolved tree when there is a restore graph to read one from, and
+          what the version declares when there is not (#114). Never both: they
+          answer the same question, and the declared ranges are the weaker
+          answer — kept only until an install produces the real one. */}
+      {metadata?.dependencyTree
+        ? <PackageDependenciesSection info={metadata.dependencyTree} />
+        : metadata?.declaredDependencies && (
+          <DeclaredDependenciesSection
+            groups={metadata.declaredDependencies}
+            projectFrameworks={workspaceFrameworks}
+          />
+        )}
 
       {/* ── Popup ── */}
       {splitConfirm && (

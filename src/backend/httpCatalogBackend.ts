@@ -87,7 +87,11 @@ function flagsFrom(entry: CatalogVersionEntry): SearchedVersionMetadata | undefi
  * owners, the repository — is absent from search too, so this is no loss
  * against what runs today; the package's own nuspec is where those live.
  */
-function toPackageMetadata(packageId: string, entry: CatalogVersionEntry): PackageMetadata {
+function toPackageMetadata(
+  packageId: string,
+  entry: CatalogVersionEntry,
+  sourceName?: string,
+): PackageMetadata {
   return {
     id: packageId,
     version: entry.version,
@@ -99,6 +103,15 @@ function toPackageMetadata(packageId: string, entry: CatalogVersionEntry): Packa
     tags: entry.tags ?? [],
     published: entry.published,
     deprecation: entry.deprecation ? deprecationText(entry.deprecation) : undefined,
+    // Ranges, not resolved versions — the counterpart to the restore graph's
+    // tree for a package nothing has installed (#114). Carried verbatim,
+    // including a group the feed declares empty, which says something a missing
+    // group does not.
+    declaredDependencies: entry.dependencyGroups?.map((group) => ({
+      targetFramework: group.targetFramework,
+      dependencies: group.dependencies.map((d) => ({ id: d.id, range: d.range })),
+    })),
+    sourceName,
   };
 }
 
@@ -418,7 +431,7 @@ export class HttpCatalogBackend implements INuGetBackend {
     // download to waste.
     const entry = (version ? sorted.find((e) => versionsEqual(e.version, version)) : undefined) ?? sorted[0];
     if (!entry) return this._inner.getMetadata(packageId, version, configFiles);
-    return toPackageMetadata(packageId, entry);
+    return toPackageMetadata(packageId, entry, found.sourceName);
   }
 
   /**
@@ -448,6 +461,7 @@ export class HttpCatalogBackend implements INuGetBackend {
         licenseUrl: entry.licenseUrl,
         license: entry.licenseExpression ? { type: 'expression', value: entry.licenseExpression } : undefined,
         tags: entry.tags?.join(' '),
+        published: entry.published,
         ...flagsFrom(entry),
       };
     }

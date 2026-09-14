@@ -318,6 +318,8 @@ describe('HttpCatalogBackend filling the details panel', () => {
       projectUrl: 'https://example.com/',
       licenseUrl: 'https://licenses.example/MIT',
       license: { type: 'expression', value: 'MIT' },
+      declaredDependencies: undefined,
+      sourceName: 'example-feed',
       description: 'A library.',
       tags: ['json', 'serializer'],
       published: '2024-05-01T10:00:00Z',

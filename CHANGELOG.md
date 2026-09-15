@@ -19,6 +19,7 @@
 
 - A deprecated installed version now says why in the details panel and carries a mark in the package list
 - **Packages**: a leading or trailing space in the search box no longer empties every list (#120)
+- The version picker and source filter lists are opaque, so text behind them no longer shows through the rows (#112)
 
 ## 0.8.0
 

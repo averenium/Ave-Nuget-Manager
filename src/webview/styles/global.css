@@ -8,6 +8,14 @@
   --color-border:       var(--vscode-panel-border, #3c3c3c);
   --color-input-bg:     var(--vscode-input-background, #3c3c3c);
   --color-input-fg:     var(--vscode-input-foreground, #d4d4d4);
+  /*
+   * `input.background` describes a field sitting on an opaque surface, so a
+   * theme is free to give it alpha — nothing behind an inline input can show
+   * through it. A list floating over other content is a different kind of
+   * surface and needs a token meant for one, or the text underneath shows
+   * through the rows (#112).
+   */
+  --color-dropdown-bg:  var(--vscode-dropdown-background, var(--vscode-editorWidget-background, var(--color-bg)));
   --color-btn-bg:       var(--vscode-button-background, #0e639c);
   --color-btn-fg:       var(--vscode-button-foreground, #ffffff);
   --color-btn-hover:    var(--vscode-button-hoverBackground, #1177bb);
@@ -473,8 +481,9 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   max-height: min(200px, calc(100vh - 48px));
   overflow-x: hidden;
   overflow-y: auto;
-  background: var(--color-input-bg); border: 1px solid var(--color-border);
+  background: var(--color-dropdown-bg); border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
 }
 .source-filter__item {
   display: flex; align-items: center; gap: var(--spacing-xs);
@@ -579,8 +588,9 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   min-width: 0; max-width: 100%;
   max-height: min(200px, 40vh);
   overflow-x: hidden; overflow-y: auto;
-  background: var(--color-input-bg); border: 1px solid var(--color-border);
+  background: var(--color-dropdown-bg); border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
 }
 .version-select__option {
   display: block; width: 100%;
@@ -941,8 +951,9 @@ a.badge:hover { text-decoration: underline; }
   position: absolute; right: 0; top: 100%; z-index: 20;
   margin: 2px 0 0; padding: 3px 0; list-style: none;
   min-width: 160px; max-height: 240px; overflow-y: auto;
-  background: var(--color-input-bg); border: 1px solid var(--color-border);
+  background: var(--color-dropdown-bg); border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
 }
 .dep-section__option {
   display: block; width: 100%; text-align: left;

@@ -3,6 +3,8 @@
  * All operations are case-insensitive.
  */
 
+import type { AvailablePackage } from '../../types';
+
 export { compareSemVer } from '../../semver';
 
 /**
@@ -18,6 +20,42 @@ export { compareSemVer } from '../../semver';
  */
 export function normalizeQuery(query: string): string {
   return query.trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Whether a search answer for `answerQuery` is still about what the search
+ * box holds now (#121). The debounce that fires a search does not cancel the
+ * one before it, so two answers can be in flight at once and need not land in
+ * order — a slower, older one must not overwrite a newer one just because it
+ * arrives later. Comparing the normalised text is enough to tell them apart;
+ * nothing separate needs to be kept to track what was last asked, since the
+ * box itself already is that record.
+ */
+export function answersCurrentQuery(answerQuery: string, boxQuery: string): boolean {
+  return normalizeQuery(answerQuery) === normalizeQuery(boxQuery);
+}
+
+/**
+ * What a `SEARCH_RESULTS` answer does to the Packages tab's search state
+ * (#121), kept out of the reducer so it can be tested: the repository has no
+ * React harness, and this is where a stale answer could go wrong — either by
+ * overwriting a newer answer's results, or by stopping a spinner a still-
+ * outstanding newer search is holding open.
+ *
+ * A stale answer changes nothing at all, `isSearching` included: whichever
+ * answer actually matches the box will clear it on its own turn, so this
+ * function must not clear it out from under a still-outstanding newer search,
+ * and must not need to — anything already resolved (an empty answer for a box
+ * that dropped below the search threshold, for instance) has already cleared
+ * it by matching on its own turn.
+ */
+export function applySearchResults<T extends {
+  searchQuery: string;
+  isSearching: boolean;
+  available: AvailablePackage[];
+}>(state: T, answer: { query: string; packages: AvailablePackage[] }): T {
+  if (!answersCurrentQuery(answer.query, state.searchQuery)) return state;
+  return { ...state, available: answer.packages, isSearching: false };
 }
 
 // ─── Abbreviation expansions ──────────────────────────────────────────────────

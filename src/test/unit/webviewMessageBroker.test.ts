@@ -1508,6 +1508,43 @@ describe('WebviewMessageBroker', () => {
     expect(result?.packages[0].id).toBe('Newtonsoft.Json');
   });
 
+  it('still answers with an empty result when there is no scope to search yet (#121)', async () => {
+    // Mid a scope switch, getCurrentScope() can answer null for a request
+    // that already went out. Silently dropping it left the webview's spinner
+    // with nothing that would ever clear it.
+    const { stub, posted, simulateMessage } = makeProvider(undefined);
+    const backend = makeBackend();
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'SEARCH_PACKAGES', query: 'New', configFiles: [], enabledSourceNames: ['nuget.org'] });
+    await waitFor(() => posted.some((m) => m.type === 'SEARCH_RESULTS'));
+
+    const result = posted.find((m) => m.type === 'SEARCH_RESULTS') as any;
+    expect(result?.query).toBe('New');
+    expect(result?.packages).toEqual([]);
+    expect(backend.searchPackages).not.toHaveBeenCalled();
+  });
+
+  it('answers a failed search with an ERROR the webview recognises as a search failure (#121)', async () => {
+    // The reducer only clears the search spinner for this exact message, so
+    // a search that throws must not leave the webview with no answer at all
+    // (it previously sent nothing on the CLI/HTTP failure path either).
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.searchPackages.mockRejectedValue(new Error('feed unreachable'));
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'SEARCH_PACKAGES', query: 'New', configFiles: ['/a/nuget.config'], enabledSourceNames: ['nuget.org'] });
+    await waitFor(() => posted.some((m) => m.type === 'ERROR'));
+
+    const error = posted.find((m) => m.type === 'ERROR') as any;
+    expect(error?.message).toBe('Search failed');
+  });
+
   it('trims the query before asking the backend, regardless of what the box holds (#120)', async () => {
     // Measured: a leading space reached `dotnet package search` as part of the
     // id being looked for. Trimmed once here so the CLI and HTTP backends agree

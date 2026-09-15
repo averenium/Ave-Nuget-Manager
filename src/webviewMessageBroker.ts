@@ -1057,7 +1057,14 @@ export class WebviewMessageBroker {
   ): Promise<void> {
     // Resolve config files from current scope — not from webview payload
     const scope = this.provider.getCurrentScope();
-    if (!scope) return;
+    if (!scope) {
+      // No scope to search yet (mid switch, most likely) — still answer, or
+      // the webview's spinner has nothing left to clear it (#121). A stale
+      // reply is harmless: the reducer already drops an answer to a query
+      // the box has since moved on from.
+      this.provider.postMessage({ type: 'SEARCH_RESULTS', query, packages: [] });
+      return;
+    }
 
     const startDir = this._scopeStartDir(scope) ?? '';
 

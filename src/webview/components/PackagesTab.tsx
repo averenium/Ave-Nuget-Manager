@@ -59,6 +59,7 @@ export function PackagesTab() {
   const doSearch = useCallback(
     (q: string, sources: string[], pr: boolean) => {
       if (normalizeQuery(q).length < MIN_QUERY_LEN) return;
+      dispatch({ type: 'SEARCH_STARTED' });
       send({
         type: 'SEARCH_PACKAGES',
         query: q,
@@ -66,7 +67,7 @@ export function PackagesTab() {
         prerelease: pr,
       });
     },
-    [send],
+    [send, dispatch],
   );
 
   const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {

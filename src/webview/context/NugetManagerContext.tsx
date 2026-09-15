@@ -3,6 +3,7 @@ import { compareSemVer } from '../../semver';
 import { fileNameNoExt } from '../utils/pathUtils';
 import { pathsEqual, packageIdsEqual } from '../../pathCompare';
 import { formatBatchUpdateError, preserveInstalledEnrichment } from '../../batchUpdates';
+import { applySearchResults } from '../utils/search';
 import type {
   WorkspaceScope,
   InstalledPackage,
@@ -244,6 +245,8 @@ export type Action =
   | { type: 'SET_TAB'; tab: AppState['activeTab'] }
   | { type: 'MSG'; msg: ExtensionMessage }
   | { type: 'SET_SEARCH_QUERY'; query: string }
+  /** A search request has actually gone out to the backend (#121). */
+  | { type: 'SEARCH_STARTED' }
   | { type: 'SET_SELECTED_SOURCES'; sources: string[] }
   | { type: 'SET_PRERELEASE'; prerelease: boolean }
   | { type: 'SELECT_PACKAGE'; packageId: string }
@@ -275,6 +278,12 @@ function reduceAppState(state: AppState, action: Action): AppState {
       return {
         ...state,
         packages: { ...state.packages, searchQuery: action.query },
+      };
+
+    case 'SEARCH_STARTED':
+      return {
+        ...state,
+        packages: { ...state.packages, isSearching: true },
       };
 
     case 'SET_SELECTED_SOURCES':
@@ -594,10 +603,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
     }
 
     case 'SEARCH_RESULTS':
-      return {
-        ...state,
-        packages: { ...state.packages, available: msg.packages, isSearching: false },
-      };
+      return { ...state, packages: applySearchResults(state.packages, msg) };
 
     case 'PACKAGE_METADATA':
       return {
@@ -707,6 +713,12 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       const text = [msg.message, msg.details].filter(Boolean).join('\n');
       const isListRefresh = msg.message === 'Failed to refresh package list';
       const isRestore = msg.message === 'Restore failed';
+      // A failed search never sends SEARCH_RESULTS (#121) — without this, a
+      // search that throws leaves the spinner on until some later search
+      // happens to succeed. Gated on the message so an unrelated error
+      // passing through here doesn't turn off a spinner for a search that's
+      // still genuinely running.
+      const isSearch = msg.message === 'Search failed';
       if (isRestore) {
         return {
           ...state,
@@ -717,7 +729,11 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       return {
         ...state,
         globalError: isListRefresh ? (state.globalError ?? text) : state.globalError,
-        packages: { ...state.packages, isLoadingPackages: false },
+        packages: {
+          ...state.packages,
+          isLoadingPackages: false,
+          isSearching: isSearch ? false : state.packages.isSearching,
+        },
         detail: {
           ...state.detail,
           isLoading: false,

@@ -21,6 +21,10 @@ export function searchedMetadataToPackageMetadata(
     licenseUrl: m.licenseUrl,
     license: m.license,
     description: m.description ?? '',
+    // Feed-only and easy to lose here: the cache holds the date, and this is the
+    // one conversion between what the feed said and what the panel reads (#114).
+    published: m.published,
+    declaredDependencies: m.declaredDependencies,
     tags: m.tags ? m.tags.split(/[\s,]+/).filter(Boolean) : [],
     deprecation: m.deprecation,
   };

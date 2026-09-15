@@ -1,4 +1,6 @@
 import type { VersionFlag } from '../../types';
+import { versionsEqual } from '../../semver';
+import { flagsForVersion } from './versionFlags';
 
 /**
  * The nearest version above the selected one that the feed flags no advisory
@@ -21,12 +23,15 @@ export function nearestUnaffectedVersion(
   versionFlags: Record<string, VersionFlag>,
   selectedVersion: string,
 ): string | undefined {
-  const selectedAt = allVersions.indexOf(selectedVersion);
+  // The picker's list and the version on screen can come from different places
+  // and spell the same version differently (`1.0` against `1.0.0`), which an
+  // index lookup reads as "not in the list" and answers nothing to.
+  const selectedAt = allVersions.findIndex((v) => versionsEqual(v, selectedVersion));
   if (selectedAt <= 0) return undefined;
   // Walking up from the selected version reaches the smallest step first.
   for (let at = selectedAt - 1; at >= 0; at -= 1) {
     const version = allVersions[at];
-    if (!versionFlags[version]?.advisories?.length) return version;
+    if (!flagsForVersion(versionFlags, version)?.advisories?.length) return version;
   }
   return undefined;
 }

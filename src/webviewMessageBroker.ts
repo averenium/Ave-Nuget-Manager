@@ -25,6 +25,7 @@ import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
 import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, ImplicitPackage, PackageSource, VulnerabilityFinding, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile, VersionFlag } from './types';
 import type { PackageLicense } from './types';
 import { licenseChange } from './packageLicense';
+import { isEmptyDiff, versionDependencyDiff } from './packageVersionDiff';
 import { versionsEqual } from './semver';
 import { isCliOperationSuccess, summarizeDotnetFailure, cliOutputText, mergeCliResults } from './dotnetOutput';
 import { mergeFindings } from './vulnerabilities';
@@ -564,22 +565,24 @@ export class WebviewMessageBroker {
         await this._handleGetMetadata(msg.packageId, msg.version, msg.configFiles, msg.projectPath);
         break;
 
-      case 'GET_LICENSE_CHANGE': {
+      case 'GET_VERSION_DIFF': {
         // One question at a time: scrolling the version list asks about every
         // version it passes, and each may cost a request to the feed. The
         // answer to a version already left behind is of no use to anyone, so
         // the previous lookup is dropped rather than raced.
         this._cancelLicenseLookup();
         const signal = this._licenseAbort.signal;
-        const change = await this._licenseChangeFor(
-          msg.packageId, msg.version, msg.configFiles, signal,
-        );
+        const [license, dependencies] = await Promise.all([
+          this._licenseChangeFor(msg.packageId, msg.version, msg.configFiles, signal),
+          this._dependencyDiffFor(msg.packageId, msg.version, msg.configFiles),
+        ]);
         if (signal.aborted) break;
         this.provider.postMessage({
-          type: 'LICENSE_CHANGE',
+          type: 'VERSION_DIFF',
           packageId: msg.packageId,
           version: msg.version,
-          change,
+          license,
+          dependencies,
         });
         break;
       }
@@ -1061,9 +1064,14 @@ export class WebviewMessageBroker {
     const configChain = await this.configResolver.resolve(startDir);
     const configFiles = searchableConfigFiles(configChain);
 
+    // Trimmed once, here, above both backends (#120) — the webview keeps
+    // whatever the reader typed in the box, and without this a leading space
+    // reached `dotnet package search` as part of the id being looked for.
+    const trimmedQuery = query.trim();
+
     try {
       const packages = await this.backend.searchPackages(
-        query, configFiles, enabledSourceNames, prerelease,
+        trimmedQuery, configFiles, enabledSourceNames, prerelease,
       );
       this.provider.postMessage({ type: 'SEARCH_RESULTS', query, packages });
     } catch (err) {
@@ -1168,6 +1176,54 @@ export class WebviewMessageBroker {
     }
   }
 
+  /**
+   * What taking the selected version would change about the dependencies (#114).
+   *
+   * Both versions' groups come out of the same registration pages the version
+   * walk already made, so this asks the cache and never the feed — which is why
+   * it can ride along with the licence question instead of being a request of
+   * its own.
+   */
+  /**
+   * The installed entry the panel says it is describing.
+   *
+   * A solution resolves a package per project and those versions differ, so
+   * taking whichever entry the CLI listed first would compare against a version
+   * that is not on screen — the case `resolveVersionSpread` exists for
+   * (#90, #115).
+   */
+  private _installedEntryFor(
+    packageId: string,
+  ): { resolvedVersion: string; projectPath: string } | undefined {
+    const direct = this._lastListed?.installed.filter((p) => packageIdsEqual(p.id, packageId)) ?? [];
+    const transitive = this._lastListed?.implicit.filter((p) => packageIdsEqual(p.id, packageId)) ?? [];
+    const spread = resolveVersionSpread(direct, transitive);
+    return [...direct, ...transitive].find((p) => p.resolvedVersion === spread?.primary);
+  }
+
+  private async _dependencyDiffFor(
+    packageId: string,
+    selectedVersion: string,
+    configFiles: string[],
+  ): Promise<import('./packageVersionDiff').VersionDependencyDiff | undefined> {
+    const installedEntry = this._installedEntryFor(packageId);
+    if (!installedEntry) return undefined;
+    if (versionsEqual(installedEntry.resolvedVersion, selectedVersion)) return undefined;
+
+    const [before, after] = await Promise.all([
+      this._getSearchMetadata(packageId, installedEntry.resolvedVersion, configFiles)
+        .then((m) => m.declaredDependencies).catch(() => undefined),
+      this._getSearchMetadata(packageId, selectedVersion, configFiles)
+        .then((m) => m.declaredDependencies).catch(() => undefined),
+    ]);
+
+    const frameworks = [...new Set(
+      Object.values(this._lastListed?.projectFrameworks ?? {}).flat(),
+    )];
+    const diff = versionDependencyDiff(before, after, frameworks);
+    return isEmptyDiff(diff) ? undefined : diff;
+  }
+
   private async _licenseChangeFor(
     packageId: string,
     selectedVersion: string,
@@ -1176,15 +1232,7 @@ export class WebviewMessageBroker {
   ): Promise<import('./packageLicense').LicenseChange | undefined> {
     if (!selectedVersion) return undefined;
 
-    // The same version the panel says it is describing. A solution resolves a
-    // package per project and those versions differ, so taking whichever entry
-    // the CLI listed first would compare against a version that is not on
-    // screen — the case `resolveVersionSpread` exists for (#90, #115).
-    const direct = this._lastListed?.installed.filter((p) => packageIdsEqual(p.id, packageId)) ?? [];
-    const transitive = this._lastListed?.implicit.filter((p) => packageIdsEqual(p.id, packageId)) ?? [];
-    const spread = resolveVersionSpread(direct, transitive);
-    const installedEntry = [...direct, ...transitive]
-      .find((p) => p.resolvedVersion === spread?.primary);
+    const installedEntry = this._installedEntryFor(packageId);
     if (!installedEntry) return undefined;
     if (versionsEqual(installedEntry.resolvedVersion, selectedVersion)) return undefined;
 
@@ -1306,12 +1354,49 @@ export class WebviewMessageBroker {
     const cachedEntry = cacheFresh && wantVersion ? cached?.metadataByVersion?.[wantVersion] : undefined;
 
     if (cachedEntry && wantVersion) {
+      this._logCacheAnswer('Metadata', packageId, [
+        wantVersion,
+        cachedEntry.published ? `published ${cachedEntry.published}` : 'no publication date',
+        cachedEntry.license ? `licence ${cachedEntry.license.type}` : 'no licence',
+      ], Date.now() - (cached?.fetchedAt ?? 0));
       return searchedMetadataToPackageMetadata(packageId, wantVersion, cachedEntry);
     }
     return this.backend.getMetadata(packageId, version ?? '', configFiles);
   }
 
-  /** Vulnerable/deprecated marks for the version dropdown (#86) — undefined when nothing is flagged, so the message stays lean in the common case. */
+  /**
+   * An answer served from this broker's own cache (#114 diagnosis).
+   *
+   * This cache sits above the HTTP cache and the backend both, so when it
+   * answers, neither of them has anything to record and the log shows the
+   * request arriving and nothing after it — which reads as "the HTTP path is
+   * not being logged" rather than "no request was made". The row says what was
+   * served, not merely that something was: the question these rows exist to
+   * answer is why a field is empty, and "37 versions, 0 dated" answers it where
+   * "answered from cache" does not.
+   */
+  private _logCacheAnswer(what: string, packageId: string, details: string[], ageMs: number): void {
+    this.logger.logCliOperation({
+      timestamp: new Date(),
+      kind: 'info',
+      command: `${what} answered from cache: ${packageId}`,
+      args: [...details, `age: ${Math.round(ageMs / 1000)}s`, `ttl: ${Math.round(getConfig().cacheTtlMs / 1000)}s`],
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+      durationMs: 0,
+    });
+  }
+
+  /**
+   * What the feed said about each version (#86, #114) — undefined when it said
+   * nothing about any of them, so the message stays lean in the common case.
+   *
+   * Marks for the dropdown, and the publication date for the panel: the panel
+   * dates whatever version is picked, which is usually not the version metadata
+   * was fetched for, so the dates have to travel with the list.
+   */
   private _versionFlagsFor(
     entry: CacheEntry | undefined,
   ): Record<string, VersionFlag> | undefined {
@@ -1322,8 +1407,14 @@ export class WebviewMessageBroker {
     // alone, and reporting "nothing is marked" for it blanks the dropdown.
     const out: Record<string, VersionFlag> = { ...entry.versionFlags };
     for (const [v, m] of Object.entries(entry.metadataByVersion ?? {})) {
-      if (m.vulnerable || m.deprecation) {
-        out[v] = { vulnerable: m.vulnerable, deprecation: m.deprecation, advisories: m.advisories };
+      if (m.vulnerable || m.deprecation || m.published) {
+        out[v] = {
+          ...out[v],
+          vulnerable: m.vulnerable,
+          deprecation: m.deprecation,
+          advisories: m.advisories,
+          published: m.published ?? out[v]?.published,
+        };
       }
     }
     return Object.keys(out).length > 0 ? out : undefined;
@@ -1347,7 +1438,16 @@ export class WebviewMessageBroker {
         versionFlags: this._versionFlagsFor(cached),
       });
     }
-    if (cacheIsFresh) return;
+    if (cacheIsFresh) {
+      const served = this._versionFlagsFor(cached) ?? {};
+      const values = Object.values(served);
+      this._logCacheAnswer('Versions', packageId, [
+        `${cached?.versions?.length ?? 0} versions`,
+        `${values.filter((f) => f.published).length} dated`,
+        `${values.filter((f) => f.vulnerable || f.deprecation).length} marked`,
+      ], Date.now() - (cached?.fetchedAt ?? 0));
+      return;
+    }
     try {
       const prev = cached?.versions ?? [];
       const { versions, versionFlags } = await this.backend.getAllVersions(packageId, configFiles, prerelease);
@@ -1391,11 +1491,13 @@ export class WebviewMessageBroker {
           ...this._versionFlagsFor(this._cache.get(key)),
         };
         for (const [v, flags] of Object.entries(versionFlags)) {
-          if (flags.vulnerable || flags.deprecation) {
+          if (flags.vulnerable || flags.deprecation || flags.published || flags.listed === false) {
             mergedFlags[v] = {
               vulnerable: flags.vulnerable,
               deprecation: flags.deprecation,
               advisories: flags.advisories,
+              published: flags.published,
+              listed: flags.listed,
             };
           }
         }

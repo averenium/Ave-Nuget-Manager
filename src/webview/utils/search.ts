@@ -5,6 +5,21 @@
 
 export { compareSemVer } from '../../semver';
 
+/**
+ * What a query *means*, as opposed to what is in the box (#120).
+ *
+ * The box keeps the raw text — trimming it on every keystroke would delete a
+ * trailing space the reader is still typing through, collapsing "entity
+ * framework" into "entityframework" mid-word. Everything downstream reads the
+ * normalised form instead: ends trimmed, internal whitespace runs collapsed to
+ * one space so a multi-word query still matches, and a query that is only
+ * whitespace normalises to empty rather than becoming "a space" that no
+ * package id begins with.
+ */
+export function normalizeQuery(query: string): string {
+  return query.trim().replace(/\s+/g, ' ');
+}
+
 // ─── Abbreviation expansions ──────────────────────────────────────────────────
 
 /**
@@ -46,7 +61,7 @@ function expandQuery(query: string): string[] {
  */
 export function relevanceScore(id: string, query: string): number {
   const idL = id.toLowerCase();
-  const tokens = expandQuery(query);
+  const tokens = expandQuery(normalizeQuery(query));
   const qL = tokens[0];
   const expanded = tokens.slice(1);
 
@@ -121,9 +136,10 @@ function isWellKnownNamespaceMatch(
 }
 
 export function matchesQuery(id: string, query: string): boolean {
-  if (!query || query.length < 2) return true;
+  const q = normalizeQuery(query);
+  if (!q || q.length < 2) return true;
   const idL = id.toLowerCase();
-  const tokens = expandQuery(query);
+  const tokens = expandQuery(q);
   // Match original OR any expansion
   return tokens.some((t) => idL.includes(t));
 }
@@ -137,9 +153,10 @@ export function sortByRelevance<T extends { id: string }>(
   query: string,
   options: { keepOrderOnTies?: boolean } = {},
 ): T[] {
-  if (!query || query.length < 2) return packages;
+  const q = normalizeQuery(query);
+  if (!q || q.length < 2) return packages;
   return [...packages].sort((a, b) => {
-    const diff = relevanceScore(a.id, query) - relevanceScore(b.id, query);
+    const diff = relevanceScore(a.id, q) - relevanceScore(b.id, q);
     if (diff !== 0) return diff;
     // A tie means this scoring cannot tell the two apart, and for search
     // results something else already could: the feed ranks by popularity, and

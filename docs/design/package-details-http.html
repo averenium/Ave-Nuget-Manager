@@ -54,16 +54,36 @@
   .legend { margin-top: 10px; font-size: 11px; color: #6a6a6a; line-height: 1.7; }
 
   /* ── new elements only ─────────────────────────────────────────────── */
-  /* One line of feed-only facts about the version in the field above it. */
-  .vfacts { font-size: 11px; color: #7a7a7a; margin-top: 4px; }
-  .vfacts .sep { color: #4a4a4a; padding: 0 5px; }
-  .vfacts b { color: #9a9a9a; font-weight: 400; }
+  /* The version's publication date, in the attribute column. It was a line of
+     its own at first, carrying the newest version, the position in the version
+     list and the feed name as well; all of that either repeated what the picker
+     and the package row already showed or cost a line for something nobody was
+     deciding on, so only the date survived, and it moved here. */
+  /* Shares the licence row: both fit the column at this size, and two rows for
+     two short facts wasted the height the column is trying to keep. Never
+     shrinks — the badge ellipsises first, because half a date says nothing. A
+     compound expression is several badges and the date keeps its own row. */
+  .pubdate { font-size: 11px; color: #7a7a7a; margin-left: auto; flex: 0 0 auto; white-space: nowrap; }
   /* The "what changes" band: one row per difference, glyph in a fixed gutter. */
   .chg { display: flex; gap: 8px; font-size: 12px; padding: 2px 0; align-items: baseline; }
   .chg__op { flex: 0 0 12px; text-align: center; font-weight: bold; }
   .chg__id { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chg__to { flex: 0 0 auto; color: #9a9a9a; font-size: 11px; }
   .group-pill { font-size: 11px; color: #6a6a6a; }
+  /* The framework picker: the heading's own right-hand line, made the control. */
+  .group-select {
+    font-size: 11px; color: #cccccc; border: 0.5px solid #3c3c3c;
+    border-radius: 3px; padding: 1px 6px; white-space: nowrap;
+  }
+  .group-select .dim, .tfmitem .dim { color: #6a6a6a; }
+  .group-select .arrow { color: #8a8a8a; margin-left: 3px; }
+  .tfmmenu {
+    margin-top: 6px; border: 0.5px solid #3c3c3c; border-radius: 3px;
+    background: #252526; padding: 3px 0; width: 260px;
+  }
+  .tfmitem { font-size: 11px; color: #cccccc; padding: 3px 9px; }
+  .tfmitem.sel { background: #2d2d2d; }
+  .tfmitem.dimmed { color: #6a6a6a; }
   table.facts { border-collapse: collapse; font-size: 12px; margin: 0 0 8px; }
   table.facts td, table.facts th { border-bottom: 0.5px solid #2a2a2a; padding: 4px 14px 4px 0; text-align: left; vertical-align: top; }
   table.facts th { color: #8a8a8a; font-weight: 400; font-size: 11px; letter-spacing: .05em; }
@@ -118,7 +138,7 @@
 </div>
 
 <h2>2 &middot; Before install &mdash; with the feed answering</h2>
-<p class="cap">Three additions, all from entries the version walk already downloaded: a facts line under the version, the advisory the picked version actually carries together with the nearest version that does not, and the dependencies the version <em>declares</em>.</p>
+<p class="cap">Three additions, all from entries the version walk already downloaded: the publication date of the picked version beside the licence in the attribute column, the advisory that version actually carries together with the nearest version that does not, and the dependencies the version <em>declares</em>. The date is the whole of the first item: opening on the newest version, its date is also the answer to &ldquo;has anyone touched this in four years&rdquo;. The rows show for themselves that these are ranges &mdash; <code>[3.1.0, 4.0.0)</code> is not a version, and the heading already says &ldquo;declared&rdquo; &mdash; so the sentence that explained it competed with the rows it was explaining, and is gone.</p>
 <div class="row">
   <div class="panel wide">
     <div class="head">
@@ -128,10 +148,6 @@
       </span>
     </div>
     <div class="vrow"><span class="field">4.1.0</span></div>
-    <!-- NEW -->
-    <div class="vfacts">
-      published <b>12 Aug 2025</b><span class="sep">&middot;</span>3rd of <b>47</b> versions<span class="sep">&middot;</span>newest <b>4.3.2</b>, 6 days ago<span class="sep">&middot;</span>Example Feed
-    </div>
 
     <div style="display:flex; gap:14px; align-items:stretch; margin-top:10px;">
       <div style="flex:1 1 0; min-width:0;">
@@ -154,7 +170,8 @@
         </div>
       </div>
       <div class="attrs">
-        <div class="arow"><span class="badge">MIT</span></div>
+        <!-- NEW: the version's date, sharing the licence row -->
+        <div class="arow"><span class="badge">MIT</span><span class="pubdate" title="published 6 days ago">12 Aug 2025</span></div>
         <div class="arow" style="font-size:12px;">
           <a><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline-block; vertical-align:-2px;"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg> Project</a>
         </div>
@@ -170,7 +187,6 @@
     <div class="drow"><span class="did">Example.Core</span><span class="dmeta"><span class="range">[3.1.0, 4.0.0)</span></span></div>
     <div class="drow"><span class="did">System.Text.Json</span><span class="dmeta"><span class="range">&ge; 8.0.4</span></span></div>
     <div class="drow"><span class="did">Microsoft.Extensions.Http</span><span class="dmeta"><span class="range">&ge; 8.0.0</span></span></div>
-    <div class="note">Ranges, not versions: what restore picks inside them is not knowable before the restore runs. The section switches to the resolved tree the moment the package is installed &mdash; the same rows with one column more, so nothing moves under the reader.</div>
   </div>
 </div>
 
@@ -185,7 +201,7 @@
       </span>
     </div>
     <div class="vrow"><span class="field">2.4.0</span></div>
-    <div class="vfacts">published <b>3 Nov 2021</b><span class="sep">&middot;</span>newest of <b>9</b> versions<span class="sep">&middot;</span>nothing published in 4 years<span class="sep">&middot;</span>Example Feed</div>
+    
 
     <div style="display:flex; gap:14px; align-items:stretch; margin-top:10px;">
       <div style="flex:1 1 0; min-width:0;">
@@ -200,7 +216,7 @@
         </div>
       </div>
       <div class="attrs">
-        <div class="arow"><span class="badge">Apache-2.0</span></div>
+        <div class="arow"><span class="badge">Apache-2.0</span><span class="pubdate" title="published 4 years ago">3 Nov 2021</span></div>
       </div>
     </div>
 
@@ -215,7 +231,64 @@
   </div>
 </div>
 
-<h2>4 &middot; Installed &mdash; what an update would change</h2>
+<h2>4 &middot; Before install &mdash; reading another framework&rsquo;s dependencies</h2>
+<p class="cap">The section answers for one framework: the one restore would take. That is the right default and the wrong limit &mdash; a library author comparing what a package pulls in on <code>net8.0</code> against <code>netstandard2.0</code> can see only one of them, and a package whose group for this project is empty may declare plenty elsewhere. So the framework is selectable, with the picked one still the default. Nothing new is fetched: every group came down with the registration entry.</p>
+<p class="cap"><b>The heading&rsquo;s own right-hand line is the control</b>, not a strip of tabs above the rows. That line already named the group, so making it the picker costs no height &mdash; the panel&rsquo;s scarcest dimension &mdash; and it holds a long list as easily as a short one. Tabs do not: <code>Newtonsoft.Json</code> declares seven groups, which fit no sidebar at any width and would need a second row, a scroller or an overflow menu, each costing more than it saves.</p>
+<p class="cap"><b>Rules.</b> The list is the frameworks <i>the feed declares groups for</i> &mdash; not the project&rsquo;s, which the package may say nothing about &mdash; newest first, the same order as the framework badges. The default is the group <code>selectCompatibleGroup</code> picks, so the panel opens on what an install would actually use, and says so; that qualifier drops once a framework has been picked by hand, where the reader chose it and knows. A framework this project cannot take stays selectable but is dimmed and reads as browsing, because that is what it is; a group the package declares for no framework at all is listed as <i>any framework</i>, since it can be the default and a default nobody can choose again is a trap. Where the project&rsquo;s own framework is not known at all &mdash; before <code>dotnet list</code> answers, or for good if it failed &mdash; the section opens on the newest declared group and drops the &ldquo;what an install takes&rdquo; qualifier, because that is a claim only a known project framework supports. The choice resets with the package: a choice about one package&rsquo;s frameworks means nothing about the next one&rsquo;s.</p>
+
+<div class="row">
+  <div class="panel wide">
+    <div class="cap" style="margin:0 0 8px;">Closed &mdash; the default, naming why this group and not another.</div>
+    <div style="display:flex; justify-content:space-between; align-items:baseline;">
+      <span class="label">DEPENDENCIES</span>
+      <span class="group-select">net8.0 <span class="dim">&middot; what an install takes</span> <span class="arrow">&#9662;</span></span>
+    </div>
+    <div class="drow"><span class="did">Example.Core</span><span class="dmeta"><span class="range">[3.1.0, 4.0.0)</span></span></div>
+    <div class="drow"><span class="did">System.Text.Json</span><span class="dmeta"><span class="range">&ge; 8.0.4</span></span></div>
+    <div class="drow"><span class="did">Microsoft.Extensions.Http</span><span class="dmeta"><span class="range">&ge; 8.0.0</span></span></div>
+  </div>
+
+  <div class="panel wide">
+    <div class="cap" style="margin:0 0 8px;">Open &mdash; the version selector&rsquo;s list (#99), closing on outside click, Escape, blur and scroll (#70).</div>
+    <div style="display:flex; justify-content:space-between; align-items:baseline;">
+      <span class="label">DEPENDENCIES</span>
+      <span class="group-select">net8.0 <span class="dim">&middot; what an install takes</span> <span class="arrow">&#9662;</span></span>
+    </div>
+    <div class="tfmmenu">
+      <div class="tfmitem sel">net8.0 <span class="dim">&middot; what an install takes</span></div>
+      <div class="tfmitem">net6.0</div>
+      <div class="tfmitem">netstandard2.0</div>
+      <div class="tfmitem dimmed">net472 <span class="dim">&middot; not for this project</span></div>
+      <div class="tfmitem">any framework</div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="panel wide">
+    <div class="cap" style="margin:0 0 8px;">Picked by hand &mdash; the qualifier is gone, because the reader chose this group.</div>
+    <div style="display:flex; justify-content:space-between; align-items:baseline;">
+      <span class="label">DEPENDENCIES</span>
+      <span class="group-select">netstandard2.0 <span class="arrow">&#9662;</span></span>
+    </div>
+    <div class="drow"><span class="did">Example.Core</span><span class="dmeta"><span class="range">[3.1.0, 4.0.0)</span></span></div>
+    <div class="drow"><span class="did">Newtonsoft.Json</span><span class="dmeta"><span class="range">&ge; 12.0.3</span></span></div>
+  </div>
+
+  <div class="panel narrow">
+    <div class="cap" style="margin:0 0 8px;">At sidebar width the control keeps its place; only the qualifier drops, because the framework is the part being chosen.</div>
+    <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+      <span class="label">DEPENDENCIES</span>
+      <span class="group-select">net8.0 <span class="arrow">&#9662;</span></span>
+    </div>
+    <div class="drow"><span class="did">Example.Core</span><span class="dmeta"><span class="range">[3.1.0, 4.0.0)</span></span></div>
+    <div class="drow"><span class="did">System.Text.Json</span><span class="dmeta"><span class="range">&ge; 8.0.4</span></span></div>
+  </div>
+</div>
+
+<p class="cap"><b>What this does to state 3.</b> &ldquo;No group for net10.0&rdquo; stops being a dead end: the control still lists what the feed does declare, so the reader can open <code>netstandard2.0</code> and read it instead of only being told it exists. The wording of the note stays as it is &mdash; it is the one place that must not turn into a verdict on compatibility.</p>
+
+<h2>5 &middot; Installed &mdash; what an update would change</h2>
 <p class="cap">Only reachable once a version is installed, and the reason these additions matter for installed packages too: both entries come out of the same registration pages, so the difference between the installed version and the picked one is free to compute. The band replaces nothing &mdash; it sits under the version row, appears only while the picked version differs from the installed one, and disappears when they match.</p>
 <div class="row">
   <div class="panel wide">
@@ -227,22 +300,18 @@
       </span>
     </div>
     <div class="vrow"><span class="field">4.3.2</span></div>
-    <div class="vfacts">
-      installed <b>3.9.2</b>, published 4 Mar 2023<span class="sep">&middot;</span><b>11 versions</b> behind<span class="sep">&middot;</span>4.3.2 published 6 days ago
-    </div>
 
     <div class="divider"></div>
     <!-- NEW -->
     <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:10px;">
       <span class="label">WHAT CHANGES</span>
-      <span class="group-pill">3.9.2 &rarr; 4.3.2 &middot; declared for net10.0</span>
+      <span class="group-pill">3.9.2 &rarr; 4.3.2</span>
     </div>
     <div class="chg"><span class="chg__op good">+</span><span class="chg__id">System.Text.Json</span><span class="chg__to">&ge; 8.0.4 &mdash; new dependency</span></div>
     <div class="chg"><span class="chg__op hint">&#8593;</span><span class="chg__id">Example.Core</span><span class="chg__to">[2.0.0, 3.0.0) &rarr; [3.1.0, 4.0.0)</span></div>
     <div class="chg"><span class="chg__op muted">&minus;</span><span class="chg__id muted">Newtonsoft.Json</span><span class="chg__to">no longer declared</span></div>
-    <div class="chg"><span class="chg__op muted">&middot;</span><span class="chg__id">Licence</span><span class="chg__to">MIT &rarr; MIT OR Apache-2.0</span></div>
-    <div class="chg"><span class="chg__op hint">!</span><span class="chg__id">Declared frameworks</span><span class="chg__to">drops net6.0, adds net10.0</span></div>
-    <div class="note">Five row kinds, one gutter: added, raised, dropped, changed, and a framework line that appears only when a framework the workspace actually targets stops being declared. A raised range keeps the amber the Dependencies section already uses for the same meaning.</div>
+    <div class="chg"><span class="chg__op hint">!</span><span class="chg__id">Declared frameworks</span><span class="chg__to">stops declaring net6.0</span></div>
+    <div class="note">Four row kinds, one gutter: added, moved, dropped, and a framework line that appears only when a framework the workspace actually targets stops being declared. A moved range is amber rather than an arrow &mdash; calling it a <i>raise</i> would order two ranges, which is a judgement about what restore picks inside them and the one thing this panel has said from the start it does not make. <b>The licence is not a row here:</b> #89 puts it in Problems, where a consequence belongs, and saying it in two places would be two designs for one thing. It travels in the same answer as these rows &mdash; one question about the same two versions, so one round trip &mdash; and is rendered there.</div>
 
     <div class="divider"></div>
     <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:10px;">
@@ -255,7 +324,7 @@
   </div>
 </div>
 
-<h2>5 &middot; Installed &mdash; the version under you was withdrawn</h2>
+<h2>6 &middot; Installed &mdash; the version under you was withdrawn</h2>
 <p class="cap">The one fact nothing else in the extension can produce. An unlisted version restores and builds exactly as before, so nothing fails &mdash; it simply stops being findable, and a machine that has never restored it may not get it at all.</p>
 <div class="row">
   <div class="panel wide">
@@ -267,7 +336,7 @@
       </span>
     </div>
     <div class="vrow"><span class="field">2.1.4</span></div>
-    <div class="vfacts">installed <b>2.1.4</b>, published 19 Jan 2024<span class="sep">&middot;</span>3 versions behind</div>
+    
     <div style="display:flex; gap:14px; align-items:stretch; margin-top:10px;">
       <div style="flex:1 1 0; min-width:0;">
         <div class="desc">Structured diagnostics helpers for Example services</div>
@@ -288,7 +357,7 @@
   </div>
 </div>
 
-<h2>6 &middot; Narrow &mdash; sidebar width</h2>
+<h2>7 &middot; Narrow &mdash; sidebar width</h2>
 <p class="cap">Everything new is line-shaped rather than column-shaped, which is what makes it survive the 300px panel: the facts line wraps to two, and the change band keeps its gutter while the annotation moves to its own line.</p>
 <div class="row">
   <div class="panel narrow">
@@ -299,7 +368,7 @@
       </span>
     </div>
     <div class="vrow"><span class="field">4.1.0</span></div>
-    <div class="vfacts">published <b>12 Aug 2025</b><span class="sep">&middot;</span>3rd of <b>47</b><br>newest <b>4.3.2</b>, 6 days ago</div>
+    
     <div class="desc" style="margin-top:9px;">Client library for the Example payments gateway: idempotent charges, refunds and webhook verification</div>
     <div class="sub"><a>more</a> &middot; Example Corp</div>
     <div class="problems" style="margin-top:9px;">
@@ -326,7 +395,7 @@
       </span>
     </div>
     <div class="vrow"><span class="field">4.3.2</span></div>
-    <div class="vfacts">installed <b>3.9.2</b><span class="sep">&middot;</span>11 versions behind</div>
+    
     <div class="divider" style="margin:10px -14px 0;"></div>
     <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:10px;">
       <span class="label">WHAT CHANGES</span>

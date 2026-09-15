@@ -1,4 +1,4 @@
-import { frameworkKey, sameFramework } from '../../frameworkMoniker';
+import { frameworkKey, frameworkLabel } from '../../frameworkMoniker';
 
 /**
  * Every long form below is one the catalog actually states: older packages were
@@ -40,23 +40,39 @@ describe('frameworkKey', () => {
     expect(frameworkKey(undefined)).toBe('');
     expect(frameworkKey('  ')).toBe('');
   });
+
+  it('reads the form project.assets.json writes, where the version follows a comma', () => {
+    // Losing the version here collapsed every .NETFramework target onto one
+    // key, which would have called 4.6.1 and 4.8 the same framework.
+    expect(frameworkKey('.NETFramework,Version=v4.7.2')).toBe('net472');
+    expect(frameworkKey('.NETFramework,Version=v4.6.1')).toBe('net461');
+    expect(frameworkKey('.NETCoreApp,Version=v8.0')).toBe('net8.0');
+    expect(frameworkKey('.NETStandard,Version=v2.0')).toBe('netstandard2.0');
+    expect(frameworkKey('.NETFramework,Version=v4.6.1'))
+      .not.toBe(frameworkKey('.NETFramework,Version=v4.8'));
+  });
+
+  it('keeps a moniker it has no short form for distinct from every other', () => {
+    // A guessed short form would claim two frameworks are one.
+    expect(frameworkKey('.NETPortable0.0-Profile259')).toBe('.netportable0.0-profile259');
+    expect(frameworkKey('.NETPortable0.0-Profile259'))
+      .not.toBe(frameworkKey('.NETPortable0.0-Profile111'));
+  });
 });
 
-describe('sameFramework', () => {
-  it('matches across the two spellings', () => {
-    expect(sameFramework('net472', '.NETFramework4.7.2')).toBe(true);
-    expect(sameFramework('netstandard2.0', '.NETStandard2.0')).toBe(true);
+describe('frameworkLabel', () => {
+  it('shows the short form where there is one', () => {
+    expect(frameworkLabel('.NETFramework,Version=v4.7.2')).toBe('net472');
+    expect(frameworkLabel('.NETStandard2.0')).toBe('netstandard2.0');
   });
 
-  it('does not match different frameworks, however close they read', () => {
-    expect(sameFramework('net10.0', 'net472')).toBe(false);
-    expect(sameFramework('net8.0', 'net8.0-windows')).toBe(false);
-    // Whether one satisfies the other is restore's question, not this one.
-    expect(sameFramework('net10.0', 'netstandard2.0')).toBe(false);
+  it('leaves a moniker with no short form exactly as the feed wrote it', () => {
+    // Half-converting it produces a spelling that exists nowhere, and these go
+    // into badges the design says are spelled as the project file spells them.
+    expect(frameworkLabel('.NETPortable0.0-Profile259')).toBe('.NETPortable0.0-Profile259');
   });
 
-  it('never matches on an absent moniker', () => {
-    expect(sameFramework(undefined, undefined)).toBe(false);
-    expect(sameFramework('', 'net10.0')).toBe(false);
+  it('says nothing about an empty moniker', () => {
+    expect(frameworkLabel(undefined)).toBe('');
   });
 });

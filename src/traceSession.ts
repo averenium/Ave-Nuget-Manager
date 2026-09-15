@@ -50,7 +50,24 @@ export type TraceEvent =
       body?: string;
     }
   | { kind: 'webview'; at: string; type: string; payload: unknown }
-  | { kind: 'broker'; at: string; step: string; detail?: unknown };
+  | { kind: 'broker'; at: string; step: string; detail?: unknown }
+  | {
+      /**
+       * A synthetic log row — the extension saying something about its own
+       * decisions rather than reporting a call (#114). The trace was fed by
+       * three call sites, all of which record work that happened: a `dotnet`
+       * invocation, an HTTP request, a webview message. Nothing recorded work
+       * that was *skipped*, so a trace taken to find out why a field was empty
+       * showed the request arriving and nothing after it — while the Log tab
+       * held the answer ("answered from cache", "scan skipped", "falling back
+       * to the CLI") the whole time.
+       */
+      kind: 'log';
+      at: string;
+      level: 'info' | 'error';
+      message: string;
+      args: string[];
+    };
 
 interface SessionMeta {
   id: string;

@@ -7,7 +7,7 @@ import { AvailableList } from './AvailableList';
 import { PackageDetailPanel } from './PackageDetailPanel';
 import { SplitPane } from './SplitPane';
 import { measureTextWidth } from '../utils/measureText';
-import { matchesQuery } from '../utils/search';
+import { matchesQuery, normalizeQuery } from '../utils/search';
 import { PrereleaseToggle } from './PrereleaseToggle';
 import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
 import { ActivityStrip } from './ActivityStrip';
@@ -58,7 +58,7 @@ export function PackagesTab() {
 
   const doSearch = useCallback(
     (q: string, sources: string[], pr: boolean) => {
-      if (q.length < MIN_QUERY_LEN) return;
+      if (normalizeQuery(q).length < MIN_QUERY_LEN) return;
       send({
         type: 'SEARCH_PACKAGES',
         query: q,
@@ -70,10 +70,13 @@ export function PackagesTab() {
   );
 
   const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Kept exactly as typed — trimming it here would delete a trailing space
+    // the reader is still typing through (#120). Everything downstream reads
+    // the normalised form instead.
     const q = e.target.value;
     dispatch({ type: 'SET_SEARCH_QUERY', query: q });
     if (timerRef.current) clearTimeout(timerRef.current);
-    if (q.length >= MIN_QUERY_LEN) {
+    if (normalizeQuery(q).length >= MIN_QUERY_LEN) {
       timerRef.current = setTimeout(
         () => {
           // Logged from here, not from the search itself: this is the query the
@@ -100,7 +103,7 @@ export function PackagesTab() {
   };
 
   useEffect(() => {
-    if (searchQuery.length >= MIN_QUERY_LEN) {
+    if (normalizeQuery(searchQuery).length >= MIN_QUERY_LEN) {
       doSearch(searchQuery, selectedSources, prerelease);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

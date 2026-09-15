@@ -978,6 +978,40 @@ describe('WebviewMessageBroker', () => {
    * about the metadata's version compared the installed version with itself, so
    * the warning appeared only after an explicit pick and vanished on return.
    */
+  /**
+   * This broker's cache sits above the HTTP cache and the backend both, so when
+   * it answers there is no request for either of them to record — and a trace
+   * taken to investigate an empty field showed the message arriving and nothing
+   * after it, which reads as a hole in the logging rather than as an answer.
+   */
+  describe('an answer served from cache is in the log', () => {
+    it('says how much of what it served was dated, which is the question being asked', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.getAllVersions.mockResolvedValue({
+        versions: ['2.0.0', '1.0.0'],
+        versionFlags: { '2.0.0': { published: '2024-05-01T10:00:00Z' } },
+      });
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      );
+      broker.attach();
+
+      const ask = { type: 'GET_ALL_VERSIONS', packageId: 'Example.Imaging', configFiles: ['a.config'], prerelease: false };
+      simulateMessage(ask);
+      await waitFor(() => backend.getAllVersions.mock.calls.length > 0);
+      // The second ask lands inside the TTL, so nothing below this is called.
+      simulateMessage(ask);
+      await waitFor(() => logger.getEntries().some((e) => e.command.includes('answered from cache')));
+
+      const row = logger.getEntries().find((e) => e.command.includes('answered from cache'))!;
+      expect(row.command).toContain('Example.Imaging');
+      expect(row.args).toEqual(expect.arrayContaining(['2 versions', '1 dated']));
+      expect(backend.getAllVersions).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('the licence comparison is keyed to the version asked about', () => {
     /** A nuspec stating one licence, so which one comes back names which version was read. */
     const nuspecDeclaring = (version: string, expression: string): string => `<?xml version="1.0"?>
@@ -1021,14 +1055,14 @@ describe('WebviewMessageBroker', () => {
       await waitFor(() => !!(broker as any)._lastListed);
 
       simulateMessage({
-        type: 'GET_LICENSE_CHANGE',
+        type: 'GET_VERSION_DIFF',
         packageId: 'Example.Imaging',
         version: '4.1.2',
         configFiles: ['a.config'],
       });
-      await waitFor(() => posted.some((m) => m.type === 'LICENSE_CHANGE'));
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
 
-      const answer = posted.find((m) => m.type === 'LICENSE_CHANGE') as
+      const answer = posted.find((m) => m.type === 'VERSION_DIFF') as
         { packageId: string; version: string } | undefined;
       expect(answer).toMatchObject({ packageId: 'Example.Imaging', version: '4.1.2' });
     });
@@ -1060,16 +1094,16 @@ describe('WebviewMessageBroker', () => {
       await waitFor(() => !!(broker as any)._lastListed);
 
       simulateMessage({
-        type: 'GET_LICENSE_CHANGE',
+        type: 'GET_VERSION_DIFF',
         packageId: 'Example.Imaging',
         version: '4.1.2',
         configFiles: ['a.config'],
       });
-      await waitFor(() => posted.some((m) => m.type === 'LICENSE_CHANGE'));
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
 
-      const answer = posted.find((m) => m.type === 'LICENSE_CHANGE') as
-        { change?: { from: { text: string } } } | undefined;
-      expect(answer?.change?.from.text).toBe('BSD-3-Clause');
+      const answer = posted.find((m) => m.type === 'VERSION_DIFF') as
+        { license?: { from: { text: string } } } | undefined;
+      expect(answer?.license?.from.text).toBe('BSD-3-Clause');
     });
 
     /**
@@ -1107,21 +1141,74 @@ describe('WebviewMessageBroker', () => {
       await waitFor(() => !!(broker as any)._lastListed);
 
       simulateMessage({
-        type: 'GET_LICENSE_CHANGE', packageId: 'Example.Imaging', version: '3.1.5', configFiles: ['a.config'],
+        type: 'GET_VERSION_DIFF', packageId: 'Example.Imaging', version: '3.1.5', configFiles: ['a.config'],
       });
       await waitFor(() => signals.length === 1);
       simulateMessage({
-        type: 'GET_LICENSE_CHANGE', packageId: 'Example.Imaging', version: '4.1.2', configFiles: ['a.config'],
+        type: 'GET_VERSION_DIFF', packageId: 'Example.Imaging', version: '4.1.2', configFiles: ['a.config'],
       });
-      await waitFor(() => posted.some((m) => m.type === 'LICENSE_CHANGE'));
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
 
       expect(signals[0]?.aborted).toBe(true);
 
       // The superseded answer arrives late and must still say nothing.
       releaseFirst?.();
       await waitFor(() => signals.length === 2);
-      const answers = posted.filter((m) => m.type === 'LICENSE_CHANGE') as Array<{ version: string }>;
+      const answers = posted.filter((m) => m.type === 'VERSION_DIFF') as Array<{ version: string }>;
       expect(answers.map((a) => a.version)).toEqual(['4.1.2']);
+    });
+
+    /**
+     * The licence and the dependency difference are one question about the same
+     * two versions, answered from the same registration pages. Asking for them
+     * separately would be two round trips, two debounces and two cancellations
+     * for one user action, so they travel in one answer and are rendered apart.
+     */
+    it('answers the licence and the dependency difference together', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [installedAt('2.1.9', '/p/App.csproj')],
+        implicit: [],
+        projectFrameworks: { '/p/App.csproj': ['net10.0'] },
+      });
+      stubInstalledNuspecs({ '2.1.9': 'Apache-2.0' });
+      backend.getMetadata.mockImplementation(async (_id: string, version: string) => ({
+        id: 'Example.Imaging',
+        version,
+        authors: '',
+        description: '',
+        tags: [],
+        declaredDependencies: version === '2.1.9'
+          ? [{ targetFramework: 'net10.0', dependencies: [{ id: 'Old.Thing', range: '>= 1.0.0' }] }]
+          : [{ targetFramework: 'net10.0', dependencies: [{ id: 'System.Text.Json', range: '>= 8.0.4' }] }],
+      }));
+      const forVersion = jest.fn().mockResolvedValue({ type: 'file', value: 'LICENSE' });
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, { forVersion },
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_VERSION_DIFF',
+        packageId: 'Example.Imaging',
+        version: '4.1.2',
+        configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
+
+      const answer = posted.find((m) => m.type === 'VERSION_DIFF') as Extract<
+        ExtensionMessage, { type: 'VERSION_DIFF' }
+      >;
+      expect(answer.license?.to).toEqual({ text: 'LICENSE', file: true, url: undefined });
+      expect(answer.dependencies).toMatchObject({
+        added: [{ id: 'System.Text.Json', to: '>= 8.0.4' }],
+        dropped: [{ id: 'Old.Thing', from: '>= 1.0.0' }],
+      });
     });
 
     /**
@@ -1419,6 +1506,28 @@ describe('WebviewMessageBroker', () => {
     const result = posted.find((m) => m.type === 'SEARCH_RESULTS') as any;
     expect(result?.query).toBe('New');
     expect(result?.packages[0].id).toBe('Newtonsoft.Json');
+  });
+
+  it('trims the query before asking the backend, regardless of what the box holds (#120)', async () => {
+    // Measured: a leading space reached `dotnet package search` as part of the
+    // id being looked for. Trimmed once here so the CLI and HTTP backends agree
+    // no matter what sent the request.
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.searchPackages.mockResolvedValue([]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'SEARCH_PACKAGES',
+      query: '  Microsoft.Extensions.Http  ',
+      configFiles: ['/a/nuget.config'],
+      enabledSourceNames: ['nuget.org'],
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(backend.searchPackages.mock.calls[0][0]).toBe('Microsoft.Extensions.Http');
   });
 
   it('GET_ALL_VERSIONS uses enrich cache without a second search', async () => {

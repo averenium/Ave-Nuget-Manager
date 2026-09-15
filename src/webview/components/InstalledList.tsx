@@ -2,7 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { PackageRow } from './PackageRow';
 import { BlockedPackageMenu } from './BlockedPackageMenu';
-import { matchesQuery, sortByRelevance } from '../utils/search';
+import { matchesQuery, normalizeQuery, sortByRelevance } from '../utils/search';
 import type { InstalledPackage } from '../../types';
 import { findingsAffectingPackage, vulnerabilityAffectRank } from '../../vulnerabilities';
 import { packageMatchesAnyMapping } from '../../packageSourceMapping';
@@ -66,7 +66,7 @@ export function InstalledList() {
   const grouped = groupById(filtered);
   const uniquePackages = [...grouped.values()].map(withUnionedDeps);
 
-  const displayed = searchQuery.length >= 2
+  const displayed = normalizeQuery(searchQuery).length >= 2
     ? sortByRelevance(uniquePackages, searchQuery)
     : [...uniquePackages].sort((a, b) => {
       const va = vulnerabilityAffectRank(vulnerabilities, a.id, a.dependencies);

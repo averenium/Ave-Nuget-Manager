@@ -8,13 +8,17 @@
 - **Log**: a **Panel** filter recording what was searched, selected, confirmed and applied, and every update refused or skipped without a CLI call
 - **Package details**: a row in **Problems** when the selected version's licence differs from the installed one, naming both (#89)
 - **Updates**: a confirmation before a batch update lists every package whose licence would change, with rows you can leave out (#89)
-- **Package details**: a facts line under the version — publication date, where the version sits in its history, and the feed that answered (#114)
+- **Package details**: the publication date of the selected version (#114)
 - **Package details**: the nearest version a feed advisory does not cover, offered as a one-click pick (#114)
 - **Package details**: the dependencies a version declares, for a package that is not installed yet (#114)
+- **Package details**: a row in **Problems** when the installed version has been withdrawn from its feed (#114)
+- **Package details**: a **What changes** band listing the dependencies an update would add, move or drop (#114)
+- **Package details**: the **Dependencies** section can be read for any framework the package declares, not only the one an install would use (#114)
 
 ### Fixed
 
 - A deprecated installed version now says why in the details panel and carries a mark in the package list
+- **Packages**: a leading or trailing space in the search box no longer empties every list (#120)
 
 ## 0.8.0
 

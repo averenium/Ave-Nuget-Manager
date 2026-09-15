@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import type { PackageLicense, PackageRepository } from '../../types';
 import { resolveLicenseDisplay, spdxBadgeUrl } from '../../packageLicense';
+import { formatPublished, humanAge } from '../utils/versionFacts';
 import { commitUrlFor, resolvePackageLinks, shortCommit } from '../../packageLinks';
 import { IconBranch, IconCommit, IconGlobe } from '../utils/icons';
 import { visibleBadgeCount } from '../utils/badgeRows';
@@ -9,6 +10,8 @@ const MAX_FRAMEWORK_ROWS = 3;
 
 interface Props {
   license?: PackageLicense;
+  /** ISO 8601 publication date of the version on screen (#114). Feed-only. */
+  published?: string;
   licenseUrl?: string;
   projectUrl?: string;
   repository?: PackageRepository;
@@ -30,6 +33,7 @@ interface Props {
  */
 export function PackageAttributeColumn({
   license,
+  published,
   licenseUrl,
   projectUrl,
   repository,
@@ -37,6 +41,28 @@ export function PackageAttributeColumn({
   runtimeIdentifiers,
 }: Props) {
   const licenseDisplay = resolveLicenseDisplay(license, licenseUrl);
+  // Age is the question — a package nobody has published to in four years is
+  // otherwise indistinguishable from one released last week — and the date
+  // answers it here, in the column facts already live in, rather than on a line
+  // of its own under the version field (#114).
+  const publishedOn = formatPublished(published);
+  const publishedAge = humanAge(published);
+  /**
+   * The date rides in the licence row when the licence is a single badge, which
+   * is nearly always: `Apache-2.0` and `12 Aug 2025` both fit the column's 150px
+   * at this size, and two rows for two short facts wasted the height the column
+   * is trying to keep. A compound expression is several badges with operators
+   * between them, so there is no room and the date keeps its own row above.
+   */
+  const licenceIsOneBadge = licenseDisplay.kind === 'file'
+    || licenseDisplay.kind === 'url'
+    || (licenseDisplay.kind === 'expression' && licenseDisplay.ids.length === 1);
+  const publishedEl = publishedOn ? (
+    <span
+      className="pkg-attrs__published"
+      title={publishedAge ? `published ${publishedAge} ago` : undefined}
+    >{publishedOn}</span>
+  ) : null;
   const links = resolvePackageLinks(projectUrl, repository);
   const hasFrameworks = (supportedFrameworks?.length ?? 0) > 0;
   const hasRuntimeIdentifiers = (runtimeIdentifiers?.length ?? 0) > 0;
@@ -68,7 +94,7 @@ export function PackageAttributeColumn({
 
   if (
     licenseDisplay.kind === 'none' && !links.source && !links.project
-    && !hasFrameworks && !hasRuntimeIdentifiers
+    && !hasFrameworks && !hasRuntimeIdentifiers && !publishedOn
   ) {
     return null;
   }
@@ -76,6 +102,11 @@ export function PackageAttributeColumn({
   return (
     <div className="pkg-attrs">
       <div className="pkg-attrs__core">
+        {/* A compound expression, or no licence at all — nothing to share a row
+            with, so the date takes one of its own. */}
+        {publishedEl && !licenceIsOneBadge && (
+          <div className="pkg-attrs__row">{publishedEl}</div>
+        )}
         {licenseDisplay.kind === 'expression' && (
           <div className="pkg-attrs__row">
             {licenseDisplay.ids.map((id, i) => (
@@ -92,16 +123,19 @@ export function PackageAttributeColumn({
                 </a>
               </React.Fragment>
             ))}
+            {licenceIsOneBadge && publishedEl}
           </div>
         )}
         {licenseDisplay.kind === 'file' && (
           <div className="pkg-attrs__row">
             <span className="badge" title={licenseDisplay.fileName}>License</span>
+            {publishedEl}
           </div>
         )}
         {licenseDisplay.kind === 'url' && (
           <div className="pkg-attrs__row">
             <a className="badge" href={licenseDisplay.url} target="_blank" rel="noopener noreferrer">License</a>
+            {publishedEl}
           </div>
         )}
 

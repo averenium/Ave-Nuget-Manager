@@ -77,6 +77,15 @@ export interface VersionFlag {
    * is not the one it fetched metadata for.
    */
   published?: string;
+  /**
+   * `false` when the feed has withdrawn this version (#114). `undefined` for
+   * everything else, including a version the feed never mentioned — silence
+   * here is not a claim that the version is listed, only that nothing said
+   * otherwise. A withdrawn version still restores from whatever already cached
+   * it, so this is a fact worth surfacing about the version installed, not a
+   * reason to hide it from anything that already asked for it by name.
+   */
+  listed?: boolean;
 }
 
 /**
@@ -151,6 +160,16 @@ export interface SearchedVersionMetadata {
   advisories?: Array<{ url?: string; severity: VulnerabilitySeverity }>;
   /** ISO 8601 publication date of this exact version (#114). Feed-only: the registration entry states it, and the version walk already has the page. */
   published?: string;
+  /** `false` when the feed has withdrawn this exact version (#114) — see `VersionFlag.listed` for why silence is not "listed". */
+  listed?: boolean;
+  /**
+   * The dependency groups this exact version declares (#114). Carried per
+   * version because comparing an update means holding two versions' groups at
+   * once, and the version walk brought both down together — asking the feed
+   * again for a version it already described would be a request for data
+   * already in hand.
+   */
+  declaredDependencies?: DeclaredDependencyGroup[];
 }
 
 export interface EnrichedPackageInfo {

@@ -139,9 +139,14 @@ export interface AppState {
     /** Vulnerable/deprecated marks per version, from the feed — for the version dropdown, before a version is even chosen (#86). */
     versionFlags: Record<string, VersionFlag>;
     /**
-     * The licence answer, with the version it was asked about (#89). Kept
-     * together so an answer that arrives after the selection moved on is
-     * recognisably about the old version and simply not rendered.
+     * What taking a version would change, with the version it was asked about
+     * (#89, #114). Kept together so an answer that arrives after the selection
+     * moved on is recognisably about the old version and simply not rendered.
+     *
+     * The licence and the dependency difference are one answer because they are
+     * one question about the same two versions — asking separately would be two
+     * round trips, two debounces and two cancellations for one user action. They
+     * are rendered apart: the licence in Problems, the rest in its own band.
      *
      * `version` is the version the panel *asked* about, written when the
      * request goes out. Answers are matched against it and a mismatched one is
@@ -151,10 +156,11 @@ export interface AppState {
      * then would not render, and the component would not ask again because it
      * had already recorded asking.
      */
-    licenseChange: {
+    versionDiff: {
       version: string;
-      /** Null while the answer is outstanding, and when the answer is "nothing changes". */
-      change: import('../../packageLicense').LicenseChange | null;
+      /** Null while the answer is outstanding, and when nothing changes. */
+      license: import('../../packageLicense').LicenseChange | null;
+      dependencies: import('../../packageVersionDiff').VersionDependencyDiff | null;
     } | null;
     isLoading: boolean;
     error: string | null;
@@ -215,7 +221,7 @@ const initialState: AppState = {
     metadata: null,
     allVersions: [],
     versionFlags: {},
-    licenseChange: null,
+    versionDiff: null,
     isLoading: false,
     error: null,
     projectVersions: {},
@@ -241,8 +247,8 @@ export type Action =
   | { type: 'SET_SELECTED_SOURCES'; sources: string[] }
   | { type: 'SET_PRERELEASE'; prerelease: boolean }
   | { type: 'SELECT_PACKAGE'; packageId: string }
-  /** The licence question has gone out for this version; answers about any other are stale (#89). */
-  | { type: 'ASK_LICENSE_CHANGE'; version: string }
+  /** The question has gone out for this version; answers about any other are stale (#89, #114). */
+  | { type: 'ASK_VERSION_DIFF'; version: string }
   | { type: 'SET_DETAIL_LOADING'; loading: boolean }
   | { type: 'SET_PROJECT_VERSION'; projectPath: string; version: string }
   | { type: 'START_PROJECT_OPERATION'; operation: 'install' | 'remove'; total: number }
@@ -318,7 +324,7 @@ function reduceAppState(state: AppState, action: Action): AppState {
           metadata: null,
           allVersions: seededVersions,
           versionFlags: {},
-    licenseChange: null,
+    versionDiff: null,
           isLoading: seededVersions.length === 0,
           error: null,
           projectVersions: {},
@@ -331,11 +337,14 @@ function reduceAppState(state: AppState, action: Action): AppState {
 
     // Recorded before the request goes out, so the answer can be matched to it
     // and a late one about an abandoned version dropped rather than shown.
-    case 'ASK_LICENSE_CHANGE':
-      if (state.detail.licenseChange?.version === action.version) return state;
+    case 'ASK_VERSION_DIFF':
+      if (state.detail.versionDiff?.version === action.version) return state;
       return {
         ...state,
-        detail: { ...state.detail, licenseChange: { version: action.version, change: null } },
+        detail: {
+          ...state.detail,
+          versionDiff: { version: action.version, license: null, dependencies: null },
+        },
       };
 
     case 'SET_DETAIL_LOADING':
@@ -601,6 +610,26 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         },
       };
 
+    case 'VERSION_DIFF':
+      if (!state.detail.selectedPackageId
+        || !packageIdsEqual(state.detail.selectedPackageId, msg.packageId)) return state;
+      // An answer about a version nobody is asking about any more says nothing
+      // about the one on screen, and writing it here would take the current
+      // answer's place — permanently, since the component only asks once per
+      // version.
+      if (state.detail.versionDiff?.version !== msg.version) return state;
+      return {
+        ...state,
+        detail: {
+          ...state.detail,
+          versionDiff: {
+            version: msg.version,
+            license: msg.license ?? null,
+            dependencies: msg.dependencies ?? null,
+          },
+        },
+      };
+
     case 'BATCH_LICENSE_CHANGES':
       // Stored as it arrived, request id and all: whether this answer belongs to
       // the click still waiting is the Updates tab's question, not the store's.
@@ -609,22 +638,6 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         updates: {
           ...state.updates,
           licenseCheck: { requestId: msg.requestId, findings: msg.findings },
-        },
-      };
-
-    case 'LICENSE_CHANGE':
-      if (!state.detail.selectedPackageId
-        || !packageIdsEqual(state.detail.selectedPackageId, msg.packageId)) return state;
-      // An answer about a version nobody is asking about any more says nothing
-      // about the one on screen, and writing it here would take the current
-      // answer's place — permanently, since the component only asks once per
-      // version.
-      if (state.detail.licenseChange?.version !== msg.version) return state;
-      return {
-        ...state,
-        detail: {
-          ...state.detail,
-          licenseChange: { version: msg.version, change: msg.change ?? null },
         },
       };
 

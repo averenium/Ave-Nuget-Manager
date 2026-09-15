@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { PackageRow } from './PackageRow';
-import { sortByRelevance } from '../utils/search';
+import { normalizeQuery, sortByRelevance } from '../utils/search';
 
 const MIN_QUERY_LEN = 2;
 
@@ -9,7 +9,7 @@ export function AvailableList() {
   const { state, dispatch } = useNugetManager();
   const { available, searchQuery, selectedSources, isSearching } = state.packages;
 
-  if (searchQuery.length < MIN_QUERY_LEN) {
+  if (normalizeQuery(searchQuery).length < MIN_QUERY_LEN) {
     return null;
   }
 

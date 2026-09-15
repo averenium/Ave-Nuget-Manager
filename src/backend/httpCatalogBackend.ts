@@ -66,6 +66,18 @@ function deprecationText(deprecation: CatalogDeprecation): string {
   return alternate ? `Deprecated (${reasons}). Use ${alternate} instead.` : `Deprecated (${reasons})`;
 }
 
+/**
+ * Ranges, not resolved versions — the counterpart to the restore graph's tree
+ * for a package nothing has installed (#114). Carried verbatim, including a
+ * group the feed declares empty, which says something a missing group does not.
+ */
+function declaredFrom(entry: CatalogVersionEntry) {
+  return entry.dependencyGroups?.map((group) => ({
+    targetFramework: group.targetFramework,
+    dependencies: group.dependencies.map((d) => ({ id: d.id, range: d.range })),
+  }));
+}
+
 function flagsFrom(entry: CatalogVersionEntry): SearchedVersionMetadata | undefined {
   const deprecation = entry.deprecation ? deprecationText(entry.deprecation) : undefined;
   // The advisories are carried, not reduced to a flag. The version dropdown
@@ -76,8 +88,11 @@ function flagsFrom(entry: CatalogVersionEntry): SearchedVersionMetadata | undefi
     severity: severityFromInt(v.severity ?? -1),
   }));
   const vulnerable = (advisories?.length ?? 0) > 0;
-  if (!vulnerable && !deprecation) return undefined;
-  return { vulnerable: vulnerable || undefined, deprecation, advisories };
+  // `true`/absent says nothing worth carrying — only a withdrawal is a fact
+  // about the version (#114).
+  const listed = entry.listed === false ? false : undefined;
+  if (!vulnerable && !deprecation && listed === undefined) return undefined;
+  return { vulnerable: vulnerable || undefined, deprecation, advisories, listed };
 }
 
 /**
@@ -107,10 +122,7 @@ function toPackageMetadata(
     // tree for a package nothing has installed (#114). Carried verbatim,
     // including a group the feed declares empty, which says something a missing
     // group does not.
-    declaredDependencies: entry.dependencyGroups?.map((group) => ({
-      targetFramework: group.targetFramework,
-      dependencies: group.dependencies.map((d) => ({ id: d.id, range: d.range })),
-    })),
+    declaredDependencies: declaredFrom(entry),
     sourceName,
   };
 }
@@ -221,12 +233,22 @@ export class HttpCatalogBackend implements INuGetBackend {
       const versions: string[] = [];
       const versionFlags: Record<string, SearchedVersionMetadata> = {};
       for (const entry of catalog) {
+        // The date travels beside the marks rather than inside `flagsFrom`,
+        // which answers "is anything wrong with this version". Nothing is wrong
+        // with a version for having a date — but the details panel needs one per
+        // version, and this walk is the only place they all pass through (#114).
+        const flags = flagsFrom(entry);
+        if (flags || entry.published) {
+          versionFlags[entry.version] = { ...flags, published: entry.published };
+        }
         // A version withdrawn from the feed never appears in the CLI answer,
-        // because search does not return unlisted packages at all.
+        // because search does not return unlisted packages at all — so it stays
+        // out of the pickable list here too. Its flags are recorded above
+        // regardless: a project can be installed on exactly this version, and
+        // that fact has to be reachable by looking it up, even though it is
+        // never offered (#114).
         if (entry.listed === false) continue;
         versions.push(entry.version);
-        const flags = flagsFrom(entry);
-        if (flags) versionFlags[entry.version] = flags;
       }
       return { versions, versionFlags };
     }
@@ -462,6 +484,7 @@ export class HttpCatalogBackend implements INuGetBackend {
         license: entry.licenseExpression ? { type: 'expression', value: entry.licenseExpression } : undefined,
         tags: entry.tags?.join(' '),
         published: entry.published,
+        declaredDependencies: declaredFrom(entry),
         ...flagsFrom(entry),
       };
     }

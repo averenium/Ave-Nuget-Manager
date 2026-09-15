@@ -79,6 +79,16 @@ describe('buildPackageProblems', () => {
     });
     expect(problems.map((p) => p.kind)).toEqual(['vulnerability', 'deprecation', 'mapping', 'blocked']);
   });
+
+  it('adds an unlisted problem with tone "warning" when the installed version was withdrawn (#114)', () => {
+    expect(buildPackageProblems({ ...NO_MAPPING, unlistedInstalledVersion: '2.1.4' })).toEqual([
+      expect.objectContaining({ kind: 'unlisted', tone: 'warning', version: '2.1.4' }),
+    ]);
+  });
+
+  it('reports no unlisted problem when the field is absent', () => {
+    expect(buildPackageProblems(NO_MAPPING)).toEqual([]);
+  });
 });
 
 describe('what the feed says about the version being looked at', () => {

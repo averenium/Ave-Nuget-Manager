@@ -308,6 +308,32 @@ describe('HttpCatalogBackend filling the details panel', () => {
     );
   }
 
+  it('carries a publication date per version, which is the only place they all pass', async () => {
+    // The details panel dates the version on screen, and the version it is
+    // showing is usually not the one metadata was fetched for. `flagsFrom`
+    // answers "is anything wrong with this version" and says nothing about a
+    // version that is merely dated, so the date travels beside it (#114).
+    const backend = panelBackend({ [FEED_A]: [richEntry] });
+
+    const answer = await backend.getAllVersions('Newtonsoft.Json', ['a.config']);
+    expect(answer.versionFlags['13.0.4'].published).toBe('2024-05-01T10:00:00Z');
+    expect(answer.versionFlags['13.0.4'].vulnerable).toBeUndefined();
+  });
+
+  it('records a withdrawn version\'s flag without offering it in the picker (#114)', async () => {
+    // A project can be installed on exactly this version, and the panel has to
+    // be able to look it up by name even though the dropdown never offers it —
+    // the same split `enrichPackage` already makes for its own list.
+    const backend = panelBackend({
+      [FEED_A]: [entry('1.0.0'), entry('1.5.0', { listed: false })],
+    });
+
+    const answer = await backend.getAllVersions('X', ['a.config']);
+    expect(answer.versions).toEqual(['1.0.0']);
+    expect(answer.versionFlags['1.5.0'].listed).toBe(false);
+    expect(answer.versionFlags['1.0.0']).toBeUndefined();
+  });
+
   it('states the date and the licence expression, which the CLI path cannot', async () => {
     const backend = panelBackend({ [FEED_A]: [richEntry] });
 

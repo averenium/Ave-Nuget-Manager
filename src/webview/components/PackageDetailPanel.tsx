@@ -17,20 +17,21 @@ import { narrowingSplitsReference, pinsCrossedBy } from '../../frameworkPins';
 import { packageIdsEqual, pathsEqual } from '../../pathCompare';
 import { findingsAffectingPackage } from '../../vulnerabilities';
 import { BLOCKED_UPDATES_TOOLTIP, isPackageBlocked } from '../../blockedPackages';
-import { compareSemVer } from '../../semver';
+import { compareSemVer, versionsEqual } from '../../semver';
 import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { versionTone } from '../utils/versionTone';
 import { IconCheck, IconInstall, IconTrash } from '../utils/icons';
 import { buildPackageProblems } from '../utils/packageProblems';
 import { resolveVersionSpread } from '../../packageResolvedVersions';
 import { LicenseSideText } from './LicenseSideText';
-import { versionFactsParts, versionPositionLabel } from '../utils/versionFacts';
+import { VersionChangesBand } from './VersionChangesBand';
 import { sortTargetFrameworksDesc } from '../../targetFrameworks';
 import { nearestUnaffectedVersion } from '../utils/nearestUnaffected';
+import { flagsForVersion } from '../utils/versionFlags';
 import type { VulnerabilityFinding } from '../../types';
 
-/** How long the version selection has to hold still before the licence question goes out (#89). */
-const LICENSE_CHANGE_DEBOUNCE_MS = 500;
+/** How long the version selection has to hold still before the question goes out (#89, #114). */
+const VERSION_DIFF_DEBOUNCE_MS = 500;
 
 export function PackageDetailPanel() {
   const { state, dispatch, send } = useNugetManager();
@@ -121,11 +122,11 @@ export function PackageDetailPanel() {
     // the package: a ref survives the switch, and coming back to a package
     // whose answer `SELECT_PACKAGE` had just cleared would look like it had
     // already been asked and leave the row permanently absent.
-    if (state.detail.licenseChange?.version === offered) return;
+    if (state.detail.versionDiff?.version === offered) return;
     // Held back until the selection settles. Arrowing through a version list
-    // passes every version on the way, and a version whose expression the feed
-    // leaves empty costs a nuspec request each — so the ones merely scrolled
-    // past are never asked about at all. The broker cancels whatever is still
+    // passes every version on the way, and a version whose licence expression
+    // the feed leaves empty costs a nuspec request each — so the ones merely
+    // scrolled past are never asked about at all. The broker cancels whatever is still
     // in flight on the next question; this stops most of them being asked.
     // Same device as the package search in `PackagesTab`, one notch longer
     // because a keypress here is a step in a list rather than a letter.
@@ -134,9 +135,9 @@ export function PackageDetailPanel() {
       // when the version list is scrolled, and the reducer matches each against
       // the version still being asked about rather than letting a late one take
       // its place.
-      dispatch({ type: 'ASK_LICENSE_CHANGE', version: offered });
-      send({ type: 'GET_LICENSE_CHANGE', packageId: selectedPackageId, version: offered, configFiles });
-    }, LICENSE_CHANGE_DEBOUNCE_MS);
+      dispatch({ type: 'ASK_VERSION_DIFF', version: offered });
+      send({ type: 'GET_VERSION_DIFF', packageId: selectedPackageId, version: offered, configFiles });
+    }, VERSION_DIFF_DEBOUNCE_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPackageId, selectedVersion, allVersions, metadata?.version, state.sources.configChain]);
@@ -173,7 +174,6 @@ export function PackageDetailPanel() {
   const effectiveVersion = selectedVersion || allVersions[0] || metadata?.version || '';
   const installedEntries = state.packages.installed.filter((p) => packageIdsEqual(p.id, selectedPackageId));
   const installedVersions = installedEntries.map((p) => p.resolvedVersion);
-  const installedFrom = installedVersions[0] ?? '';
   // The local .nuspec and the restore graph (#86) are readable for anything the
   // restore put on disk, and a transitive package's folder and its entry in
   // project.assets.json are as present as a direct one's. Deliberately not
@@ -181,33 +181,42 @@ export function PackageDetailPanel() {
   // the Roslyn cap do and has to stay direct-only.
   const implicitEntries = state.packages.implicit.filter((p) => packageIdsEqual(p.id, selectedPackageId));
   const spread = resolveVersionSpread(installedEntries, implicitEntries);
+  /**
+   * The version this panel says the package is on, which a solution resolves per
+   * project — so the entry the CLI happened to list first is not it (#90, #115).
+   *
+   * The host already compares from the spread's primary; taking the first entry
+   * here made the "what changes" band name one version while the comparison had
+   * been made from another, and the update button's glyph and tooltip were
+   * pointed at the wrong version in the same way, from before #114.
+   */
+  const installedFrom = spread?.primary ?? installedVersions[0] ?? '';
   const restoredEntry = [...installedEntries, ...implicitEntries]
     .find((p) => p.resolvedVersion === spread?.primary);
   // Only meaningful once installed — Install (not yet installed) has no
   // "from" version to compare against, so it keeps its own glyph (#55).
-  // The dates come from the version walk the picker already made, so this line
-  // costs nothing beyond the arithmetic (#114). `metadata.published` is the
-  // authority for the version on screen — it is the entry that was fetched for
-  // it — and the per-version record answers for every other version.
-  const publishedByVersion = Object.fromEntries(
-    Object.entries(state.detail.versionFlags).map(([v, flag]) => [v, flag.published]),
-  );
-  const versionFacts = versionFactsParts({
-    version: effectiveVersion,
-    published: metadata?.version === effectiveVersion
-      ? metadata.published ?? publishedByVersion[effectiveVersion]
-      : publishedByVersion[effectiveVersion],
-    allVersions,
-    publishedByVersion,
-    sourceName: metadata?.sourceName,
-  });
-  const versionPosition = versionPositionLabel(effectiveVersion, allVersions);
+  // The version walk the picker already made carries a date per version, so the
+  // column answers for whatever version is picked without waiting for a
+  // metadata round trip of its own (#114). `metadata.published` is the
+  // authority when it is about the version on screen.
+  const publishedOfSelected = metadata?.version && metadata.published
+    && versionsEqual(metadata.version, effectiveVersion)
+    ? metadata.published
+    : flagsForVersion(state.detail.versionFlags, effectiveVersion)?.published;
 
   // Newest first, so the framework a declared-dependency group is looked up for
   // is the one the workspace is most likely to care about.
   const workspaceFrameworks = sortTargetFrameworksDesc(
     [...new Set(Object.values(state.packages.projectFrameworks).flat())],
   );
+
+  // Only the answer about the version on screen; one about a version the reader
+  // has since moved away from describes a comparison they are no longer looking
+  // at. The licence half of the same answer is read the same way, below.
+  const versionChanges = state.detail.versionDiff?.version
+    && versionsEqual(state.detail.versionDiff.version, effectiveVersion)
+    ? state.detail.versionDiff.dependencies ?? undefined
+    : undefined;
 
   const nearestClean = nearestUnaffectedVersion(
     allVersions, state.detail.versionFlags, effectiveVersion,
@@ -242,17 +251,25 @@ export function PackageDetailPanel() {
     // when the nuspec has nothing to say. Keyed by the version the panel is
     // actually showing, which for a nuspec is the installed one.
     deprecation: metadata?.deprecation
-      ?? state.detail.versionFlags[metadata?.version ?? effectiveVersion]?.deprecation,
+      ?? flagsForVersion(state.detail.versionFlags, metadata?.version ?? effectiveVersion)?.deprecation,
+    // The one fact a local `.nuspec` cannot state about itself: whether the
+    // feed still lists it. Asked about the version actually installed, never
+    // the one being browsed for an update (#114).
+    unlistedInstalledVersion: isInstalled && installedFrom
+      && flagsForVersion(state.detail.versionFlags, installedFrom)?.listed === false
+      ? installedFrom
+      : undefined,
     // Only the answer about the version on screen. One about a version the
     // user has since moved away from describes a comparison they are no longer
     // looking at.
-    licenseChange: state.detail.licenseChange?.version === effectiveVersion
-      ? state.detail.licenseChange.change ?? undefined
+    licenseChange: state.detail.versionDiff?.version
+      && versionsEqual(state.detail.versionDiff.version, effectiveVersion)
+      ? state.detail.versionDiff.license ?? undefined
       : undefined,
     // What the feed says about the version the user is looking at, which the
     // restore-graph scan cannot know: it only ever describes what is installed.
     selectedVersion: effectiveVersion,
-    selectedVersionAdvisories: state.detail.versionFlags[effectiveVersion]?.advisories,
+    selectedVersionAdvisories: flagsForVersion(state.detail.versionFlags, effectiveVersion)?.advisories,
   });
 
   // Metadata arrives a moment after the selection does. Sections that don't
@@ -513,28 +530,6 @@ export function PackageDetailPanel() {
         </div>
       </DetailHeader>
 
-      {/* Drawn only when the feed answered something: with the catalog off, on a
-          local folder source, or on a feed with no metadata resource, the panel
-          stays exactly as it was — no placeholders, no "unknown" (#114). */}
-      {(versionFacts.length > 0 || versionPosition) && (
-        <div className="version-facts">
-          {versionFacts.map((part, at) => (
-            <React.Fragment key={part}>
-              {at > 0 && <span className="version-facts__sep" aria-hidden="true">·</span>}
-              <span>{part}</span>
-            </React.Fragment>
-          ))}
-          {/* Pushed to the end and out of the flow: it is the least of these
-              facts and the longest to say, so in the line it moved the text the
-              reader is actually following. */}
-          {versionPosition && (
-            <span className="version-facts__position" title={versionPosition.full}>
-              {versionPosition.short}
-            </span>
-          )}
-        </div>
-      )}
-
       {(error || isLoading || !metadataSettled) && (
         <div className="detail-panel__status">
           {error && <span className="detail-panel__error" role="alert">{error}</span>}
@@ -594,10 +589,18 @@ export function PackageDetailPanel() {
               <div className="problems-band">
                 <div className="detail-section__title">Problems</div>
                 <ul className="vuln-list">
-                  {problems.map((p) => {
+                  {problems.map((p, index) => {
                     const via = p.kind === 'vulnerability' ? p.via : undefined;
+                    // The offer belongs to the feed advisory it corrects, not to
+                    // whatever else happens to render after it (#114) — a licence
+                    // row listed below the advisory must not make the offer read
+                    // as if it followed from that. It sits right after the last
+                    // feed-advisory row instead of after the whole list.
+                    const isLastFeedAdvisory = p.kind === 'feed-advisory'
+                      && !problems.slice(index + 1).some((later) => later.kind === 'feed-advisory');
                     return (
-                    <li key={p.key} className={`vuln-item vuln-item--${p.tone}${via ? ' vuln-item--via' : ''}`}>
+                    <React.Fragment key={p.key}>
+                    <li className={`vuln-item vuln-item--${p.tone}${via ? ' vuln-item--via' : ''}`}>
                       <span className="vuln-item__sev">{p.label}</span>
                       <span className="vuln-item__body">
                         {via ? (
@@ -633,6 +636,11 @@ export function PackageDetailPanel() {
                           </>
                         ) : p.kind === 'deprecation' ? (
                           p.message
+                        ) : p.kind === 'unlisted' ? (
+                          <>
+                            <strong>{p.version}</strong> is no longer listed on its feed — it still restores from
+                            the cache, but a clean machine may not find it
+                          </>
                         ) : p.kind === 'feed-advisory' ? (
                           <>
                             {p.url ? (
@@ -660,33 +668,36 @@ export function PackageDetailPanel() {
                         )}
                       </span>
                     </li>
+                    {/* Every entry is already in memory, so the nearest version
+                        the advisory does not cover is free to work out — and
+                        turns a warning into something the reader can act on in
+                        one click (#114). Kept right after the advisory it
+                        corrects, inside the same list, so a licence row printed
+                        below it can't make the offer read as if it followed from
+                        that instead. */}
+                    {isLastFeedAdvisory && nearestClean && (
+                      <li className="problems-band__offer">
+                        <span aria-hidden="true">↑</span>{' '}
+                        <strong>{nearestClean}</strong> is the nearest version this advisory does not cover
+                        {' '}
+                        <button
+                          type="button"
+                          className="problems-band__pick"
+                          onClick={() => setSelectedVersion(nearestClean)}
+                        >pick it</button>
+                      </li>
+                    )}
+                    </React.Fragment>
                     );
                   })}
                 </ul>
-                {/* Every entry is already in memory, so the nearest version the
-                    advisory does not cover is free to work out — and turns a
-                    warning into something the reader can act on in one click
-                    (#114). Offered only alongside a feed advisory: the scan's
-                    own findings are about what is installed and are answered by
-                    the update button, not by moving the picker. */}
-                {nearestClean && problems.some((p) => p.kind === 'feed-advisory') && (
-                  <div className="problems-band__offer">
-                    <span aria-hidden="true">↑</span>{' '}
-                    <strong>{nearestClean}</strong> is the nearest version this advisory does not cover
-                    {' '}
-                    <button
-                      type="button"
-                      className="problems-band__pick"
-                      onClick={() => setSelectedVersion(nearestClean)}
-                    >pick it</button>
-                  </div>
-                )}
               </div>
             )}
           </div>
 
           <PackageAttributeColumn
             license={metadata.license}
+            published={publishedOfSelected}
             licenseUrl={metadata.licenseUrl}
             projectUrl={metadata.projectUrl}
             repository={metadata.repository}
@@ -712,6 +723,12 @@ export function PackageDetailPanel() {
         </div>
       )}
 
+      {/* Describes the picked version, so it sits above the resolved tree, which
+          still describes what is installed now (#114). */}
+      {versionChanges && isInstalled && installedFrom && (
+        <VersionChangesBand diff={versionChanges} from={installedFrom} to={effectiveVersion} />
+      )}
+
       {/* The resolved tree when there is a restore graph to read one from, and
           what the version declares when there is not (#114). Never both: they
           answer the same question, and the declared ranges are the weaker
@@ -720,6 +737,9 @@ export function PackageDetailPanel() {
         ? <PackageDependenciesSection info={metadata.dependencyTree} />
         : metadata?.declaredDependencies && (
           <DeclaredDependenciesSection
+            // Resets the picked framework with the package: a choice made about
+            // one package's frameworks says nothing about the next one's.
+            key={selectedPackageId}
             groups={metadata.declaredDependencies}
             projectFrameworks={workspaceFrameworks}
           />

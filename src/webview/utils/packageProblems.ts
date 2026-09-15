@@ -15,6 +15,7 @@ export type ProblemDescriptor =
   | { kind: 'mapping'; key: 'mapping'; tone: ProblemTone; label: string; mappedSourceNames: string[] }
   | { kind: 'blocked'; key: 'blocked'; tone: ProblemTone; label: string }
   | { kind: 'deprecation'; key: 'deprecation'; tone: ProblemTone; label: string; message: string }
+  | { kind: 'unlisted'; key: 'unlisted'; tone: ProblemTone; label: string; version: string }
   | {
       kind: 'feed-advisory';
       key: string;
@@ -58,6 +59,13 @@ export function buildPackageProblems(opts: {
   updatesBlocked: boolean;
   /** Feed deprecation notice for the version currently shown in the Info panel (#86) — never from a nuspec. */
   deprecation?: string;
+  /**
+   * Set when the installed version has been withdrawn from its feed (#114).
+   * Deliberately not asked about whatever version is picked in the dropdown —
+   * withdrawal only matters for the version a project is actually on, not one
+   * being browsed for an update.
+   */
+  unlistedInstalledVersion?: string;
   /** Set when the selected version's licence differs from the installed one (#89). */
   licenseChange?: LicenseChange;
   /**
@@ -75,13 +83,21 @@ export function buildPackageProblems(opts: {
 }): ProblemDescriptor[] {
   const {
     packageId, findings, viaFindings, isInstalled, packageSourceMapping, updatesBlocked,
-    deprecation, licenseChange, selectedVersion, selectedVersionAdvisories,
+    deprecation, unlistedInstalledVersion, licenseChange, selectedVersion, selectedVersionAdvisories,
   } = opts;
 
   const problems: ProblemDescriptor[] = [...vulnerabilityProblems(findings, viaFindings)];
 
   if (deprecation) {
     problems.push({ kind: 'deprecation', key: 'deprecation', tone: 'warning', label: 'deprecated', message: deprecation });
+  }
+
+  if (unlistedInstalledVersion) {
+    // Amber, not red: nothing has failed yet. It still restores from whatever
+    // already cached it — withdrawal only risks a machine that never has.
+    problems.push({
+      kind: 'unlisted', key: 'unlisted', tone: 'warning', label: 'unlisted', version: unlistedInstalledVersion,
+    });
   }
 
   // An advisory the scan already reported is not repeated: the scan speaks for

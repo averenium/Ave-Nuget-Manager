@@ -26,6 +26,13 @@ import { createZip, type ZipEntry } from './zipStore';
 
 export interface TraceEnvInfo {
   extensionVersion: string;
+  /**
+   * `Development`, `Production` or `Test` (#114). A debug run reads the
+   * repository's own `package.json`, so its version is whatever the working
+   * tree was last released as — indistinguishable from the installed extension,
+   * which once sent an investigation looking for a bug in the wrong build.
+   */
+  extensionMode?: string;
   appName: string;
   vscodeVersion: string;
   os: string;
@@ -101,6 +108,7 @@ export async function buildSanitizedZip(opts: {
 
   add('env.txt', [
     `extensionVersion=${opts.env.extensionVersion}`,
+    ...(opts.env.extensionMode ? [`extensionMode=${opts.env.extensionMode}`] : []),
     `appName=${opts.env.appName}`,
     `vscodeVersion=${opts.env.vscodeVersion}`,
     `os=${opts.env.os}`,
@@ -194,6 +202,28 @@ export class TraceController implements ITrace {
   recordHttp(entry: Omit<Extract<TraceEvent, { kind: 'http' }>, 'kind' | 'at'>): void {
     if (!this.isRecording()) return;
     this.record({ kind: 'http', at: new Date().toISOString(), ...entry });
+  }
+
+  /**
+   * A synthetic log row, as the extension's own account of a decision (#114).
+   *
+   * Only `info` and `error` kinds: `cli` and `http` rows reach the trace from
+   * the call sites that make those calls, with the cwd and the response body
+   * this subscription never sees, and recording them again here would double
+   * every one of them.
+   */
+  recordLogEntry(entry: { kind: string; timestamp: string; command: string; args: string[]; stderr?: string }): void {
+    if (!this.isRecording()) return;
+    if (entry.kind !== 'info' && entry.kind !== 'error') return;
+    this.record({
+      kind: 'log',
+      at: entry.timestamp,
+      level: entry.kind,
+      message: entry.command,
+      // An error's detail lives in `stderr`, where a CLI failure's would; the
+      // row is worth nothing in a trace without it.
+      args: entry.stderr ? [...entry.args, entry.stderr] : entry.args,
+    });
   }
 
   recordCli(entry: Omit<Extract<TraceEvent, { kind: 'cli' }>, 'kind'>): void {

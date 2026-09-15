@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { PackageRow } from './PackageRow';
-import { matchesQuery, sortByRelevance } from '../utils/search';
+import { matchesQuery, normalizeQuery, sortByRelevance } from '../utils/search';
 import type { ImplicitPackage } from '../../types';
 import { findingsAffectingPackage, vulnerabilityAffectRank } from '../../vulnerabilities';
 
@@ -34,7 +34,7 @@ export function ImplicitList() {
   const grouped = groupById(filtered);
   const uniquePackages = [...grouped.values()].map(withUnionedDeps);
 
-  const displayed = searchQuery.length >= 2
+  const displayed = normalizeQuery(searchQuery).length >= 2
     ? sortByRelevance(uniquePackages, searchQuery)
     : [...uniquePackages].sort((a, b) => {
       const va = vulnerabilityAffectRank(vulnerabilities, a.id, a.dependencies);

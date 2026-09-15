@@ -78,12 +78,23 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
     () => runner.checkDotnetAvailable(),
     {
       extensionVersion: version,
+      // Which build this is. The version alone cannot say: a debug run reads the
+      // repository's own package.json, so a development host reports whatever
+      // the working tree was last released as — which reads as the installed
+      // extension and sends the reader looking for a bug in the wrong build.
+      extensionMode: vscode.ExtensionMode[context.extensionMode],
       appName: vscode.env.appName,
       vscodeVersion: vscode.version,
       os: `${os.platform()} ${os.release()}`,
       arch: os.arch(),
     },
   );
+  // The trace is fed by the call sites that make calls — `dotnet`, HTTP, webview
+  // messages — so it recorded work that happened and nothing about work that was
+  // skipped. The extension's own account of its decisions ("answered from
+  // cache", "scan skipped", "falling back to the CLI") lived only on the Log
+  // tab, which is not what anyone takes to investigate (#114).
+  context.subscriptions.push(log.subscribe((entry) => trace.recordLogEntry(entry)));
   runner = new CliRunner(
     log,
     createConcurrencyGate(() => getConfig().dotnetConcurrency),

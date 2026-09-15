@@ -905,6 +905,55 @@ a.badge:hover { text-decoration: underline; }
 }
 .dep-section__note .badge { margin: 0 2px; }
 .dep-row--none { font-size: 12px; color: var(--color-tab-inactive); }
+
+/* "What changes" band (#114): one row per difference, the glyph in a fixed
+   gutter so the ids line up under each other whatever the glyph is. */
+.chg-row { display: flex; gap: var(--spacing-xs); align-items: baseline; font-size: 12px; padding: 2px 0; }
+.chg-row__op { flex: 0 0 12px; text-align: center; font-weight: 600; }
+.chg-row__op--add { color: var(--color-success); }
+.chg-row__op--change { color: var(--color-warning); }
+.chg-row__op--drop { color: var(--color-tab-inactive); }
+.chg-row__id { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chg-row__id--drop { color: var(--color-tab-inactive); }
+.chg-row__to { flex: 0 0 auto; color: var(--color-tab-inactive); font-size: 11px; }
+
+/* The framework picker (#114). The heading's own right-hand line is the control,
+   so switching frameworks costs no height — the panel's scarcest dimension —
+   and a package declaring seven groups fits as easily as one declaring two,
+   which a strip of tabs does not. */
+.dep-section__picker { position: relative; }
+.dep-section__context--btn {
+  border: 1px solid transparent; border-radius: var(--radius);
+  background: none; font: inherit; font-size: 11px; color: var(--color-tab-inactive);
+  padding: 1px 5px; cursor: pointer; white-space: nowrap;
+}
+/* Hover and open both answer with a border, not only a fill: a fill alone is
+   discarded in High Contrast and forced-colors (#68). */
+.dep-section__context--btn:hover,
+.dep-section__context--btn[aria-expanded='true'] {
+  border-color: var(--color-border); background: var(--color-list-hover);
+  color: var(--color-fg);
+}
+.dep-section__context--btn:focus-visible { outline: 1px solid var(--color-link); outline-offset: 1px; }
+.dep-section__qualifier { color: var(--color-tab-inactive); }
+.dep-section__arrow { margin-left: 4px; opacity: 0.8; }
+.dep-section__menu {
+  position: absolute; right: 0; top: 100%; z-index: 20;
+  margin: 2px 0 0; padding: 3px 0; list-style: none;
+  min-width: 160px; max-height: 240px; overflow-y: auto;
+  background: var(--color-input-bg); border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.dep-section__option {
+  display: block; width: 100%; text-align: left;
+  border: 0; background: none; font: inherit; font-size: 11px;
+  color: var(--color-fg); padding: 3px 9px; cursor: pointer; white-space: nowrap;
+}
+.dep-section__option:hover { background: var(--color-list-hover); }
+.dep-section__option--on { background: var(--color-list-active); color: var(--color-list-active-fg); }
+/* A framework this project cannot take stays selectable — browsing one is the
+   point of the picker — but reads as the browsing it is. */
+.dep-section__option--dim { color: var(--color-tab-inactive); }
 /* Own container: the rows are a dense list, so they must not inherit the
    section's gap between every one of them. */
 .dep-list { display: flex; flex-direction: column; }
@@ -1614,21 +1663,14 @@ a.badge:hover { text-decoration: underline; }
   display: flex; flex-direction: column; gap: var(--spacing-xs);
   font-size: 12px;
 }
-/* The facts line under the version field (#114): publication date, where the
-   version sits in its own history, and the feed that answered. Quiet by
-   design — it qualifies the version above it rather than competing with it. */
-.version-facts {
+/* Publication date of the version on screen, in the attribute column (#114).
+   Quiet: it dates the version rather than reporting anything. Pushed to the end
+   of the row it shares with the licence badge and never allowed to shrink — if
+   the column is too narrow for both, the badge ellipsises (it already does) and
+   the date stays whole, because half a date says nothing. */
+.pkg-attrs__published {
   font-size: 11px; color: var(--color-tab-inactive);
-  padding: 2px var(--spacing-md) 0;
-  display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline;
-}
-.version-facts__sep { opacity: 0.6; }
-/* Out of the flow, so however long the count grows it can never move the facts
-   to its left; `min-width: 0` on nothing here, because it never shrinks them
-   either — it is the part that gives way. */
-.version-facts__position {
-  margin-left: auto; padding-left: var(--spacing-sm);
-  font-size: 10px; opacity: 0.75; white-space: nowrap;
+  margin-left: auto; flex: 0 0 auto; white-space: nowrap;
 }
 
 /* Batch licence confirmation (#89). One row per package whose licence moves;
@@ -1970,9 +2012,10 @@ a.badge:hover { text-decoration: underline; }
   .sources-popover { forced-color-adjust: none; border-color: ButtonText; }
 }
 
-/* The one-click correction under a feed advisory (#114). Inside the Problems
-   band, so it inherits the band's weight — it is an offer about what was just
-   reported, not a finding of its own. */
+/* The one-click correction under a feed advisory (#114). A row in the same
+   `.vuln-list` as the advisory it corrects, right after it, so it inherits the
+   list's spacing and stays attached to that row rather than to whatever else
+   the list prints below it. */
 .problems-band__offer { font-size: 12px; color: var(--color-fg); }
 .problems-band__pick {
   padding: 0; border: 0; background: none; font: inherit; font-size: 11px;

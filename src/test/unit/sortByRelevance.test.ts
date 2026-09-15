@@ -56,4 +56,15 @@ describe('sortByRelevance', () => {
     const sorted = sortByRelevance(FEED_ORDER, 'i', { keepOrderOnTies: true });
     expect(sorted.map((p) => p.id)).toEqual(FEED_ORDER.map((p) => p.id));
   });
+
+  it('sorts the same whether the query is padded with whitespace or not (#120)', () => {
+    const padded = sortByRelevance(FEED_ORDER, '  imagesharp  ', { keepOrderOnTies: true });
+    const plain = sortByRelevance(FEED_ORDER, 'imagesharp', { keepOrderOnTies: true });
+    expect(padded.map((p) => p.id)).toEqual(plain.map((p) => p.id));
+  });
+
+  it('leaves a whitespace-only query untouched, the same as an empty one (#120)', () => {
+    const sorted = sortByRelevance(FEED_ORDER, '   ', { keepOrderOnTies: true });
+    expect(sorted.map((p) => p.id)).toEqual(FEED_ORDER.map((p) => p.id));
+  });
 });

@@ -4,6 +4,7 @@ import {
   FAMILY_MODERN,
   FAMILY_STANDARD,
   parseTargetFramework,
+  sortTargetFrameworksDesc,
   type ParsedTargetFramework,
 } from './targetFrameworks';
 import { frameworkKey } from './frameworkMoniker';
@@ -91,6 +92,33 @@ export function selectCompatibleGroup<T extends { targetFramework?: string }>(
   // group written for this framework's family says more about it than one
   // written for none.
   return compatible[0] ?? catchAll;
+}
+
+/**
+ * The group to open on, or to compare through.
+ *
+ * With a project framework, the one restore would take. **Without one** — which
+ * happens before `dotnet list` answers and for good if it failed — the newest
+ * group the feed declares. Asking `selectCompatibleGroup` with no target answers
+ * only with the catch-all group, which most packages do not have, and every
+ * caller then silently has nothing: a section that named no framework, and a
+ * version comparison that found no differences because it compared two empty
+ * lists.
+ */
+export function defaultGroupFor<T extends { targetFramework?: string }>(
+  groups: readonly T[],
+  target: string | undefined,
+): T | undefined {
+  if (target) return selectCompatibleGroup(groups, target);
+  return selectCompatibleGroup(groups, undefined) ?? newestGroup(groups);
+}
+
+function newestGroup<T extends { targetFramework?: string }>(
+  groups: readonly T[],
+): T | undefined {
+  const named = groups.filter((g) => frameworkKey(g.targetFramework));
+  const newest = sortTargetFrameworksDesc(named.map((g) => frameworkKey(g.targetFramework)))[0];
+  return named.find((g) => frameworkKey(g.targetFramework) === newest) ?? groups[0];
 }
 
 /**

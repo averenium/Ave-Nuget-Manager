@@ -35,15 +35,21 @@ export type WebviewMessage =
   | { type: 'GET_PACKAGE_METADATA'; packageId: string; version?: string; configFiles: string[]; projectPath?: string }
   | { type: 'GET_ALL_VERSIONS'; packageId: string; configFiles: string[]; prerelease: boolean }
   /**
-   * Would taking `version` change the package's licence (#89)?
+   * Everything that would change by taking this version, asked once (#114).
    *
    * Its own message rather than a field on the metadata answer, because the two
    * are about different versions. The Info panel describes the version that is
    * installed; the question here is about the version the selector is offering,
    * which on entry is the newest rather than the installed one. Tying the
    * comparison to the metadata compared the installed version with itself.
+   *
+   * The licence and the dependency difference are the same question about the
+   * same two versions, answered from the same registration pages — two requests
+   * for them would be two round trips, two debounces and two cancellations for
+   * one user action. They travel together and are rendered apart: the licence in
+   * Problems, where #89 put it, and the rest in its own band.
    */
-  | { type: 'GET_LICENSE_CHANGE'; packageId: string; version: string; configFiles: string[] }
+  | { type: 'GET_VERSION_DIFF'; packageId: string; version: string; configFiles: string[] }
 
   /**
    * Ask which of a batch's packages would change licence, before the first
@@ -290,12 +296,14 @@ export type ExtensionMessage =
   // for versions a detailed search actually returned flags for) so the
   // version dropdown can warn before a version is even chosen (#86).
   | {
-      type: 'LICENSE_CHANGE';
+      type: 'VERSION_DIFF';
       packageId: string;
       /** The version asked about — an answer can arrive after the selection moved on. */
       version: string;
       /** Absent when the licence does not change, or cannot be compared. */
-      change?: import('./packageLicense').LicenseChange;
+      license?: import('./packageLicense').LicenseChange;
+      /** Absent when nothing about the dependencies would move, or neither side was described. */
+      dependencies?: import('./packageVersionDiff').VersionDependencyDiff;
     }
   | {
       type: 'BATCH_LICENSE_CHANGES';

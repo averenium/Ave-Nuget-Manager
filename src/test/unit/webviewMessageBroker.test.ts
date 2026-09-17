@@ -111,6 +111,24 @@ function makeSolutionParser(): jest.Mocked<SolutionParser> {
   return { getProjects: jest.fn().mockResolvedValue([]) } as any;
 }
 
+function makeScopeMemory() {
+  return { get: jest.fn().mockReturnValue(undefined), set: jest.fn().mockResolvedValue(undefined) };
+}
+
+/**
+ * `findSolutionsInFolder` and `findProjectsInFolder` each call
+ * `vscode.workspace.findFiles` with their own `RelativePattern`, told apart
+ * only by which glob they pass — this answers each from its own list, and
+ * `[]` for the plain-string nuget.config glob `_buildSourcesPayload` also fires.
+ */
+function mockFindFilesByGlob(solutionPaths: string[], projectPaths: string[]) {
+  (vscode.workspace.findFiles as jest.Mock).mockImplementation((pattern: any) => {
+    if (typeof pattern === 'string') return Promise.resolve([]);
+    const isSolutionGlob = String(pattern.pattern).includes('sln');
+    return Promise.resolve((isSolutionGlob ? solutionPaths : projectPaths).map((p) => vscode.Uri.file(p)));
+  });
+}
+
 const PROJECT_SCOPE: WorkspaceScope = { kind: 'project', projectPath: '/p/App.csproj' };
 const SOLUTION_SCOPE: WorkspaceScope = {
   kind: 'solution',
@@ -254,10 +272,7 @@ describe('WebviewMessageBroker', () => {
         { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
       ];
       jest.spyOn(fsPromises, 'readdir').mockResolvedValue([] as any);
-      (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
-        vscode.Uri.file('/root/ServiceA/A.csproj'),
-        vscode.Uri.file('/root/ServiceB/B.csproj'),
-      ]);
+      mockFindFilesByGlob([], ['/root/ServiceA/A.csproj', '/root/ServiceB/B.csproj']);
 
       const { stub, posted, simulateMessage } = makeProvider(undefined);
       const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
@@ -292,9 +307,7 @@ describe('WebviewMessageBroker', () => {
         { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
       ];
       jest.spyOn(fsPromises, 'readdir').mockResolvedValue([] as any);
-      (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
-        vscode.Uri.file('/root/ServiceA/A.csproj'),
-      ]);
+      mockFindFilesByGlob([], ['/root/ServiceA/A.csproj']);
 
       const { stub, simulateMessage } = makeProvider(undefined);
       const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
@@ -3756,70 +3769,275 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     }
   });
 
-  // ── SELECT_SCOPE ───────────────────────────────────────────────────────────
+  // ── SELECT_SCOPE / folder-scope chooser (#113) ─────────────────────────────
 
-  it('SELECT_SCOPE activates the picked project', async () => {
+  describe('SELECT_SCOPE / PICK_SCOPE (folder-scope chooser)', () => {
+  afterEach(() => {
+    (vscode.workspace as any).workspaceFolders = [];
+    (vscode.workspace.findFiles as jest.Mock).mockReset();
+  });
+
+  it('SELECT_SCOPE answers with SCOPE_CHOICES scoped to workspaceFolders[0], not a QuickPick', async () => {
     (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [
       { uri: vscode.Uri.file('/sol'), name: 'sol', index: 0 },
     ];
-    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
-      vscode.Uri.file('/sol/App.sln'),
-      vscode.Uri.file('/sol/src/Lib.csproj'),
-    ]);
-    (vscode.window.showQuickPick as jest.Mock).mockResolvedValue({ fsPath: '/sol/src/Lib.csproj' });
+    mockFindFilesByGlob(['/sol/App.sln'], ['/sol/src/Lib.csproj']);
 
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     stub.isClientReady = true;
-    const backend = makeBackend();
     const parser = makeSolutionParser();
-    const resolver = makeConfigResolver();
+    parser.getProjects.mockResolvedValue([
+      { name: 'Lib', relativePath: 'src/Lib.csproj', absolutePath: '/sol/src/Lib.csproj' },
+    ]);
 
-    const broker = new WebviewMessageBroker(stub, backend, parser, resolver, logger);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), parser, makeConfigResolver(), logger);
     broker.attach();
     simulateMessage({ type: 'SELECT_SCOPE' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    expect(stub.setScope).not.toHaveBeenCalled();
+    const choicesMsg = posted.find((m) => m.type === 'SCOPE_CHOICES') as any;
+    expect(choicesMsg).toBeDefined();
+    expect(choicesMsg.choices.solutions).toEqual([
+      expect.objectContaining({ path: '/sol/App.sln', projectCount: 1 }),
+    ]);
+    expect(choicesMsg.choices.totalProjects).toBe(1);
+    expect(choicesMsg.currentPath).toBe('/p/App.csproj');
+  });
+
+  it('SELECT_SCOPE warns when the workspace root has nothing to choose from', async () => {
+    (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [
+      { uri: vscode.Uri.file('/empty'), name: 'empty', index: 0 },
+    ];
+    const fsPromises = jest.requireActual('fs/promises') as typeof import('fs/promises');
+    jest.spyOn(fsPromises, 'readdir').mockResolvedValueOnce([] as any);
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([]);
+
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({ type: 'SELECT_SCOPE' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+    expect(posted.some((m) => m.type === 'SCOPE_CHOICES')).toBe(false);
+  });
+
+  it('SELECT_SCOPE errors when no workspace folder is open', async () => {
+    (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [];
+
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({ type: 'SELECT_SCOPE' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+  });
+
+  it('PICK_SCOPE activates the chosen file and remembers it for the folder', async () => {
+    (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [
+      { uri: vscode.Uri.file('/sol'), name: 'sol', index: 0 },
+    ];
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([]);
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    stub.isClientReady = true;
+    const memory = makeScopeMemory();
+    const broker = new WebviewMessageBroker(
+      stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      memory,
+    );
+    broker.attach();
+    simulateMessage({ type: 'PICK_SCOPE', path: '/sol/src/Lib.csproj' });
     await new Promise((r) => setTimeout(r, 30));
 
     expect(stub.setScope).toHaveBeenCalledWith({ kind: 'project', projectPath: '/sol/src/Lib.csproj' });
     const init = posted.find((m) => m.type === 'INIT_STATE') as { scope?: WorkspaceScope } | undefined;
     expect(init?.scope).toEqual({ kind: 'project', projectPath: '/sol/src/Lib.csproj' });
-    expect(parser.getProjects).not.toHaveBeenCalled();
+    expect(memory.set).toHaveBeenCalledWith('/sol', { kind: 'file', path: '/sol/src/Lib.csproj' });
   });
 
-  it('SELECT_SCOPE skips activate when the current file is picked again', async () => {
-    (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [
-      { uri: vscode.Uri.file('/p'), name: 'p', index: 0 },
-    ];
-    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
-      vscode.Uri.file('/p/App.csproj'),
-    ]);
-    (vscode.window.showQuickPick as jest.Mock).mockResolvedValue({ fsPath: '/p/App.csproj' });
-
+  it('PICK_SCOPE skips activate when the current file is picked again', async () => {
     const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
     stub.isClientReady = true;
     const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
     broker.attach();
-    simulateMessage({ type: 'SELECT_SCOPE' });
+    simulateMessage({ type: 'PICK_SCOPE', path: '/p/App.csproj' });
     await new Promise((r) => setTimeout(r, 20));
 
     expect(stub.setScope).not.toHaveBeenCalled();
   });
 
-  it('SELECT_SCOPE does nothing when QuickPick is cancelled', async () => {
+  it('PICK_SCOPE_FOLDER activates "all projects" and remembers the folder choice', async () => {
     (vscode.workspace as { workspaceFolders: unknown }).workspaceFolders = [
-      { uri: vscode.Uri.file('/sol'), name: 'sol', index: 0 },
+      { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
     ];
     (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
-      vscode.Uri.file('/sol/App.sln'),
+      vscode.Uri.file('/root/A.csproj'),
+      vscode.Uri.file('/root/B.csproj'),
     ]);
-    (vscode.window.showQuickPick as jest.Mock).mockResolvedValue(undefined);
-
-    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
-    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    stub.isClientReady = true;
+    const memory = makeScopeMemory();
+    const broker = new WebviewMessageBroker(
+      stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      memory,
+    );
     broker.attach();
-    simulateMessage({ type: 'SELECT_SCOPE' });
-    await new Promise((r) => setTimeout(r, 20));
+    simulateMessage({ type: 'PICK_SCOPE_FOLDER', folderPath: '/root' });
+    await new Promise((r) => setTimeout(r, 30));
 
-    expect(stub.setScope).not.toHaveBeenCalled();
+    expect(stub.setScope).toHaveBeenCalledWith({
+      kind: 'folder',
+      folderPath: '/root',
+      projects: [
+        { name: 'A', relativePath: 'A.csproj', absolutePath: '/root/A.csproj' },
+        { name: 'B', relativePath: 'B.csproj', absolutePath: '/root/B.csproj' },
+      ],
+    });
+    expect(memory.set).toHaveBeenCalledWith('/root', { kind: 'folder' });
+    const init = posted.find((m) => m.type === 'INIT_STATE') as { scope?: WorkspaceScope } | undefined;
+    expect(init?.scope).toEqual({
+      kind: 'folder',
+      folderPath: '/root',
+      projects: [
+        { name: 'A', relativePath: 'A.csproj', absolutePath: '/root/A.csproj' },
+        { name: 'B', relativePath: 'B.csproj', absolutePath: '/root/B.csproj' },
+      ],
+    });
+  });
+  }); // SELECT_SCOPE / PICK_SCOPE
+
+  // ── Ambiguous folder (several solutions) auto-detect (#113) ────────────────
+
+  describe('ambiguous folder (multiple solutions) on WEBVIEW_READY', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+      (vscode.workspace as any).workspaceFolders = [];
+      (vscode.workspace.findFiles as jest.Mock).mockReset();
+    });
+
+    it('sends scopeChoices on INIT_STATE with a null scope instead of giving up', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      mockFindFilesByGlob(
+        ['/root/App.sln', '/root/Other.sln'],
+        ['/root/src/A.csproj', '/root/src/B.csproj'],
+      );
+
+      const { stub, posted, simulateMessage } = makeProvider(undefined);
+      const parser = makeSolutionParser();
+      parser.getProjects.mockImplementation((p: string) => Promise.resolve(
+        p.includes('App')
+          ? [{ name: 'A', relativePath: 'src/A.csproj', absolutePath: '/root/src/A.csproj' }]
+          : [{ name: 'B', relativePath: 'src/B.csproj', absolutePath: '/root/src/B.csproj' }],
+      ));
+      const broker = new WebviewMessageBroker(stub, makeBackend(), parser, makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(stub.setScope).not.toHaveBeenCalled();
+      const init = posted.find((m) => m.type === 'INIT_STATE') as any;
+      expect(init.scope).toBeNull();
+      expect(init.scopeChoices.solutions.map((s: any) => s.path)).toEqual(['/root/App.sln', '/root/Other.sln']);
+      expect(init.scopeChoices.totalProjects).toBe(2);
+      expect(init.scopeChoices.offerAllProjects).toBe(true);
+    });
+
+    it('still runs onFirstWebviewReady exactly once when the folder is ambiguous (#113)', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      mockFindFilesByGlob(['/root/App.sln', '/root/Other.sln'], []);
+
+      const { stub, simulateMessage } = makeProvider(undefined);
+      const onFirst = jest.fn().mockResolvedValue(undefined);
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger, onFirst,
+      );
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(onFirst).toHaveBeenCalledTimes(1);
+
+      // A later WEBVIEW_READY (e.g. the view moved between panel/sidebar)
+      // must not run the first-ready hook again.
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(onFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it('restores a still-valid remembered choice silently, without the chooser', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      mockFindFilesByGlob(
+        ['/root/App.sln', '/root/Other.sln'],
+        ['/root/src/A.csproj'],
+      );
+
+      const { stub, posted, simulateMessage } = makeProvider(undefined);
+      const parser = makeSolutionParser();
+      parser.getProjects.mockResolvedValue([
+        { name: 'A', relativePath: 'src/A.csproj', absolutePath: '/root/src/A.csproj' },
+      ]);
+      const memory = makeScopeMemory();
+      memory.get.mockReturnValue({ kind: 'file', path: '/root/App.sln' });
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), parser, makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        memory,
+      );
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(stub.setScope).toHaveBeenCalledWith(expect.objectContaining({ kind: 'solution', solutionPath: '/root/App.sln' }));
+      const init = posted.find((m) => m.type === 'INIT_STATE') as any;
+      expect(init.scope).toEqual(expect.objectContaining({ kind: 'solution', solutionPath: '/root/App.sln' }));
+      expect(init.scopeChoices ?? null).toBeNull();
+    });
+
+    it('drops a remembered choice that no longer exists and asks again', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      mockFindFilesByGlob(
+        ['/root/App.sln', '/root/Other.sln'],
+        ['/root/src/A.csproj'],
+      );
+
+      const { stub, posted, simulateMessage } = makeProvider(undefined);
+      const parser = makeSolutionParser();
+      parser.getProjects.mockResolvedValue([
+        { name: 'A', relativePath: 'src/A.csproj', absolutePath: '/root/src/A.csproj' },
+      ]);
+      const memory = makeScopeMemory();
+      // Remembered a solution that has since been deleted from the folder.
+      memory.get.mockReturnValue({ kind: 'file', path: '/root/Gone.sln' });
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), parser, makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        memory,
+      );
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(stub.setScope).not.toHaveBeenCalled();
+      const init = posted.find((m) => m.type === 'INIT_STATE') as any;
+      expect(init.scope).toBeNull();
+      expect(init.scopeChoices).toBeDefined();
+    });
   });
 
   it('rejects INSTALL_PACKAGE for a blocked installed id', async () => {

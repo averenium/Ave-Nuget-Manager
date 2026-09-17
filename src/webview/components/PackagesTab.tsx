@@ -6,8 +6,10 @@ import { ImplicitList } from './ImplicitList';
 import { AvailableList } from './AvailableList';
 import { PackageDetailPanel } from './PackageDetailPanel';
 import { SplitPane } from './SplitPane';
+import { ScopeChooser, type ScopePickTarget } from './ScopeChooser';
 import { measureTextWidth } from '../utils/measureText';
 import { matchesQuery, normalizeQuery } from '../utils/search';
+import { scopeLabel, scopeIdentityPath } from '../utils/scope';
 import { PrereleaseToggle } from './PrereleaseToggle';
 import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
 import { ActivityStrip } from './ActivityStrip';
@@ -37,6 +39,11 @@ export function PackagesTab() {
   const { state, dispatch, send } = useNugetManager();
   const { searchQuery, selectedSources, prerelease, enrichProgress, installed, implicit, available } = state.packages;
   const { allSources } = state.sources;
+  const { scope, scopeChoices, scopeChooserOpen } = state;
+  // First-open (no scope at all yet) always shows the chooser; a scope
+  // already set only shows it while the corner control has it reopened (#113).
+  const chooserVisible = !!scopeChoices && (scope === null || scopeChooserOpen);
+  const chooserTight = chooserVisible && scope !== null;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -143,6 +150,15 @@ export function PackagesTab() {
     return () => ro.disconnect();
   }, [titleRows]);
 
+  const pickScope = (target: ScopePickTarget) => {
+    if (!scopeChoices) return;
+    if (target.kind === 'folder') {
+      send({ type: 'PICK_SCOPE_FOLDER', folderPath: scopeChoices.folderPath });
+    } else {
+      send({ type: 'PICK_SCOPE', path: target.path });
+    }
+  };
+
   return (
     <div className="split-tab" ref={tabRef}>
       <div className="pkg-toolbar">
@@ -162,6 +178,7 @@ export function PackagesTab() {
           sources={allSources}
           selected={selectedSources}
           onChange={(s) => dispatch({ type: 'SET_SELECTED_SOURCES', sources: s })}
+          hasScope={scope !== null}
         />
 
         {enrichProgress && (
@@ -174,18 +191,51 @@ export function PackagesTab() {
       </div>
       <ActivityStrip />
 
-      <SplitPane
-        autoListWidthPx={autoListWidthPx}
-        splitLabel="Resize package list"
-        left={
-          <>
-            <InstalledList />
-            <ImplicitList />
-            <AvailableList />
-          </>
-        }
-        right={<PackageDetailPanel />}
-      />
+      {!state.initialized ? (
+        // Nothing is known yet — not "no scope" and not "packages loading",
+        // genuinely undetermined until the host's first answer lands. Any
+        // committed look here would be one the chooser (or the list) then
+        // has to visibly overwrite (#113).
+        <div className="scope-chooser-loading" aria-live="polite">Opening workspace…</div>
+      ) : chooserVisible && scopeChoices ? (
+        chooserTight ? (
+          <div className="scope-chooser-overlay">
+            <div className="scope-chooser-overlay__backdrop" aria-hidden="true">
+              <InstalledList />
+              <ImplicitList />
+            </div>
+            <ScopeChooser
+              choices={scopeChoices}
+              currentPath={scopeIdentityPath(scope)}
+              currentLabel={scopeLabel(scope)}
+              tight
+              onPick={pickScope}
+              onClose={() => dispatch({ type: 'CLOSE_SCOPE_CHOOSER' })}
+            />
+          </div>
+        ) : (
+          <ScopeChooser
+            choices={scopeChoices}
+            currentPath={null}
+            currentLabel=""
+            tight={false}
+            onPick={pickScope}
+          />
+        )
+      ) : (
+        <SplitPane
+          autoListWidthPx={autoListWidthPx}
+          splitLabel="Resize package list"
+          left={
+            <>
+              <InstalledList />
+              <ImplicitList />
+              <AvailableList />
+            </>
+          }
+          right={<PackageDetailPanel />}
+        />
+      )}
     </div>
   );
 }

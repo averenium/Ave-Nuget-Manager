@@ -5,9 +5,9 @@ import { SourcesTab } from './components/SourcesTab';
 import { UpdatesTab } from './components/UpdatesTab';
 import { LogTab } from './components/LogTab';
 import { AgentsTab } from './components/AgentsTab';
-import * as pathUtils from './utils/pathUtils';
+import { scopeLabel, scopeIcon } from './utils/scope';
 import { snapshotNeedsSourcesWarn } from '../vulnerabilityScanPolicy';
-import type { SourcesSnapshot, WorkspaceScope } from '../types';
+import type { SourcesSnapshot } from '../types';
 
 const TABS = [
   { id: 'packages', label: 'Packages' },
@@ -16,20 +16,6 @@ const TABS = [
   { id: 'log',      label: 'Log'     },
   { id: 'agents',   label: 'Agents'  },
 ] as const;
-
-function scopeLabel(scope: WorkspaceScope | null): string {
-  if (!scope) return '';
-  if (scope.kind === 'solution') return pathUtils.fileName(scope.solutionPath);
-  if (scope.kind === 'folder') return pathUtils.fileName(scope.folderPath);
-  if (scope.kind === 'project' && scope.projectPath) return pathUtils.fileName(scope.projectPath);
-  return '';
-}
-
-function scopeIcon(scope: WorkspaceScope | null): string {
-  if (scope?.kind === 'solution') return '📦';
-  if (scope?.kind === 'folder') return '🗂️';
-  return '📄';
-}
 
 function ErrorBanner() {
   const { state, dispatch, send } = useNugetManager();
@@ -156,11 +142,24 @@ function Shell() {
 
         <button
           type="button"
-          className="tab-bar__scope"
+          className={
+            `tab-bar__scope${!state.scope || state.scopeChooserOpen ? ' tab-bar__scope--action' : ''}`
+          }
           title={scopeTitle || 'Select a solution or project'}
-          onClick={() => send({ type: 'SELECT_SCOPE' })}
+          onClick={() => {
+            // Same button opened it — pressing it again closes it (#113).
+            // Only meaningful once a scope exists to go back to; the
+            // first-open chooser has no closed state to return to.
+            if (state.scope && state.scopeChooserOpen) {
+              dispatch({ type: 'CLOSE_SCOPE_CHOOSER' });
+            } else {
+              send({ type: 'SELECT_SCOPE' });
+            }
+          }}
         >
-          {scopeIcon(state.scope)} {label || 'Select project…'}
+          {state.scope
+            ? <>{scopeIcon(state.scope)} {label} ▾</>
+            : '▤ Solution or project…'}
         </button>
       </nav>
 

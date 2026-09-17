@@ -14,6 +14,7 @@
 - **Package details**: a row in **Problems** when the installed version has been withdrawn from its feed (#114)
 - **Package details**: a **What changes** band listing the dependencies an update would add, move or drop (#114)
 - **Package details**: the **Dependencies** section can be read for any framework the package declares, not only the one an install would use (#114)
+- **Packages**: a folder with several solutions asks in the panel which solution or project to manage, and remembers the answer (#113)
 
 ### Fixed
 

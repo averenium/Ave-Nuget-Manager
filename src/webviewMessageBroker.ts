@@ -22,7 +22,7 @@ import { sanitizeText, type FileAlias, type SanitizeContext } from './traceSanit
 import { collectScopeSnapshotFiles } from './tracePack';
 import type { WebviewMessage } from './messages';
 import { EMPTY_SKILL_STATUS, type SkillStatus } from './agentSkillInstall';
-import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, ImplicitPackage, PackageSource, VulnerabilityFinding, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile, VersionFlag } from './types';
+import type { WorkspaceScope, CliResult, OperationFailure, PackageListResult, InstalledPackage, ImplicitPackage, PackageSource, VulnerabilityFinding, BatchUpdateItem, BatchUpdateJob, BatchItemStatus, NuGetConfigFile, VersionFlag, ScopeChoices } from './types';
 import type { PackageLicense } from './types';
 import { licenseChange } from './packageLicense';
 import { isEmptyDiff, versionDependencyDiff } from './packageVersionDiff';
@@ -35,16 +35,15 @@ import { pathsEqual, normalizeFsPath, packageIdsEqual } from './pathCompare';
 import { resolveVersionSpread } from './packageResolvedVersions';
 import { compareSemVer } from './semver';
 import {
-  listWorkspaceDotnetFiles,
   listWorkspaceNuGetConfigFiles,
   scopeFromDotnetFile,
   scopeFromFolder,
-  findDotnetTargetsInFolder,
-  toProjectInfo,
-  sortDotnetTargetPaths,
-  isSolutionFile,
+  findSolutionsInFolder,
+  findProjectsInFolder,
   NUGET_CONFIG_GLOB,
 } from './dotnetWorkspace';
+import { buildScopeChoices } from './scopeChoices';
+import { resolveRememberedChoice, type RememberedScopeChoice, type ScopeChoiceMemory } from './scopeChoiceMemory';
 import { readProjectAssets, readPackageFolders, readAssetsJson } from './projectAssets';
 import { computeEntangledCluster } from './batchUpdates';
 import { findNuspecFile, findLicenseFile, listRuntimeIdentifiers } from './nuspecLocator';
@@ -383,6 +382,8 @@ export class WebviewMessageBroker {
         signal?: AbortSignal,
       ) => Promise<PackageLicense | undefined>;
     },
+    /** Remembers a folder's chooser pick across sessions (#113 item 4). */
+    private readonly scopeMemory?: ScopeChoiceMemory,
   ) {
   }
 
@@ -734,7 +735,15 @@ export class WebviewMessageBroker {
         break;
 
       case 'SELECT_SCOPE':
-        await this._handleSelectScope();
+        await this._handleGetScopeChoices();
+        break;
+
+      case 'PICK_SCOPE':
+        await this._handlePickScope(msg.path);
+        break;
+
+      case 'PICK_SCOPE_FOLDER':
+        await this._handlePickScopeFolder(msg.folderPath);
         break;
 
       case 'SET_PACKAGE_BLOCKED':
@@ -791,26 +800,32 @@ export class WebviewMessageBroker {
   private _firstReady = false;
 
   private async _handleWebviewReady(): Promise<void> {
-    if (!this._firstReady) {
-      this._firstReady = true;
-      await this.onFirstWebviewReady?.();
-    }
+    const isFirstReady = !this._firstReady;
+    this._firstReady = true;
 
     this.provider.markClientReady();
 
     const scope = this.provider.getCurrentScope();
 
     if (!scope) {
-      // Try to auto-detect a solution/project in the workspace root
-      const autoScope = await this._detectWorkspaceScope();
-      if (autoScope) {
-        this.provider.setScope(autoScope);
-        await this._initForScope(autoScope);
+      // Independent I/O run together instead of one after another (#113):
+      // the ambiguous-folder chooser used to wait out a `dotnet --version`
+      // check and a Roslyn probe in series before it could even ask its
+      // question, which the plain fixed "no scope" state that used to follow
+      // never made visible — the chooser replacing it made the wait obvious.
+      const [, , auto] = await Promise.all([
+        isFirstReady ? (this.onFirstWebviewReady?.() ?? Promise.resolve()) : Promise.resolve(),
+        this._refreshRoslynCap(false),
+        this._detectWorkspaceScope(),
+      ]);
+      if (auto.scope) {
+        this.provider.setScope(auto.scope);
+        await this._initForScope(auto.scope);
       } else {
-        await this._refreshRoslynCap(false);
         this.provider.postMessage({
           type: 'INIT_STATE',
-          scope: { kind: 'project', projectPath: '' },
+          scope: null,
+          scopeChoices: auto.choices,
           sources: [],
           configChain: [],
           snapshot: EMPTY_SOURCES_SNAPSHOT,
@@ -825,40 +840,67 @@ export class WebviewMessageBroker {
       return;
     }
 
+    if (isFirstReady) await this.onFirstWebviewReady?.();
     await this._initForScope(scope);
   }
 
-  private async _handleSelectScope(): Promise<void> {
-    const uris = await listWorkspaceDotnetFiles();
-    if (uris.length === 0) {
+  /**
+   * Opens/reopens the in-panel folder-scope chooser (#113) — the corner
+   * control's click, whether nothing has been picked yet or an existing scope
+   * is being changed. Always scoped to `workspaceFolders[0]`, matching
+   * auto-detect, rather than the whole (possibly multi-root) workspace the
+   * old native QuickPick used to scan.
+   */
+  private async _handleGetScopeChoices(): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+      await vscode.window.showErrorMessage('Averenium NuGet Manager: No workspace folder is open.');
+      return;
+    }
+
+    const choices = await buildScopeChoices(folders[0].uri.fsPath, this.solutionParser);
+    if (!choices) {
       await vscode.window.showWarningMessage(
         'AVE NuGet Manager: No .sln, .slnx, .csproj, or .fsproj found in the workspace.',
       );
       return;
     }
 
+    this.provider.postMessage({
+      type: 'SCOPE_CHOICES',
+      choices,
+      currentPath: this._currentScopePath() || null,
+    });
+  }
+
+  private async _handlePickScope(filePath: string): Promise<void> {
     const currentPath = this._currentScopePath();
-    const sorted = sortDotnetTargetPaths(uris.map((u) => u.fsPath));
-    const items = sorted.map((fsPath) => {
-      const rel = vscode.workspace.asRelativePath(fsPath, false);
-      const current = currentPath.length > 0 && pathsEqual(fsPath, currentPath);
-      return {
-        label: path.basename(fsPath),
-        description: current ? `${rel}  (current)` : rel,
-        detail: isSolutionFile(fsPath) ? 'Solution' : 'Project',
-        fsPath,
-      };
-    });
+    if (currentPath && pathsEqual(filePath, currentPath)) return;
 
-    const selected = await vscode.window.showQuickPick(items, {
-      placeHolder: 'Select a solution or project',
-      matchOnDescription: true,
-    });
-    if (!selected) return;
-    if (currentPath && pathsEqual(selected.fsPath, currentPath)) return;
-
-    const scope = await scopeFromDotnetFile(selected.fsPath, this.solutionParser);
+    const scope = await scopeFromDotnetFile(filePath, this.solutionParser);
+    await this._rememberScope(scope);
     await this.activateScope(scope);
+  }
+
+  private async _handlePickScopeFolder(folderPath: string): Promise<void> {
+    const currentPath = this._currentScopePath();
+    if (currentPath && pathsEqual(folderPath, currentPath)) return;
+
+    const scope = await scopeFromFolder(folderPath);
+    await this._rememberScope(scope);
+    await this.activateScope(scope);
+  }
+
+  /** Remembers the chooser's pick for its folder (#113 item 4) — always `workspaceFolders[0]`, the folder the chooser was for. */
+  private async _rememberScope(scope: WorkspaceScope): Promise<void> {
+    if (!this.scopeMemory) return;
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return;
+
+    const choice: RememberedScopeChoice = scope.kind === 'folder'
+      ? { kind: 'folder' }
+      : { kind: 'file', path: scopeIdentityPath(scope) };
+    await this.scopeMemory.set(folders[0].uri.fsPath, choice);
   }
 
   private _currentScopePath(): string {
@@ -867,35 +909,57 @@ export class WebviewMessageBroker {
   }
 
   /**
-   * Scan the workspace root for a .sln/.slnx/.csproj/.fsproj file — direct
-   * children first, falling back recursively (see {@link findDotnetTargetsInFolder}).
-   * Multiple solutions are ambiguous and left to the manual "Select scope" picker.
+   * Scan the workspace root for every `.sln`/`.slnx` and every project, both
+   * recursively (#113) — {@link findDotnetTargetsInFolder}'s direct-children-
+   * first shortcut answers "is there *a* target here?" well, but stops the
+   * moment it finds one, which would silently hide a second solution nested a
+   * level below a root one. Counting solutions correctly is exactly the
+   * question this method exists to answer, so it cannot reuse that shortcut.
+   *
+   * More than one solution is ambiguous: a remembered choice for this folder
+   * (#113 item 4) is tried first and, when it still applies, resolved
+   * silently; otherwise `choices` carries what the in-panel chooser needs to
+   * ask instead of the caller giving up with nothing.
    */
-  private async _detectWorkspaceScope(): Promise<import('./types').WorkspaceScope | null> {
+  private async _detectWorkspaceScope(): Promise<{ scope: WorkspaceScope | null; choices: ScopeChoices | null }> {
     const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) return null;
+    if (!folders || folders.length === 0) return { scope: null, choices: null };
 
     const rootPath = folders[0].uri.fsPath;
-    const matches = await findDotnetTargetsInFolder(rootPath);
-    if (matches.length === 0) return null;
+    const [solutionFiles, projects] = await Promise.all([
+      findSolutionsInFolder(rootPath),
+      findProjectsInFolder(rootPath),
+    ]);
+    if (solutionFiles.length === 0 && projects.length === 0) return { scope: null, choices: null };
 
-    const solutionFiles = matches.filter(isSolutionFile);
     if (solutionFiles.length === 1) {
       const projectList = await this.solutionParser.getProjects(solutionFiles[0]);
-      return { kind: 'solution', solutionPath: solutionFiles[0], projects: projectList };
-    }
-    if (solutionFiles.length > 1) return null;
-
-    const projectFiles = matches.filter((p) => !isSolutionFile(p));
-    if (projectFiles.length === 1) return { kind: 'project', projectPath: projectFiles[0] };
-    if (projectFiles.length > 1) {
-      const projects = projectFiles
-        .map((p) => toProjectInfo(rootPath, p))
-        .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-      return scopeFromFolder(rootPath, projects);
+      return { scope: { kind: 'solution', solutionPath: solutionFiles[0], projects: projectList }, choices: null };
     }
 
-    return null;
+    if (solutionFiles.length === 0) {
+      if (projects.length === 1) return { scope: { kind: 'project', projectPath: projects[0].absolutePath }, choices: null };
+      return { scope: await scopeFromFolder(rootPath, projects), choices: null };
+    }
+
+    // More than one solution — ambiguous. Try what was remembered for this
+    // folder before asking again.
+    const choices = await buildScopeChoices(rootPath, this.solutionParser);
+    if (!choices) return { scope: null, choices: null };
+
+    const remembered = this.scopeMemory?.get(rootPath);
+    const resolved = remembered && resolveRememberedChoice(remembered, choices);
+    if (resolved) {
+      const scope = resolved.kind === 'folder'
+        ? await scopeFromFolder(
+          rootPath,
+          choices.projects.map((p) => ({ name: p.name, relativePath: p.relativePath, absolutePath: p.path })),
+        )
+        : await scopeFromDotnetFile(resolved.path, this.solutionParser);
+      return { scope, choices: null };
+    }
+
+    return { scope: null, choices };
   }
 
   private async _initForScope(scope: WorkspaceScope): Promise<void> {

@@ -142,6 +142,18 @@ html { height: 100vh; }
   color: var(--color-fg);
   background: var(--color-list-hover);
 }
+/* The one action a scope-less (or mid-reopen) panel has to offer — reads as
+   one rather than the low-contrast label a chosen scope gets the rest of the
+   time (#113 item 3). */
+.tab-bar__scope--action {
+  color: var(--color-btn-fg);
+  background: var(--color-btn-bg);
+  font-weight: 600;
+}
+.tab-bar__scope--action:hover {
+  color: var(--color-btn-fg);
+  background: var(--color-btn-hover);
+}
 
 .activity-strip {
   box-sizing: border-box;
@@ -284,6 +296,92 @@ html { height: 100vh; }
   background: var(--color-btn-bg); outline: none;
 }
 body.is-resizing-split { cursor: col-resize; user-select: none; }
+
+/* ── Folder-scope chooser (#113) ────────────────────────────────────────────── */
+/* Before the host's first answer — neither "loading packages" nor "no scope",
+   genuinely undetermined, so neither of those looks is shown yet. */
+.scope-chooser-loading {
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--color-tab-inactive); font-size: 12px;
+}
+/* First open: the chooser is the whole body. Reopened over an existing scope:
+   a narrow, dimmed peek at that scope's own package list sits beside it. */
+.scope-chooser-overlay { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.scope-chooser-overlay__backdrop {
+  flex: 0 0 230px; min-width: 0; overflow: hidden auto;
+  opacity: 0.55; pointer-events: none;
+  border-right: 1px solid var(--color-border);
+}
+
+.scope-chooser {
+  flex: 1; min-width: 0; min-height: 0; overflow: auto;
+  padding: var(--spacing-md) 18px;
+}
+.scope-chooser--tight { padding: var(--spacing-sm) var(--spacing-md); }
+
+.scope-chooser__head { display: flex; align-items: baseline; gap: var(--spacing-sm); margin-bottom: var(--spacing-sm); }
+.scope-chooser__title { font-size: 13px; font-weight: 600; color: var(--color-fg); }
+.scope-chooser__summary { margin-top: 2px; font-size: 11px; color: var(--color-tab-inactive); }
+.scope-chooser__back { margin-left: auto; display: flex; align-items: center; gap: var(--spacing-sm); flex-shrink: 0; }
+.scope-chooser__back-btn {
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  padding: 2px var(--spacing-sm); background: none; color: var(--color-fg);
+  font-family: inherit; font-size: 11px; cursor: pointer;
+}
+.scope-chooser__back-btn:hover { background: var(--color-list-hover); }
+.scope-chooser__back-kbd { font-size: 11px; color: var(--color-tab-inactive); }
+
+.scope-chooser__cols { display: flex; gap: 22px; align-items: flex-start; }
+.scope-chooser__col--left { flex: 0 0 38%; min-width: 0; }
+.scope-chooser--tight .scope-chooser__col--left { flex-basis: 46%; }
+.scope-chooser__col--right {
+  flex: 1 1 auto; min-width: 0;
+  border-left: 1px solid var(--color-border); padding-left: 22px;
+}
+.scope-chooser--tight .scope-chooser__col--right { padding-left: var(--spacing-lg); }
+.scope-chooser__group {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--color-tab-inactive); margin: 0 0 5px;
+}
+.scope-chooser__group--later { margin-top: var(--spacing-md); }
+
+.scope-chooser__opt {
+  display: flex; align-items: center; gap: var(--spacing-xs);
+  padding: 4px var(--spacing-sm); margin-bottom: 3px;
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  min-width: 0; cursor: pointer;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
+}
+.scope-chooser--tight .scope-chooser__opt { padding: 3px var(--spacing-sm); gap: var(--spacing-xs); }
+.scope-chooser__opt:hover { background: var(--color-list-hover); border-color: var(--color-btn-bg); }
+.scope-chooser__opt--likely { border-color: var(--color-btn-bg); }
+.scope-chooser__opt--current { border-color: var(--color-success); }
+.scope-chooser__opt--dim { opacity: 0.4; }
+.scope-chooser__ico { flex: 0 0 14px; font-size: 11px; text-align: center; color: var(--color-tab-inactive); }
+.scope-chooser__name {
+  flex: 0 1 auto; min-width: 0; font-size: 12px; color: var(--color-fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.scope-chooser__covers { flex: 0 0 auto; font-size: 10px; color: var(--color-tab-inactive); }
+.scope-chooser__mark { flex: 0 0 auto; font-size: 10px; color: var(--color-success); }
+.scope-chooser__where {
+  flex: 0 0 auto; margin-left: auto; padding-left: var(--spacing-sm);
+  font-size: 10px; color: var(--color-tab-inactive);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%;
+}
+.scope-chooser__filter {
+  display: block; width: 100%; margin: 0 0 var(--spacing-xs);
+  padding: 2px var(--spacing-sm);
+  background: var(--color-input-bg); color: var(--color-input-fg);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  font-family: var(--font-family); font-size: 12px;
+  outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
+}
+.scope-chooser__more {
+  background: none; border: none; padding: 3px var(--spacing-sm);
+  color: var(--color-link); font-size: 11px; cursor: pointer;
+}
+.scope-chooser__more:hover { text-decoration: underline; }
 
 /* Source filter — compact inline variant inside toolbar */
 .source-filter { position: relative; flex-shrink: 0; }

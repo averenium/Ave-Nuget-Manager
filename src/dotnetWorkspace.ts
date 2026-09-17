@@ -41,24 +41,6 @@ export function isSolutionFile(filePath: string): boolean {
   return SOLUTION_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
-/** Solutions first, then basename. */
-export function sortDotnetTargetPaths(paths: string[]): string[] {
-  return [...paths].sort((a, b) => {
-    const aSol = isSolutionFile(a) ? 0 : 1;
-    const bSol = isSolutionFile(b) ? 0 : 1;
-    if (aSol !== bSol) return aSol - bSol;
-    return path.basename(a).localeCompare(path.basename(b));
-  });
-}
-
-export async function listWorkspaceDotnetFiles(): Promise<vscode.Uri[]> {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) {
-    return [];
-  }
-  return vscode.workspace.findFiles(DOTNET_PROJECT_GLOB, DOTNET_PROJECT_EXCLUDE_GLOB);
-}
-
 /** Cap for nuget.config workspace scans so a huge monorepo does not walk the tree unbounded. */
 export const NUGET_CONFIG_FIND_LIMIT = 200;
 
@@ -121,6 +103,25 @@ export async function findProjectsInFolder(folderPath: string): Promise<ProjectI
   );
   const projects = found.map((uri) => toProjectInfo(folderPath, uri.fsPath));
   return projects.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+}
+
+/** Recursive solution glob, rooted at a single folder rather than the whole workspace. */
+export const FOLDER_SOLUTION_GLOB = '**/*.{sln,slnx}';
+
+/**
+ * Every `.sln`/`.slnx` under `folderPath`, at any depth (#113) — unlike
+ * {@link findDotnetTargetsInFolder}, this never stops at the first direct
+ * child it finds. A folder-scope chooser has to know about *every* solution
+ * to ask "which one?", and the two-tier direct-first heuristic that serves a
+ * single-target resolution well would silently hide a nested solution
+ * whenever the folder also has one directly in its root.
+ */
+export async function findSolutionsInFolder(folderPath: string): Promise<string[]> {
+  const found = await vscode.workspace.findFiles(
+    new vscode.RelativePattern(folderPath, FOLDER_SOLUTION_GLOB),
+    DOTNET_PROJECT_EXCLUDE_GLOB,
+  );
+  return found.map((uri) => uri.fsPath).sort((a, b) => a.localeCompare(b));
 }
 
 /**

@@ -18,6 +18,7 @@ import type {
   BatchUpdateJob,
   VulnerabilityFinding,
   VersionFlag,
+  ScopeChoices,
 } from '../../types';
 import type { SkillFamily, SkillInstallRow } from '../../agentSkillInstall';
 import type { ExtensionMessage } from '../../messages';
@@ -75,7 +76,25 @@ function setProjectVersion(
 }
 
 export interface AppState {
+  /**
+   * False until the very first `INIT_STATE` has arrived (#113). Before that,
+   * `scope` and `scopeChoices` are both still their initial `null` — the same
+   * shape as "no scope, unambiguous" — and rendering that would be its own
+   * small lie: the Packages tab would flash the plain empty-list look and
+   * then snap to the chooser once the host actually answers, even though
+   * nothing about the workspace was ever really in that state.
+   */
+  initialized: boolean;
   scope: WorkspaceScope | null;
+  /**
+   * What the in-panel folder-scope chooser needs to ask (#113) — present
+   * whenever `scope` is null (the folder is ambiguous and nothing has been
+   * picked yet) and, transiently, while the corner control has reopened it to
+   * change an existing scope.
+   */
+  scopeChoices: ScopeChoices | null;
+  /** The chooser is open over an *existing* scope (corner control reopened it) — first-open has no "closed" state to return to. */
+  scopeChooserOpen: boolean;
   activeTab: 'packages' | 'sources' | 'updates' | 'log' | 'agents';
   packages: {
     installed: InstalledPackage[];
@@ -194,7 +213,10 @@ export interface AppState {
 const LOG_ENTRIES_CAP = 500;
 
 const initialState: AppState = {
+  initialized: false,
   scope: null,
+  scopeChoices: null,
+  scopeChooserOpen: false,
   activeTab: 'packages',
   packages: {
     installed: [],
@@ -257,7 +279,9 @@ export type Action =
   | { type: 'START_PROJECT_OPERATION'; operation: 'install' | 'remove'; total: number }
   | { type: 'SET_PROJECT_LOADING'; projectPath: string; loading: boolean }
   | { type: 'SET_PROJECT_ERROR'; projectPath: string; error: string | null }
-  | { type: 'DISMISS_GLOBAL_ERROR' };
+  | { type: 'DISMISS_GLOBAL_ERROR' }
+  /** Back button / Esc / corner-control toggle while reopened over an existing scope (#113) — purely local, nothing to tell the host. */
+  | { type: 'CLOSE_SCOPE_CHOOSER' };
 
 function reducer(state: AppState, action: Action): AppState {
   try {
@@ -410,6 +434,9 @@ function reduceAppState(state: AppState, action: Action): AppState {
     case 'DISMISS_GLOBAL_ERROR':
       return { ...state, globalError: null };
 
+    case 'CLOSE_SCOPE_CHOOSER':
+      return state.scope ? { ...state, scopeChooserOpen: false, scopeChoices: null } : state;
+
     case 'MSG':
       return applyExtensionMessage(state, action.msg);
 
@@ -423,17 +450,23 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
     case 'INIT_STATE':
       return {
         ...state,
+        initialized: true,
         scope: msg.scope,
+        // Present exactly when there is no scope yet — the panel's body
+        // becomes the chooser instead of the (honestly empty) package list.
+        scopeChoices: msg.scope === null ? (msg.scopeChoices ?? null) : null,
+        scopeChooserOpen: false,
         globalError: null,
         pendingRollback: false,
         sources: { configChain: msg.configChain, allSources: msg.sources, snapshot: msg.snapshot },
         packages: {
           ...state.packages,
-          // Clear lists and set loading while new scope initialises
+          // Clear lists and set loading while new scope initialises — nothing
+          // is loading yet when there is no scope at all (#113).
           installed: [],
           implicit: [],
           available: [],
-          isLoadingPackages: true,
+          isLoadingPackages: msg.scope !== null,
           enrichProgress: null,
           vulnerabilities: [],
           blockedPackages: msg.blockedPackages,
@@ -695,6 +728,9 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           installs: msg.installs,
         },
       };
+
+    case 'SCOPE_CHOICES':
+      return { ...state, scopeChoices: msg.choices, scopeChooserOpen: true };
 
     case 'CONFIG_CHAIN_UPDATE':
       return {

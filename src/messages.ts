@@ -14,6 +14,7 @@ import type {
   BatchItemStatus,
   VulnerabilityFinding,
   VersionFlag,
+  ScopeChoices,
 } from './types';
 import type { SkillFamily, SkillInstallRow } from './agentSkillInstall';
 import type { RoslynCap } from './roslynSdkCap';
@@ -187,8 +188,16 @@ export type WebviewMessage =
   | { type: 'COPY_LOG_SANITIZED'; text: string }
   /** Reveals the unbounded Output Channel (#58). */
   | { type: 'OPEN_LOG_OUTPUT' }
-  /** Click the solution/project name in the panel tab bar. */
+  /**
+   * Click the solution/project name in the panel tab bar (#113). Host answers
+   * with `SCOPE_CHOICES` — the same in-panel chooser opens whether this is the
+   * very first pick or changing an existing scope later.
+   */
   | { type: 'SELECT_SCOPE' }
+  /** A solution or project row picked in the folder-scope chooser (#113). */
+  | { type: 'PICK_SCOPE'; path: string }
+  /** The "All N projects in this folder" row picked in the chooser (#113). */
+  | { type: 'PICK_SCOPE_FOLDER'; folderPath: string }
   /** Add/remove an id in workspace `blockedPackages`. */
   | { type: 'SET_PACKAGE_BLOCKED'; packageId: string; blocked: boolean }
   /** Host `showInformationMessage` (toast). */
@@ -233,7 +242,10 @@ export type ExtensionMessage =
   // Initialisation — sent in response to WEBVIEW_READY
   | {
       type: 'INIT_STATE';
-      scope: WorkspaceScope;
+      /** `null` when the workspace is ambiguous and nothing has been picked yet (#113). */
+      scope: WorkspaceScope | null;
+      /** Present only alongside a `null` scope — what the folder-scope chooser needs to ask. */
+      scopeChoices?: ScopeChoices | null;
       sources: PackageSource[];
       configChain: NuGetConfigFile[];
       snapshot: SourcesSnapshot;
@@ -248,6 +260,13 @@ export type ExtensionMessage =
       /** Host OS is Windows — `<apikeys>` DPAPI works; Copy / `<clearTextApiKeys>` UI is hidden. */
       isWindows: boolean;
     }
+
+  /**
+   * Answer to `SELECT_SCOPE` (#113) — what the in-panel folder-scope chooser
+   * needs to ask, freshly scanned. `currentPath` marks the row for the live
+   * scope so the chooser can check it rather than hide it.
+   */
+  | { type: 'SCOPE_CHOICES'; choices: ScopeChoices; currentPath: string | null }
 
   // Packages
   // `projectFrameworks` is every TFM each project declares (#82) — including the

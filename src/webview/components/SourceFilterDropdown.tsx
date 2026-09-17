@@ -5,9 +5,11 @@ interface Props {
   sources: PackageSource[];
   selected: string[];
   onChange: (names: string[]) => void;
+  /** False while no scope has been picked yet — an empty `sources` list there is expected, not a warning (#113). */
+  hasScope?: boolean;
 }
 
-export function SourceFilterDropdown({ sources, selected, onChange }: Props) {
+export function SourceFilterDropdown({ sources, selected, onChange, hasScope = true }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -37,11 +39,16 @@ export function SourceFilterDropdown({ sources, selected, onChange }: Props) {
   }, [open]);
 
   const label =
-    selected.length === 0
-      ? 'No sources selected'
-      : selected.length === sources.length
-        ? 'All sources'
-        : `${selected.length} source${selected.length > 1 ? 's' : ''}`;
+    // Nothing configured yet reads as neutral, not as a decision gone wrong —
+    // "No sources selected" is a warning about a real choice, and there is no
+    // choice to have made before a scope even exists (#113).
+    !hasScope && sources.length === 0
+      ? 'Sources'
+      : selected.length === 0
+        ? 'No sources selected'
+        : selected.length === sources.length
+          ? 'All sources'
+          : `${selected.length} source${selected.length > 1 ? 's' : ''}`;
 
   const toggle = (name: string) => {
     if (selected.includes(name)) {

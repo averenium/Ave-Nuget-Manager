@@ -32,6 +32,7 @@ import { httpLogSink, loggingFetcher } from './nugetHttpLog';
 import { HttpResponseCache } from './nugetHttpCache';
 import { NuspecReader } from './nugetNuspecFetch';
 import { retryingFetcher } from './nugetHttpRetry';
+import { scopeChoiceMemory } from './scopeChoiceMemory';
 
 let logger: Logger | undefined;
 
@@ -233,6 +234,7 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
         return undefined;
       },
     },
+    scopeChoiceMemory(context.workspaceState),
   );
   broker.attach();
   log.info('broker attached');

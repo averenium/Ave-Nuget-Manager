@@ -17,6 +17,37 @@ export type WorkspaceScope =
   /** A folder containing multiple projects with no .sln/.slnx to tie them together. */
   | { kind: 'folder'; folderPath: string; projects: ProjectInfo[] };
 
+/** One solution the folder-scope chooser can offer (#113). */
+export interface ScopeChoiceSolution {
+  path: string;
+  /** Relative to the folder the chooser is for — `''` at the root, `tools/` for a nested one. */
+  relativeDir: string;
+  projectCount: number;
+  /** Absolute paths of the projects it holds — lets pointing at it light up its projects. */
+  projectPaths: string[];
+}
+
+/** One project the folder-scope chooser can offer directly, regardless of solution membership. */
+export interface ScopeChoiceProject {
+  path: string;
+  name: string;
+  relativePath: string;
+}
+
+/**
+ * What the in-panel folder-scope chooser needs to ask "what should be
+ * managed?" for one folder (#113) — solutions first, then every project
+ * found in it, regardless of which solution (if any) already covers it.
+ */
+export interface ScopeChoices {
+  folderPath: string;
+  totalProjects: number;
+  solutions: ScopeChoiceSolution[];
+  /** "All N projects" is worth offering whenever there is more than one. */
+  offerAllProjects: boolean;
+  projects: ScopeChoiceProject[];
+}
+
 // ─────────────────────────────────────────────
 // Packages
 // ─────────────────────────────────────────────

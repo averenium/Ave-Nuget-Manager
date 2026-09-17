@@ -13,7 +13,6 @@ import {
   refreshDotnetWorkspaceContext,
   scopeFromDotnetFile,
   scopeFromFolder,
-  sortDotnetTargetPaths,
   watchDotnetWorkspaceContext,
   workspaceHasDotnetProject,
 } from '../../dotnetWorkspace';
@@ -46,22 +45,6 @@ describe('hasDotnetWorkspaceFiles', () => {
   it('is false when none match', () => {
     expect(hasDotnetWorkspaceFiles(['package.json', 'src'])).toBe(false);
     expect(hasDotnetWorkspaceFiles([])).toBe(false);
-  });
-});
-
-describe('sortDotnetTargetPaths', () => {
-  it('lists solutions before projects, then basename', () => {
-    expect(sortDotnetTargetPaths([
-      '/repo/src/B.csproj',
-      '/repo/Z.sln',
-      '/repo/src/A.csproj',
-      '/repo/App.slnx',
-    ])).toEqual([
-      '/repo/App.slnx',
-      '/repo/Z.sln',
-      '/repo/src/A.csproj',
-      '/repo/src/B.csproj',
-    ]);
   });
 });
 

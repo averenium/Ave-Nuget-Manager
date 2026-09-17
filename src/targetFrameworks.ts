@@ -68,6 +68,10 @@ export function parseTargetFramework(tfm: string): ParsedTargetFramework {
     };
   }
 
+  // A dotless `netDDD` that is actually a modern moniker with a lost dot
+  // (`net90` for `net9.0`) is repaired before it reaches here — see
+  // `frameworkMoniker.ts`'s `repairDotlessModern` (#123). Anything still
+  // dotless by the time it gets this far is genuinely .NET Framework.
   const packed = /^net(\d{2,})$/.exec(base);
   if (packed) return { family: FAMILY_FRAMEWORK, version: packedVersion(packed[1]), platform, raw: tfm };
 

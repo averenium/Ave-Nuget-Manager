@@ -4,6 +4,7 @@ import {
   parseRegistrationIndex,
   parseRegistrationPageEntries,
 } from '../../nugetRegistration';
+import nexusHostedRegistration from '../fixtures/nexus-hosted-registration.json';
 
 /** Named after what a document contained, never after who served it. */
 const leaf = (catalogEntry: Record<string, unknown>, packageContent?: string) =>
@@ -179,5 +180,19 @@ describe('parseRegistrationPageEntries', () => {
   it('reports an empty page as empty, not as unreadable', () => {
     expect(parseRegistrationPageEntries({ items: [] })).toEqual([]);
     expect(parseRegistrationPageEntries({})).toBeUndefined();
+  });
+
+  // Recorded from the project's own lab Nexus (Sonatype Nexus 3.76.0, #123):
+  // it rewrites every modern moniker into the `.NETFramework` family before
+  // this parser ever sees it. Repairing that reading is `frameworkKey`'s job
+  // (frameworkMoniker.test.ts) — a parser that corrected it here would hide
+  // what the feed actually said from the cache and from a trace, which is
+  // where the next feed like this one gets diagnosed.
+  it('keeps the feed\'s own spelling, mangled or not', () => {
+    const entries = parseRegistrationPageEntries(nexusHostedRegistration);
+    expect(entries).toHaveLength(1);
+    expect(entries?.[0].dependencyGroups?.map((g) => g.targetFramework)).toEqual([
+      '.NETFramework1.0.0', '.NETStandard2.0', '.NETFramework9.0', '.NETFramework8.0',
+    ]);
   });
 });

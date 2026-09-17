@@ -1,0 +1,44 @@
+# AVE NuGet Manager — working notes
+
+VS Code / Cursor extension (`averenium-nuget-manager`): a NuGet package manager whose UI follows JetBrains Rider — a webview in the bottom panel with the tabs Packages, Groups, Sources, Log and Agents.
+
+## Commands
+
+```
+npm run build        # build:ext (tsc) + build:webview (vite)
+npm test             # jest --runInBand — the whole suite
+npm run test:unit    # src/test/unit only
+npm run lint         # eslint src
+npm run typecheck    # both tsconfigs, no emit
+```
+
+F5 in VS Code / Cursor starts the Extension Host (`Run Extension`, preLaunchTask `build:all`).
+
+## Layout
+
+- `src/*.ts` — extension host: activation, commands, nuget.config chain, HTTP catalog (`nugetHttp*`, `nuget*`), vulnerabilities, logging and tracing.
+- `src/backend/` — `INuGetBackend`, the CLI backend and the HTTP backend behind it.
+- `src/webview/` — the React UI (`App.tsx`, `components/`, `context/`, `styles/`). It talks to the host only through the message protocol in `src/messages.ts`.
+- `src/test/unit`, `src/test/property`, `src/test/fixtures`, `src/test/__mocks__` — Jest; `vscode` is mocked, `@/x` maps to `src/x`.
+- `docs/` — implementation notes, in Ukrainian; `docs/README.md` is the index.
+- `docs/plans/` — a working plan per issue, written before the code.
+- `docs/design/` — HTML mockups; `docs/design/README.md` is the index.
+
+## How work is split
+
+Each issue goes through up to four stages, each in its own chat, each handing over a committed file rather than chat history: `/spec` → `/design` (UI only) → `/impl` → `/verify`. The skills in `.claude/skills/` describe what each stage reads and writes.
+
+## Conventions
+
+- **Attribution.** Never add a "generated with Claude" marker to anything: no `Co-Authored-By` trailer in commits, no "Generated with Claude Code" line in pull requests, nothing of the sort in issues, plans or the CHANGELOG.
+- **Commits.** `#NNN short description`, English, one issue per commit where possible. Do not commit unless asked.
+- **Language.** English for code, comments, commit messages, pull requests, issues, CHANGELOG and the root README. Ukrainian for the internal notes under `docs/`. The mockups under `docs/design/` are in English.
+- **CHANGELOG.** One short line per issue under `## Unreleased`, ending with `(#NNN)`. No development history, no rationale, no internal fixes. Create the `## Unreleased` heading when the top section is an already released version.
+- **Comparisons.** Use the repo helpers, never `===`, `toLowerCase()` or `indexOf`: `packageIdsEqual` and `pathsEqual` (`src/pathCompare.ts`), `versionsEqual` and `compareSemVer` (`src/semver.ts`). This holds when a version is used as an object key too.
+- **UI.** When a mockup exists in `docs/design/`, the implementation is checked against it element by element before it is called done. Elements the mockup does not discuss keep exactly the look they already have.
+- **Themes.** A light theme needs a darker, calmer colour than the theme's raw warning gold, while the dark theme keeps that gold — colour work is asymmetric and has to be seen in both themes.
+- **Shared CSS.** When an existing class is reused for a new element, scope the restyling to the new element; current users of that class keep their look.
+- **Watchers.** Prefer explicit hooks — editor save, force refresh, the extension's own write — over file-system watchers and change events.
+- **Diagnostics.** When a webview problem needs visibility, add it to the extension's own Log tab instead of temporary `console.log`.
+- **Tests.** A fix ships with a test that fails without it and pins the exact behaviour that broke. Async tests use the suite's own `waitFor`, not a fixed `setTimeout`.
+- **Sample names.** Use the reserved `Example.*` / `example.com` names, never Contoso, Fabrikam or an invented brand.

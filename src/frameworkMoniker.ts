@@ -29,6 +29,11 @@
  * that exists nowhere.
  */
 function parseMoniker(lower: string): string | undefined {
+  const short = parseMonikerShort(lower);
+  return short ? repairDotlessModern(short) : short;
+}
+
+function parseMonikerShort(lower: string): string | undefined {
   // `.NETFramework,Version=v4.7.2` — the form `project.assets.json` uses.
   const versioned = /^\.net(framework|standard|coreapp|platform)?,\s*version=v([0-9][0-9.]*)(.*)$/
     .exec(lower);
@@ -45,6 +50,45 @@ function parseMoniker(lower: string): string | undefined {
   // Already short: `net10.0`, `net472`, `netstandard2.0`, `netcoreapp3.1`.
   if (/^(net|netstandard|netcoreapp)[0-9]/.test(lower)) return lower;
   return undefined;
+}
+
+/**
+ * Repairs a dotless `netDDD` that is really a modern moniker with its dot
+ * lost, not a .NET Framework version (#123).
+ *
+ * Measured on the project's own lab Nexus (Sonatype Nexus 3.76.0): its
+ * generated registration rewrites every modern moniker into the
+ * `.NETFramework` family before this ever sees it — `net9.0` arrives as
+ * `.NETFramework9.0` and `net10.0` as `.NETFramework1.0.0` (Nexus reads
+ * `net10` as the packed .NET Framework 1.0 and keeps the trailing `.0`).
+ * `shorten()` above turns both into a dotless `netDDD` the same way it turns
+ * a real `.NETFramework4.7.2` into `net472` — it has no reason to doubt the
+ * feed, so the false claim rides along.
+ *
+ * The two never collide: .NET Framework is finished at 4.8.1 and modern .NET
+ * starts at 5.0, so every dotless shape .NET Framework ever actually shipped
+ * is either two digits starting 1–4 (`net11` … `net48`) or three digits
+ * starting with 4 (`net403`, `net472`, `net481`) — anything else is a modern
+ * moniker that lost its dot, read back with the last digit as the minor and
+ * the rest as the major. `net10` stays .NET Framework 1.0, which is exactly
+ * what the broken producer does *not* write for .NET 10 — it writes `net100`.
+ */
+function repairDotlessModern(short: string): string {
+  const match = /^net(\d+)((?:-[a-z0-9.]+)?)$/.exec(short);
+  if (!match) return short;
+  const [, digits, platform] = match;
+  if (isClassicFrameworkDigits(digits)) return short;
+  const minor = digits.slice(-1);
+  const major = digits.slice(0, -1);
+  return `net${major}.${minor}${platform}`;
+}
+
+function isClassicFrameworkDigits(digits: string): boolean {
+  if (digits.length === 2) return /^[1-4]/.test(digits);
+  if (digits.length === 3) return digits.startsWith('4');
+  // No dotless .NET Framework moniker was ever this short or this long —
+  // leave it alone rather than guess.
+  return true;
 }
 
 function shorten(

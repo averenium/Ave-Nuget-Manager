@@ -22,6 +22,8 @@
 | [Збірка і тести](build-and-test.md) | npm-скрипти, Jest, launch; лабораторний Nexus |
 | [Agent skill](agent-skill.md) | `installAgentSkill`, `skills/dependency-breaking-changes-review/` |
 | [Vulnerability script](vulnerability-script.md) | `averenium.nugetManager.vulnerabilityScript`, `userScriptVulnerabilities.ts` |
+| [Плани робіт](plans/README.md) | Плани по issue: задача, рішення, критерії готовності |
+| [Макети](design/README.md) | HTML-етюди інтерфейсу, з якими звіряється реалізація |
 | [Незавершене](incomplete.md) | Оголошено, але не доведено |
 
 `agent-skill.md` і `vulnerability-script.md` — виняток серед документів вище: англійською і для користувача (не implementation notes), бо на них є пряме посилання з Settings UI / README, а не лише з цього індексу (#69).

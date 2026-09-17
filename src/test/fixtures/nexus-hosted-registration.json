@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "catalogEntry": {
+        "id": "ave.nexus.tfm",
+        "version": "1.0.0",
+        "dependencyGroups": [
+          { "targetFramework": ".NETFramework1.0.0", "dependencies": [] },
+          { "targetFramework": ".NETStandard2.0", "dependencies": [] },
+          { "targetFramework": ".NETFramework9.0", "dependencies": [] },
+          { "targetFramework": ".NETFramework8.0", "dependencies": [] }
+        ]
+      }
+    }
+  ]
+}

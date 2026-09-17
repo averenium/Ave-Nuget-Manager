@@ -118,4 +118,34 @@ describe('versionDependencyDiff', () => {
     const after = [group(undefined, [['Example.Core', '>= 2.0.0']])];
     expect(versionDependencyDiff(before, after, []).changed).toHaveLength(1);
   });
+
+  // The lab Nexus's own registration output (#123): net8.0/net9.0/net10.0
+  // rewritten into `.NETFramework` monikers — see frameworkMoniker.test.ts.
+  it('compares two versions a Nexus-hosted feed described', () => {
+    const NEXUS3: Array<[string, Array<[string, string?]>]> = [
+      ['.NETFramework1.0.0', []], ['.NETFramework9.0', []], ['.NETFramework8.0', []],
+    ];
+    const before = NEXUS3.map(([tfm, deps]) => group(tfm, tfm === '.NETFramework1.0.0'
+      ? [['Example.Core', '>= 1.0.0']] : deps));
+    const after = NEXUS3.map(([tfm, deps]) => group(tfm, tfm === '.NETFramework1.0.0'
+      ? [['Example.Core', '>= 2.0.0']] : deps));
+
+    expect(versionDependencyDiff(before, after, ['net10.0'])).toEqual({
+      added: [],
+      changed: [{ id: 'Example.Core', from: '>= 1.0.0', to: '>= 2.0.0' }],
+      dropped: [],
+      frameworksDropped: [],
+    });
+  });
+
+  it('does not read a change of spelling between two versions as a change of framework', () => {
+    // Guards against only one side of a diff being repaired, which would
+    // invent a framework the newer version "drops" when it is the same one,
+    // spelled the other way.
+    const before = [group('.NETFramework9.0', [['Example.Core', '>= 1.0.0']])];
+    const after = [group('net9.0', [['Example.Core', '>= 1.0.0']])];
+    expect(versionDependencyDiff(before, after, ['net9.0'])).toEqual({
+      added: [], changed: [], dropped: [], frameworksDropped: [],
+    });
+  });
 });

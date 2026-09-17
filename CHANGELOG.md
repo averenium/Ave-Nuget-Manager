@@ -21,6 +21,7 @@
 - **Packages**: a leading or trailing space in the search box no longer empties every list (#120)
 - The version picker and source filter lists are opaque, so text behind them no longer shows through the rows (#112)
 - **Packages**: a slower answer to an earlier search no longer replaces the results of a newer one still being typed (#121)
+- **Package details**: reads `net8.0`/`net9.0`/`net10.0` correctly on feeds (Nexus-hosted, measured) that mangle them into `.NETFramework` versions (#123)
 
 ## 0.8.0
 

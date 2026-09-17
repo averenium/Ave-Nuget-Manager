@@ -1,4 +1,4 @@
-import { frameworkAccepts, selectCompatibleGroup } from '../../frameworkCompatibility';
+import { defaultGroupFor, frameworkAccepts, selectCompatibleGroup } from '../../frameworkCompatibility';
 
 describe('frameworkAccepts', () => {
   it('lets modern .NET take an older modern .NET, .NET Core and .NET Standard', () => {
@@ -87,5 +87,57 @@ describe('selectCompatibleGroup', () => {
 
   it('finds nothing when the feed declares nothing this project can use', () => {
     expect(selectCompatibleGroup([group('net472'), group('net48')], 'net10.0')).toBeUndefined();
+  });
+});
+
+/**
+ * The lab Nexus's own registration output (#123): three groups a package
+ * really declares for net8.0/net9.0/net10.0, rewritten by the feed into
+ * `.NETFramework` monikers `frameworkKey` now repairs. `NEXUS4` is the
+ * commoner shape, with a `.NETStandard2.0` group alongside.
+ */
+describe('frameworkAccepts / selectCompatibleGroup / defaultGroupFor — Nexus-mangled monikers (#123)', () => {
+  const group = (targetFramework?: string) => ({ targetFramework });
+  const NEXUS3 = ['.NETFramework1.0.0', '.NETFramework9.0', '.NETFramework8.0'];
+  const NEXUS4 = ['.NETFramework1.0.0', '.NETStandard2.0', '.NETFramework9.0', '.NETFramework8.0'];
+
+  it('a net10.0 project takes the group written as .NET Framework 1.0.0', () => {
+    expect(frameworkAccepts('net10.0', '.NETFramework1.0.0')).toBe(true);
+  });
+
+  it('and the older modern groups beside it', () => {
+    expect(frameworkAccepts('net10.0', '.NETFramework9.0')).toBe(true);
+    expect(frameworkAccepts('net10.0', '.NETFramework8.0')).toBe(true);
+  });
+
+  it('a .NET Framework project is no longer handed .NET 10\'s dependencies', () => {
+    expect(selectCompatibleGroup(NEXUS3.map(group), 'net472')).toBeUndefined();
+  });
+
+  it('and with a netstandard group it gets that one', () => {
+    expect(selectCompatibleGroup(NEXUS4.map(group), 'net472')).toEqual(group('.NETStandard2.0'));
+  });
+
+  it('the repair does not widen the wrong way', () => {
+    expect(frameworkAccepts('net472', '.NETFramework9.0')).toBe(false);
+  });
+
+  it('nor cost .NET Framework the group it really had', () => {
+    expect(frameworkAccepts('net472', '.NETStandard2.0')).toBe(true);
+  });
+
+  it('picks the group restore would pick, per project framework', () => {
+    expect(selectCompatibleGroup(NEXUS3.map(group), 'net10.0')).toEqual(group('.NETFramework1.0.0'));
+    expect(selectCompatibleGroup(NEXUS3.map(group), 'net9.0')).toEqual(group('.NETFramework9.0'));
+    expect(selectCompatibleGroup(NEXUS3.map(group), 'net8.0')).toEqual(group('.NETFramework8.0'));
+  });
+
+  it('a real group is not shadowed by the fallback one', () => {
+    expect(selectCompatibleGroup(NEXUS4.map(group), 'net10.0')).toEqual(group('.NETFramework1.0.0'));
+  });
+
+  it('with no project framework the newest is .NET 10', () => {
+    expect(defaultGroupFor(NEXUS3.map(group), undefined)).toEqual(group('.NETFramework1.0.0'));
+    expect(defaultGroupFor(NEXUS4.map(group), undefined)).toEqual(group('.NETFramework1.0.0'));
   });
 });

@@ -62,4 +62,26 @@ describe('declaredOptions', () => {
       { targetFramework: 'netstandard2.0', dependencies: [] },
     ])).toEqual([{ key: 'netstandard2.0', label: 'netstandard2.0' }]);
   });
+
+  // A Nexus-hosted feed rewrites net8.0/net9.0/net10.0 into `.NETFramework`
+  // monikers `frameworkKey`/`frameworkLabel` now repair (#123) — see
+  // frameworkMoniker.test.ts for the rule itself.
+  it('names the frameworks the package really declares, not the ones a feed mangled them into', () => {
+    expect(declaredOptions([
+      { targetFramework: '.NETFramework1.0.0', dependencies: [] },
+      { targetFramework: '.NETFramework9.0', dependencies: [] },
+      { targetFramework: '.NETFramework8.0', dependencies: [] },
+    ])).toEqual([
+      { key: 'net10.0', label: 'net10.0' },
+      { key: 'net9.0', label: 'net9.0' },
+      { key: 'net8.0', label: 'net8.0' },
+    ]);
+  });
+
+  it('offers one entry, not two, when a feed mixes both spellings of the same framework', () => {
+    expect(declaredOptions([
+      { targetFramework: '.NETFramework9.0', dependencies: [] },
+      { targetFramework: 'net9.0', dependencies: [] },
+    ])).toEqual([{ key: 'net9.0', label: 'net9.0' }]);
+  });
 });

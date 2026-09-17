@@ -14,6 +14,7 @@ HTML-етюди інтерфейсу. Кожен — самостійний фа
 
 | Макет | Issue | Про що | Статус |
 |---|---|---|---|
+| [tfm-compatible-versions.html](tfm-compatible-versions.html) | #107 | Версії, не сумісні з target framework проєкту, — у списку версій, кнопці ↑ і Groups | Очікує реалізації |
 | [folder-scope-chooser.html](folder-scope-chooser.html) | #113 | Вибір solution або проєкту як робочої області | Очікує реалізації |
 | [multi-tfm-update-targets.html](multi-tfm-update-targets.html) | #82 | Ціль оновлення окремо для кожного target framework | Реалізовано (0.8.0) |
 | [split-badge-options.html](split-badge-options.html) | #82 | Кнопка, що дає одному TFM власну версію | Реалізовано (0.8.0) |

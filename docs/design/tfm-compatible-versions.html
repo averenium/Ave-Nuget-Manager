@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Versions the target framework can use — design for #107</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px;
+    background: #181818; color: #cccccc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #e6e6e6; margin: 0 0 6px; }
+  .lede { color: #8a8a8a; font-size: 12px; margin: 0 0 22px; max-width: 82ch; }
+  h2 { font-size: 14px; font-weight: 600; color: #e6e6e6; margin: 34px 0 4px; }
+  h2 .num { color: #6a6a6a; font-weight: 400; }
+  h3 { font-size: 12px; font-weight: 600; color: #cccccc; margin: 0 0 6px; }
+  .cap { color: #8a8a8a; font-size: 12px; margin: 0 0 14px; max-width: 82ch; }
+  .row { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 16px; }
+  .panel {
+    background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 6px;
+    padding: 12px 14px; font-size: 13px;
+  }
+  .wide { width: 640px; }
+  .narrow { width: 300px; }
+  a { color: #4daafc; text-decoration: none; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: 11.5px; color: #d4d4d4; background: #262626; border-radius: 3px; padding: 0 3px; }
+  .facts { border-left: 2px solid #3c3c3c; padding: 2px 0 2px 12px; margin: 0 0 10px; max-width: 82ch; }
+  .facts p { margin: 0 0 7px; font-size: 12px; color: #b4b4b4; }
+  .facts p:last-child { margin-bottom: 0; }
+  .note { color: #6a6a6a; font-size: 11px; margin-top: 9px; max-width: 82ch; }
+  .why { font-size: 11px; color: #7a7a7a; margin-top: 8px; max-width: 46ch; }
+  .cost { color: #cc8888; }
+
+  /* ── package-row chrome, approximating PkgListRow/global.css ─────────────── */
+  .pane { background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 4px; overflow: hidden; }
+  .r { padding: 5px 9px; border-left: 2px solid transparent; }
+  .r1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .nm { font-weight: 500; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6e6e6; }
+  .src { font-size: 10px; color: #6e6e6e; flex: 0 0 auto; }
+  .r2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); column-gap: 8px; min-height: 15px; align-items: baseline; }
+  .v { font-size: 12px; color: #c8c8c8; font-variant-numeric: tabular-nums; }
+  .v.right { justify-self: end; text-align: right; }
+  .v.up { color: #4ec994; }
+  /* Matches .pkg-row__mark: a shape (the ring), not just a colour, so it still
+     reads once a High Contrast theme flattens the palette (#44). */
+  .mark { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: 3px; vertical-align: super; border: 1px solid currentColor; border-radius: 999px; }
+  .mark svg { display: block; }
+  /* .pkg-row__mark--update: the one mark with no ring, and a size of its own
+     rather than the shared 14px — currentColor is carried by the SVG path. */
+  .mark.up { color: #4ec994; border-color: transparent; width: 16px; height: 16px; }
+  .tag-inline { font-size: 10px; color: #5f5f5f; padding: 6px 9px 0; letter-spacing: .03em; }
+
+  /* ── version dropdown, approximating VersionSelect ────────────────────────── */
+  .vsel { width: 168px; font-family: Consolas, monospace; }
+  .vsel__btn {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    border: 0.5px solid #3c3c3c; border-radius: 3px; padding: 4px 7px;
+    background: #3c3c3c; color: #d4d4d4; font-size: 12px;
+  }
+  .vsel__list {
+    margin-top: 2px; background: #1f1f1f; border: 1px solid #454545; border-radius: 3px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.36); overflow: hidden;
+  }
+  .vsel__opt { padding: 4px 8px; font-size: 12px; display: flex; justify-content: space-between; gap: 8px; }
+  .vsel__opt.sel { background: #04395e; }
+  .vsel__opt.off { color: #6e6e6e; }
+  .vsel__rule { border-top: 1px solid #333; margin: 2px 0; }
+  .vsel__disclose {
+    /* Not a link — a local disclosure toggle, so it borrows project-row__toggle's
+       own colours (plain text, chevron dims to --color-tab-inactive, both would
+       brighten to --color-fg on hover) rather than the blue `a` uses. */
+    padding: 5px 8px; font-size: 11px; color: #cccccc; cursor: pointer;
+    border-top: 1px solid #333;
+  }
+  .vsel__disclose .chev { color: #8a8a8a; }
+  .vsel__hint { padding: 3px 8px 5px; font-size: 10.5px; color: #6a6a6a; }
+
+  /* ── version-apply pair, approximating .version-apply / .btn--icon ───────── */
+  .vapply { display: inline-flex; align-items: stretch; gap: 0; border: 0.5px solid #3c3c3c; border-radius: 3px; overflow: hidden; }
+  .vapply .vsel__btn { border: 0; border-radius: 0; }
+  .vapply__btn {
+    width: 24px; display: flex; align-items: center; justify-content: center;
+    background: #0e639c; color: #fff; font-weight: bold; font-size: 13px; flex: 0 0 24px;
+    border-left: 0.5px solid #3c3c3c;
+  }
+  .vapply__btn.sec { background: #3a3d41; color: #d4d4d4; }
+
+  /* ── Problems-panel approximation ─────────────────────────────────────────── */
+  .problems { background: #181818; border: 0.5px solid #2f2f2f; border-radius: 4px; padding: 2px 0; }
+  .problems__row { display: flex; gap: 8px; padding: 4px 10px; font-size: 12px; align-items: baseline; }
+  .problems__icon { color: #f48771; flex: 0 0 auto; }
+  .problems__msg { color: #d4d4d4; }
+  .problems__loc { color: #7a7a7a; font-size: 11px; }
+
+  .legend { margin-top: 6px; font-size: 11px; color: #8a8a8a; line-height: 1.7; max-width: 82ch; }
+  .legend b { color: #b4b4b4; }
+</style>
+</head>
+<body>
+
+<h1>Versions the target framework can use</h1>
+<p class="lede">Design for <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/107">#107</a>. No plan exists for this issue yet, so this file works directly from the issue text, which is unusually specific about where the problem shows: <em>“The version list, the ↑ button and Groups all offer versions the project's target framework cannot use.”</em> All three turn out to be one shared component plus one shared idea of “what to propose”, so most of this file is about that one component. Sample data uses <code>Example.*</code> names throughout.</p>
+
+<div class="facts">
+  <p><strong>Already decided in the issue</strong> — 0 comments on #107, so the body is the whole brief so far, and this is drawn rather than redesigned: Part 1 detects the mismatch with no network call, from data the restore already produced (<code>files</code> has <code>lib/</code> or <code>ref/</code>, but the resolved target's <code>compile</code> is empty), and reports it as a normal compile-time diagnostic. Part 2 reads compatibility from each source's own discovered registration resource (one request per package id, all versions at once), must degrade silently on a source that has none — same as the existing vulnerability scan already does — and reuses resolved credentials rather than assuming anonymous access. The issue's own recommendation sequences the two: Part 1 on its own, Part 2 “together with #86 and #89”. This file still draws Part 2's surface below so a mockup exists whenever that lands — whether it lands with #107 alone or later with those two is outside what this file decides.</p>
+  <p><strong>What is already true in the code</strong> — read from <code>src/webview/</code>, not assumed.</p>
+  <p>“The version list” is one component, <code>VersionSelect</code> in <code>VersionSelector.tsx</code>. The panel's own picker, every per-project row, every per-framework row (<a href="https://github.com/averenium/Ave-Nuget-Manager/issues/82">#82</a>), and the Groups tab's family-target picker all render it. Whatever this file settles for that component applies to all four call sites at once, including “Groups”, without a separate design for Groups itself.</p>
+  <p>The extension already knows each project's target framework(s) — <code>state.packages.projectFrameworks</code> — and already has a precedent for a version that is technically offered but works against the reader's evident intent: <code>versionLine</code> dims a version that would leave the current major (<code>version-select__option--off-line</code>), sets it apart with a rule, and explains why in its tooltip, rather than removing it. It is not hidden, because “crossing a major deliberately is still a legitimate thing to do” — the same sentence applies here with one word changed: crossing to an incompatible framework is <em>not</em> a legitimate thing to do by accident, but the signal that says so is a prediction, not disk fact (next point), so it still shouldn't be the one thing in this list with no way back.</p>
+  <p><strong>Part 1 and Part 2 of the issue carry different confidence</strong>, and the design leans on that difference. Part 1 (no network) reads <code>compile: []</code> back from an assets file that already exists after every restore — a disk fact about a version already chosen. Part 2 (one HTTP request) reads <code>catalogEntry.dependencyGroups[].targetFramework</code> from the registration resource before a version is chosen at all — which the issue itself calls “a proxy for the <code>lib/</code> folders rather than a definition of them”. A proxy that can be wrong is not grounds for making a version unreachable.</p>
+  <p><code>PkgListRow</code> already carries five marks beside a package name — update, blocked, vulnerable, deprecated, unmapped source — and deliberately did not grow a sixth shape for deprecation: it reuses the vulnerability glyph with its own tooltip. Any new mark this file proposes is held to the same rule.</p>
+</div>
+
+<h2><span class="num">1 ·</span> The version list</h2>
+<p class="cap">Scenario used below: <code>Example.Api</code> targets <code>net8.0</code> and references <code>Example.Extensions.OpenApi</code> 8.0.11. The feed's versions, newest first: <span class="cost">10.0.12</span> and <span class="cost">10.0.0</span> ship <code>lib/net10.0</code> only; 9.1.0 and 9.0.3 ship both <code>net8.0</code> and <code>net9.0</code>; 8.0.11 (installed) and 8.0.4 ship <code>net8.0</code>. This mirrors the exact case measured in the issue against SDK 10.0.301.</p>
+
+<div class="row">
+  <div class="panel narrow">
+    <h3>Today</h3>
+    <div class="vsel">
+      <div class="vsel__btn"><span>8.0.11</span><span>▾</span></div>
+      <div class="vsel__list">
+        <div class="vsel__opt">10.0.12</div>
+        <div class="vsel__opt">10.0.0</div>
+        <div class="vsel__opt">9.1.0</div>
+        <div class="vsel__opt">9.0.3</div>
+        <div class="vsel__opt sel">8.0.11</div>
+        <div class="vsel__opt">8.0.4</div>
+      </div>
+    </div>
+    <p class="why">Every version reads the same. Picking 10.0.12 restores clean and fails at compile time with a <code>CS0234</code> that never names this package — the whole complaint in one dropdown.</p>
+  </div>
+
+  <div class="panel narrow">
+    <h3>Chosen: collapsed, one click to reveal — why</h3>
+    <div class="vsel">
+      <div class="vsel__btn"><span>8.0.11</span><span>▾</span></div>
+      <div class="vsel__list">
+        <div class="vsel__opt">9.1.0</div>
+        <div class="vsel__opt">9.0.3</div>
+        <div class="vsel__opt sel">8.0.11</div>
+        <div class="vsel__opt">8.0.4</div>
+        <div class="vsel__disclose"><span class="chev">▸</span> 2 versions that can't install here</div>
+      </div>
+    </div>
+    <p class="why">The list that opens is the answer to “what can I use” — the issue's own title — over dimming everything in place, which on a package that moved to a new TFM entirely would still bury the usable versions below the fold. Nothing is deleted, unlike filtering outright: the row expands on click, each one dimmed the same way an off-line version already is, so the escape hatch for a wrong proxy-signal prediction is one click away rather than gone — the one thing every existing “questionable version” signal in this codebase (vulnerable, deprecated, off-line) already guarantees and this should not be the first to break.</p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="panel wide">
+    <h3>Expanded — the same version, the same warning vocabulary</h3>
+    <div class="vsel" style="width:220px;">
+      <div class="vsel__btn"><span>8.0.11</span><span>▾</span></div>
+      <div class="vsel__list">
+        <div class="vsel__opt">9.1.0</div>
+        <div class="vsel__opt">9.0.3</div>
+        <div class="vsel__opt sel">8.0.11</div>
+        <div class="vsel__opt">8.0.4</div>
+        <div class="vsel__rule"></div>
+        <div class="vsel__opt off" title="Can't install for net8.0 — no compatible assets (ships lib/net10.0 only)">10.0.12</div>
+        <div class="vsel__opt off" title="Can't install for net8.0 — no compatible assets (ships lib/net10.0 only)">10.0.0</div>
+      </div>
+      <div class="vsel__hint">hover: “Can't install for net8.0 — no compatible assets (ships lib/net10.0 only)”</div>
+    </div>
+    <p class="note">Clicking the disclosure line swaps it for the two versions it was hiding, dimmed the same way the existing off-line treatment already dims a version outside the current major — this is that same treatment, deferred until asked for. The tooltip leads with what it means for this project — not installable — and only then the reason: not an absent asset, a <em>mismatched</em> one, which <code>lib/net10.0</code> in the same line makes concrete. A version that is <em>both</em> off-line (#82) and off-framework needs only one explanation; off-framework is the one shown; per-project a version is essentially never both at once in practice, since a major bump is usually also where a project drops old frameworks.</p>
+    <p class="note">This is one component, so this same picture is what the top “Installed” picker, every project row, every per-framework row, and the Groups family-target picker all show — see §3 for Groups specifically.</p>
+  </div>
+</div>
+
+<h2><span class="num">2 ·</span> The ↑ button</h2>
+<p class="cap">“The ↑ button” is two things today: the small mark beside a package's name in the list (<code>pkg-row__mark--update</code>), and the apply button joined to every version picker (<code>version-apply__btn</code>), whose target is always whatever <code>compareSemVer</code> calls highest. Neither looks at a target framework at all right now — and that splits into two separate questions, each with more than one honest answer.</p>
+
+<p class="cap" style="margin-top:22px;"><strong>2a — what the mark and the button's default propose.</strong> Same scenario as §1: <code>Example.Api</code> on <code>net8.0</code>, installed 8.0.11, highest compatible 9.1.0, feed's raw latest 10.0.12.</p>
+<div class="row">
+  <div class="panel narrow">
+    <h3>Today</h3>
+    <div class="pane">
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.OpenApi<span class="mark up"><svg viewBox="0 0 16 16" width="10" height="10"><path fill="currentColor" d="M8 2.5 13 9H9.7v4.5h-3.4V9H3Z"/></svg></span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.11</span><span class="v right up">10.0.12</span></div></div>
+    </div>
+    <div class="vapply" style="margin-top:8px;">
+      <div class="vsel__btn"><span>10.0.12</span><span>▾</span></div>
+      <div class="vapply__btn">&#8593;</div>
+    </div>
+    <p class="why">The mark and the button both point at a version that will not compile here — the exact <code>dotnet add package</code> write the issue shows going through silently.</p>
+  </div>
+  <div class="panel narrow">
+    <h3>Chosen: propose the highest compatible version — why</h3>
+    <div class="pane">
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.OpenApi<span class="mark up"><svg viewBox="0 0 16 16" width="10" height="10"><path fill="currentColor" d="M8 2.5 13 9H9.7v4.5h-3.4V9H3Z"/></svg></span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">8.0.11</span><span class="v right up">9.1.0</span></div></div>
+    </div>
+    <div class="vapply" style="margin-top:8px;">
+      <div class="vsel__btn"><span>9.1.0</span><span>▾</span></div>
+      <div class="vapply__btn">&#8593;</div>
+    </div>
+    <p class="why">The mark now means “a version that would actually work is available”. 10.0.12 is still reachable through §1's dropdown — only the <em>proposal</em> changes, the resolution <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/82">#82</a> already reached for per-framework pins. When nothing compatible is newer, the mark and the row's own version both simply stay put — no ↑, even though the feed's raw latest is higher. Leaving the default alone was the alternative — cheaper, one fewer place compatibility is computed — but the common path is exactly “see an ↑, press the joined button, never open the picker”, and that path would still land on 10.0.12 by default, which is the failure #107 opens with.
+    <span class="cost">Cost: rides entirely on Part 2's proxy signal. A false negative there quietly withholds a real update from every reader who only ever looks at the mark and never opens the dropdown.</span></p>
+  </div>
+</div>
+
+<p class="cap" style="margin-top:22px;"><strong>2b — applying an incompatible version anyway</strong>, reached through §1's dropdown regardless of 2a.</p>
+<div class="row">
+  <div class="panel narrow">
+    <h3>Chosen: no extra gate — why</h3>
+    <p class="why">The dropdown's own dimming and tooltip (§1) already said why. Picking it and pressing ↑ applies it like any other version — the same as picking a version the feed marks vulnerable or deprecated does today. A confirmation popup reusing <code>CrossLinePopup</code>/<code>RoslynCapPopup</code> was the alternative — precedented, since both already interrupt for a smaller concern — but it would be a third kind of popup in a panel that already has two, for a path the reader only reaches by deliberately opening a section the UI already called “can't install here”. The dimming already did the interrupting.</p>
+  </div>
+</div>
+
+<h2><span class="num">3 ·</span> Groups</h2>
+<p class="cap">A family's target version already has to satisfy every member (<code>intersectVersions</code>), and a member can already be pinned to one framework of a multi-targeted project (#82, the <code>framework</code> badge on a <code>GroupRow</code>). Framework compatibility is a second condition on the same intersection, not a new mechanism.</p>
+<div class="row">
+  <div class="panel wide">
+    <div class="pane">
+      <div class="tag-inline">Example.Extensions.* — members on net8.0 and net10.0 projects</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Http</span></div>
+        <div class="r2"><span class="v">8.0.11 <span style="color:#6a6a6a;">→</span></span><span class="v right up">9.1.0</span></div></div>
+    </div>
+    <p class="why">Every member here happens to sit on a <code>net8.0</code>-or-earlier project, so 9.1.0 (the highest version compatible with all of them) is offered as one shared target exactly as today — nothing to design here beyond feeding the same compatible-version list §1 and §2 use into the existing intersection.</p>
+  </div>
+  <div class="panel wide">
+    <div class="pane">
+      <div class="tag-inline">Same family, one member now on a net10.0 project</div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.*</span><span class="badge" style="font-size:10px;color:#9a9a9a;background:#2d2d2d;border-radius:3px;padding:1px 6px;">net8.0</span></div>
+        <div class="r2"><span class="v">8.0.11 <span style="color:#6a6a6a;">→</span></span><span class="v right up">9.1.0</span></div></div>
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.*</span><span class="badge" style="font-size:10px;color:#9a9a9a;background:#2d2d2d;border-radius:3px;padding:1px 6px;">net10.0</span></div>
+        <div class="r2"><span class="v">8.0.11 <span style="color:#6a6a6a;">→</span></span><span class="v right up">10.0.12</span></div></div>
+    </div>
+    <p class="why">No single version is compatible with both frameworks, so the family falls apart into its per-framework groups — the same split #82 already draws when members simply disagree on a version. Framework incompatibility is treated as one more reason members disagree, not a reason to invent a second kind of group.</p>
+  </div>
+</div>
+
+<h2><span class="num">4 ·</span> The already-installed, already-broken case (Part 1)</h2>
+<p class="cap">Part 1 is different in kind from §1–3: it is about a version already chosen, already restored, and already missing a compile asset — a fact on disk, not a prediction. The issue's own proposal is to surface it as a normal compile-time diagnostic.</p>
+<div class="row">
+  <div class="panel narrow">
+    <h3>Chosen: Problems panel only — why</h3>
+    <div class="problems">
+      <div class="problems__row">
+        <span class="problems__icon">&#9888;</span>
+        <span class="problems__msg">Example.Extensions.OpenApi 10.0.12 has no compile assets for net8.0 (ships lib/net10.0 only)</span>
+      </div>
+      <div class="problems__row" style="padding-top:0;">
+        <span style="width:14px;"></span>
+        <span class="problems__loc">Example.Api.csproj</span>
+      </div>
+    </div>
+    <p class="why">This is the mechanism the issue itself asks for — “turns a compile error into a row in Problems” — and it costs nothing extra to design: VS Code's own panel, native icon, native navigation to the reference. No change to <code>PkgListRow</code> at all. A sixth row mark was the alternative — it could have reused the existing warning glyph rather than inventing a shape, exactly as deprecation reuses the vulnerability glyph, so it would not have broken the “no sixth shape” precedent by itself — but it would still have been the row's sixth condition, on a list already asked to <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/86">stay minimal</a> once before, for a fact the reader meets as a build error the moment they compile anyway.</p>
+  </div>
+</div>
+
+<h2><span class="num">·</span> What this leaves for whoever implements it</h2>
+<div class="legend">
+  <div>Whether the disclosure line should name the versions instead of just counting them — “N versions that can't install here” is what fits today's narrowest panel, but worth revisiting against the real string lengths once this is built.</div>
+  <div>Where the compatible/incompatible split is computed — once per package (as §1's scenario assumes) or once per project when a solution has projects on different frameworks — is a data-flow question, not a visual one, and does not change anything drawn above.</div>
+  <div>Nothing here designs Part 2's HTTP call itself (source discovery, degrading when a feed has no <code>RegistrationsBaseUrl</code>) — the issue already covers that ground and it has no visible surface.</div>
+</div>
+
+<div class="note">No new colour token is introduced anywhere on this page: §1 and §3 reuse <code>version-select__option--off-line</code> exactly, §2 changes a value, not a style, and §4 stays in VS Code's own Problems panel. That is why this file is dark-only — the one open colour question in the codebase's history for this area (<a href="https://github.com/averenium/Ave-Nuget-Manager/pull/110">#108</a>, light-theme warning gold) does not recur here.</div>
+
+</body>
+</html>

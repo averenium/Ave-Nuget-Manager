@@ -21,12 +21,15 @@ F5 in VS Code / Cursor starts the Extension Host (`Run Extension`, preLaunchTask
 - `src/webview/` — the React UI (`App.tsx`, `components/`, `context/`, `styles/`). It talks to the host only through the message protocol in `src/messages.ts`.
 - `src/test/unit`, `src/test/property`, `src/test/fixtures`, `src/test/__mocks__` — Jest; `vscode` is mocked, `@/x` maps to `src/x`.
 - `docs/` — implementation notes, in Ukrainian; `docs/README.md` is the index.
-- `docs/plans/` — a working plan per issue, written before the code.
 - `docs/design/` — HTML mockups; `docs/design/README.md` is the index.
 
 ## How work is split
 
-Each issue goes through up to four stages, each in its own chat, each handing over a committed file rather than chat history: `/spec` → `/design` (UI only) → `/impl` → `/verify`. The skills in `.claude/skills/` describe what each stage reads and writes.
+There are four stages, each with its own chat and its own skill in `.claude/skills/`: `/spec` investigates a symptom or an idea and writes the plan into its issue, creating that issue when there is none yet, `/design` settles how it looks, `/impl` builds it, `/verify` checks it. **They are stages a task may need, not a sequence every task runs through.** Most issues never need `/design`; a small, well-understood fix can go straight to `/impl`. Skip what is not needed rather than producing an empty artifact to complete the set. What a stage does produce is left where the next one can read it — never in chat history.
+
+**Stages run in parallel.** Implementation of one issue and design of another go on at the same time, in this same working directory and on the same branch. They stay out of each other's way because they write to different places: `/design` to `docs/design/`, `/impl` to `src/`, `/verify` to `CHANGELOG.md`. The rule that makes it safe is about git: **stage only the paths your own stage produced.** No `git add -A`, no `git add .`, no `git commit -a` — one of those once swept a half-finished set of files from another chat into an unrelated commit. The working tree is dirty at all times; another chat's modified or untracked files are not leftovers, are not yours to revert or clean, and are not a reason to wait.
+
+**The plan lives in the issue — the whole thread, not only the body.** The body opens it: what happens today, what the code does now with file and line references, and a numbered proposal whose items are checkable one by one. Comments extend it — the design once it is settled, a decision taken after discussion, a section that refines or replaces part of the original proposal. Read the plan with `gh issue view NNN --comments`, and where a comment and the body disagree, the later one holds. A separate document under `docs/` is only for a subject large enough to describe permanently, the way `docs/http-backend-plan.md` covers the move to the HTTP catalog. The skills in `.claude/skills/` describe what each stage reads and writes.
 
 ## Conventions
 

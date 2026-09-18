@@ -11,9 +11,11 @@ This stage has two jobs, and **finding the problems is the main one**. Checking 
 
 ## Read first
 
-- `gh issue view NNN --comments` — the whole thread. The checklist is the numbered proposal as the comments leave it: items added later count, items superseded do not, and the design comment is the visual checklist.
+- `gh issue view NNN --json number,title,state,labels,milestone,body,comments` — the whole thread. The checklist is the numbered proposal as the comments leave it: items added later count, items superseded do not, and the design comment is the visual checklist.
 - The mockup the design comment links, when the issue has one.
 - The diff of the branch against `main`.
+
+- **One call, and empty is an answer.** The command above returns the body and every comment together; read the thread from it and do not assemble the same picture out of several calls. `gh issue view NNN --comments` is not a substitute: it prints the comment thread *only*, and an issue with no comments yet prints nothing at all and exits 0 — which is the answer "no comments", not a broken tool, not a missing repository and not an authentication problem. Never re-run a variant of a command that already succeeded.
 
 ## Checks
 

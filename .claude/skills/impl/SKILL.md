@@ -9,9 +9,11 @@ The argument is an issue number `NNN`.
 
 ## Read first
 
-- `gh issue view NNN --comments` — the whole thread, in order. The plan is the body plus every comment that extends it: the design, decisions taken later, items added or dropped. Where a comment and the body disagree, the later one holds. Reading only the body means building a stale plan.
+- `gh issue view NNN --json number,title,state,labels,milestone,body,comments` — the whole thread, in order. The plan is the body plus every comment that extends it: the design, decisions taken later, items added or dropped. Where a comment and the body disagree, the later one holds. Reading only the body means building a stale plan.
 - The mockup the design comment links, when the issue has one. Many do not; that is normal and not a reason to stop.
 - The implementation note in `docs/` for the area being changed.
+
+- **One call, and empty is an answer.** The command above returns the body and every comment together; read the thread from it and do not assemble the same picture out of several calls. `gh issue view NNN --comments` is not a substitute: it prints the comment thread *only*, and an issue with no comments yet prints nothing at all and exits 0 — which is the answer "no comments", not a broken tool, not a missing repository and not an authentication problem. Never re-run a variant of a command that already succeeded.
 
 ## Build
 

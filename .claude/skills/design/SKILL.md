@@ -11,9 +11,11 @@ The argument is an issue number `NNN`.
 
 ## Read first
 
-- `gh issue view NNN --comments` — the brief is the whole thread: the proposal in the body plus whatever the comments have since added or changed. **List the decisions already accepted there before drawing anything**, and treat that list as binding; a mockup that quietly drops an accepted decision is wrong even if it looks better.
+- `gh issue view NNN --json number,title,state,labels,milestone,body,comments` — the brief is the whole thread: the proposal in the body plus whatever the comments have since added or changed. **List the decisions already accepted there before drawing anything**, and treat that list as binding; a mockup that quietly drops an accepted decision is wrong even if it looks better.
 - `docs/design/README.md` and a neighbouring mockup, for the house style.
 - The current UI in `src/webview/` — the components, styles and strings that would change. Read them; the mockup has to show what is really there, and nothing in it may be recalled or assumed.
+
+- **One call, and empty is an answer.** The command above returns the body and every comment together; read the thread from it and do not assemble the same picture out of several calls. `gh issue view NNN --comments` is not a substitute: it prints the comment thread *only*, and an issue with no comments yet prints nothing at all and exits 0 — which is the answer "no comments", not a broken tool, not a missing repository and not an authentication problem. Never re-run a variant of a command that already succeeded.
 
 ## Produce
 

@@ -13,6 +13,16 @@ The argument is one of three things:
 
 **The plan goes into the issue, not into a file — and it is the whole thread.** The body opens the plan; comments extend it as the work is thought through. The later stages read all of it. A separate document under `docs/` is reserved for a subject large enough to be described permanently, the way `docs/http-backend-plan.md` covers the move to the HTTP catalog; everything smaller stays in the issue.
 
+## Read first
+
+- `gh issue view NNN --json number,title,state,labels,milestone,body,comments` — when a number was given, one call for the body and every comment, since the plan is the whole thread.
+
+- **One call, and empty is an answer.** The command above returns the body and every comment together; read the thread from it and do not assemble the same picture out of several calls. `gh issue view NNN --comments` is not a substitute: it prints the comment thread *only*, and an issue with no comments yet prints nothing at all and exits 0 — which is the answer "no comments", not a broken tool, not a missing repository and not an authentication problem. Never re-run a variant of a command that already succeeded.
+- `docs/README.md` and the implementation note covering the area being touched.
+- The code that would change. Enough of it to know what is actually there, not what the issue assumes is there.
+- `docs/design/README.md`, in case a mockup for this area already exists.
+- A recent worked-out issue (`gh issue view 113 --json body,comments`) for the house shape.
+
 ## Starting from a symptom, with no issue yet
 
 This is the common case and the investigation is the whole value. Do not open an issue that only restates what the user said.

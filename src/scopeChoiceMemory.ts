@@ -1,6 +1,5 @@
 import { pathsEqual } from './pathCompare';
 import type { KeyValueStore } from './nugetSourceCapabilities';
-import type { ScopeChoices } from './types';
 
 export type RememberedScopeChoice =
   | { kind: 'file'; path: string }
@@ -36,6 +35,21 @@ export function scopeChoiceMemory(state: KeyValueStore): ScopeChoiceMemory {
 }
 
 /**
+ * Just enough of a folder's contents to tell whether a remembered choice
+ * still applies. Deliberately narrower than `ScopeChoices`, which a caller
+ * on the automatic-resolution path has no reason to pay for: the project
+ * counts, target frameworks and modification times it gathers cost a read of
+ * every project file, while the question here is only whether a path is
+ * still among them. `ScopeChoices` satisfies this shape, so the chooser can
+ * go on passing its own.
+ */
+export interface ScopeChoiceIdentity {
+  offerAllProjects: boolean;
+  solutions: readonly { path: string }[];
+  projects: readonly { path: string }[];
+}
+
+/**
  * The remembered choice, only when it still applies to what is actually
  * there now — a solution or project that was deleted, or a folder that
  * dropped to a single project, is not silently restored; the chooser asks
@@ -43,7 +57,7 @@ export function scopeChoiceMemory(state: KeyValueStore): ScopeChoiceMemory {
  */
 export function resolveRememberedChoice(
   remembered: RememberedScopeChoice,
-  choices: ScopeChoices,
+  choices: ScopeChoiceIdentity,
 ): RememberedScopeChoice | undefined {
   if (remembered.kind === 'folder') {
     return choices.offerAllProjects ? remembered : undefined;

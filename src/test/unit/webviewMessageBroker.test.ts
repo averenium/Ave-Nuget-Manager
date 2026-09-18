@@ -4056,7 +4056,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       broker.attach();
 
       simulateMessage({ type: 'WEBVIEW_READY' });
-      await new Promise((r) => setTimeout(r, 20));
+      await waitFor(() => posted.some((m) => m.type === 'INIT_STATE'));
 
       expect(stub.setScope).toHaveBeenCalledWith(expect.objectContaining({ kind: 'solution', solutionPath: '/root/App.sln' }));
       const init = posted.find((m) => m.type === 'INIT_STATE') as any;
@@ -4087,12 +4087,80 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       broker.attach();
 
       simulateMessage({ type: 'WEBVIEW_READY' });
-      await new Promise((r) => setTimeout(r, 20));
+      await waitFor(() => posted.some((m) => m.type === 'INIT_STATE'));
 
       expect(stub.setScope).toHaveBeenCalledWith(expect.objectContaining({ kind: 'solution', solutionPath: '/root/nested/Nested.sln' }));
       const init = posted.find((m) => m.type === 'INIT_STATE') as any;
       expect(init.scope).toEqual(expect.objectContaining({ kind: 'solution', solutionPath: '/root/nested/Nested.sln' }));
       expect(init.scopeChoices ?? null).toBeNull();
+    });
+
+    it('restores a remembered "all projects" choice instead of the folder\'s single solution (#126)', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      mockFindFilesByGlob(
+        ['/root/App.sln'],
+        ['/root/src/A.csproj', '/root/src/B.csproj'],
+      );
+
+      const { stub, posted, simulateMessage } = makeProvider(undefined);
+      const memory = makeScopeMemory();
+      // The reader deliberately switched away from the single solution to
+      // "all projects" through the corner control; that pick must stick
+      // instead of the solution silently coming back on the next open.
+      memory.get.mockReturnValue({ kind: 'folder' });
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        memory,
+      );
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => posted.some((m) => m.type === 'INIT_STATE'));
+
+      const expected: WorkspaceScope = {
+        kind: 'folder',
+        folderPath: '/root',
+        projects: [
+          { name: 'A', relativePath: 'src/A.csproj', absolutePath: '/root/src/A.csproj' },
+          { name: 'B', relativePath: 'src/B.csproj', absolutePath: '/root/src/B.csproj' },
+        ],
+      };
+      expect(stub.setScope).toHaveBeenCalledWith(expected);
+      const init = posted.find((m) => m.type === 'INIT_STATE') as any;
+      expect(init.scope).toEqual(expected);
+      expect(init.scopeChoices ?? null).toBeNull();
+    });
+
+    it('drops a remembered "all projects" choice once the folder is down to a single project and asks again', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      mockFindFilesByGlob(['/root/App.sln'], ['/root/src/A.csproj']);
+
+      const { stub, posted, simulateMessage } = makeProvider(undefined);
+      const parser = makeSolutionParser();
+      parser.getProjects.mockResolvedValue([
+        { name: 'A', relativePath: 'src/A.csproj', absolutePath: '/root/src/A.csproj' },
+      ]);
+      const memory = makeScopeMemory();
+      // "All projects" no longer means anything once there is only one project left.
+      memory.get.mockReturnValue({ kind: 'folder' });
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), parser, makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        memory,
+      );
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => posted.some((m) => m.type === 'INIT_STATE'));
+
+      expect(stub.setScope).toHaveBeenCalledWith(expect.objectContaining({ kind: 'solution', solutionPath: '/root/App.sln' }));
+      const init = posted.find((m) => m.type === 'INIT_STATE') as any;
+      expect(init.scope).toEqual(expect.objectContaining({ kind: 'solution', solutionPath: '/root/App.sln' }));
     });
   });
 

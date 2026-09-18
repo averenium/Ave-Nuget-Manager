@@ -27,7 +27,13 @@ export function projectRowLabel(p: ScopeChoiceProject): string {
   return p.relativePath;
 }
 
-/** Full identity of the "all projects" row (#127), in the row's own words. */
+/**
+ * Full identity of the "all projects" row (#127), in the row's own words —
+ * "projects" always, unpluralized, matching the visible row's own fixed
+ * wording (`ScopeChooser.tsx`'s "All N projects") rather than reinventing
+ * the grammar here. The row is only offered from two projects up, so the
+ * singular never actually occurs today.
+ */
 export function allProjectsRowLabel(totalProjects: number, folderCovers: string): string {
-  return `All ${totalProjects} project${totalProjects === 1 ? '' : 's'} — ${folderCovers}`;
+  return `All ${totalProjects} projects — ${folderCovers}`;
 }

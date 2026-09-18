@@ -45,7 +45,11 @@ describe('allProjectsRowLabel', () => {
     expect(allProjectsRowLabel(5, 'ignores solution boundaries')).toBe('All 5 projects — ignores solution boundaries');
   });
 
-  it('keeps the singular "project" for a single project', () => {
-    expect(allProjectsRowLabel(1, 'no solution here')).toBe('All 1 project — no solution here');
+  // The row itself never pluralizes ("All N projects" always, even for one)
+  // and is only offered from two projects up in any case — matching that
+  // fixed wording here, rather than reinventing the grammar, keeps the
+  // tooltip and the visible row from ever being able to disagree.
+  it('does not pluralize on its own, matching the row\'s own fixed wording', () => {
+    expect(allProjectsRowLabel(1, 'no solution here')).toBe('All 1 projects — no solution here');
   });
 });

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { matchesQuery } from '../utils/search';
 import { pathsEqual } from '../../pathCompare';
 import { litProjectPathsFor, isProjectDimmed } from '../utils/scopeChooserHighlight';
+import { solutionRowLabel, projectRowLabel, allProjectsRowLabel } from '../utils/scopeChooserTooltip';
 import type { ScopeChoices, ScopeChoiceProject } from '../../types';
 
 const PROJECTS_SHOWN_INITIALLY = 8;
@@ -108,6 +109,8 @@ export function ScopeChooser({ choices, currentPath, currentLabel, tight, onPick
                     key={s.path}
                     role="button"
                     tabIndex={0}
+                    title={solutionRowLabel(s)}
+                    aria-label={solutionRowLabel(s)}
                     className={
                       'scope-chooser__opt'
                       + (isCurrent ? ' scope-chooser__opt--current' : '')
@@ -137,10 +140,13 @@ export function ScopeChooser({ choices, currentPath, currentLabel, tight, onPick
               <div className="scope-chooser__group scope-chooser__group--later">Everything</div>
               {(() => {
                 const isCurrent = currentPath !== null && pathsEqual(currentPath, choices.folderPath);
+                const label = allProjectsRowLabel(choices.totalProjects, folderCovers);
                 return (
                   <div
                     role="button"
                     tabIndex={0}
+                    title={label}
+                    aria-label={label}
                     className={
                       'scope-chooser__opt'
                       + (isCurrent ? ' scope-chooser__opt--current' : '')
@@ -181,6 +187,8 @@ export function ScopeChooser({ choices, currentPath, currentLabel, tight, onPick
                 key={p.path}
                 role="button"
                 tabIndex={0}
+                title={projectRowLabel(p)}
+                aria-label={projectRowLabel(p)}
                 className={
                   'scope-chooser__opt'
                   + (isCurrent ? ' scope-chooser__opt--current' : '')

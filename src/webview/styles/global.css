@@ -353,7 +353,15 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   outline: 1px solid var(--color-contrast-border); outline-offset: -1px;
 }
 .scope-chooser--tight .scope-chooser__opt { padding: 3px var(--spacing-sm); gap: var(--spacing-xs); }
-.scope-chooser__opt:hover { background: var(--color-list-hover); border-color: var(--color-btn-bg); }
+/* Same reasoning as .pkg-toolbar__refresh:hover above (#68 follow-up, #127).
+   `color` left unchanged on .scope-chooser__ico — see that comment on why
+   recolouring an icon to the accent colour is unsafe in HC themes. The
+   --likely/--current rows keep their own border colours; only the outline
+   width changes here. */
+.scope-chooser__opt:hover {
+  background: var(--color-list-hover); border-color: var(--color-btn-bg);
+  outline-width: 2px; outline-offset: -2px;
+}
 .scope-chooser__opt--likely { border-color: var(--color-btn-bg); }
 .scope-chooser__opt--current { border-color: var(--color-success); }
 .scope-chooser__opt--dim { opacity: 0.4; }

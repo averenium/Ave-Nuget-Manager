@@ -4038,6 +4038,62 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       expect(init.scope).toBeNull();
       expect(init.scopeChoices).toBeDefined();
     });
+
+    it('resolves automatically to the solution at the folder root, however many solutions sit nested below it (#126)', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      mockFindFilesByGlob(['/root/App.sln', '/root/nested/Nested.sln'], []);
+
+      const { stub, posted, simulateMessage } = makeProvider(undefined);
+      const parser = makeSolutionParser();
+      parser.getProjects.mockImplementation((p: string) => Promise.resolve(
+        p.includes('App')
+          ? [{ name: 'A', relativePath: 'A.csproj', absolutePath: '/root/A.csproj' }]
+          : [{ name: 'N', relativePath: 'nested/N.csproj', absolutePath: '/root/nested/N.csproj' }],
+      ));
+      const broker = new WebviewMessageBroker(stub, makeBackend(), parser, makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(stub.setScope).toHaveBeenCalledWith(expect.objectContaining({ kind: 'solution', solutionPath: '/root/App.sln' }));
+      const init = posted.find((m) => m.type === 'INIT_STATE') as any;
+      expect(init.scope).toEqual(expect.objectContaining({ kind: 'solution', solutionPath: '/root/App.sln' }));
+      expect(init.scopeChoices ?? null).toBeNull();
+    });
+
+    it('a remembered nested solution outranks a single solution sitting at the root (#126)', async () => {
+      (vscode.workspace as any).workspaceFolders = [
+        { uri: vscode.Uri.file('/root'), name: 'root', index: 0 },
+      ];
+      mockFindFilesByGlob(['/root/App.sln', '/root/nested/Nested.sln'], []);
+
+      const { stub, posted, simulateMessage } = makeProvider(undefined);
+      const parser = makeSolutionParser();
+      parser.getProjects.mockImplementation((p: string) => Promise.resolve(
+        p.includes('App')
+          ? [{ name: 'A', relativePath: 'A.csproj', absolutePath: '/root/A.csproj' }]
+          : [{ name: 'N', relativePath: 'nested/N.csproj', absolutePath: '/root/nested/N.csproj' }],
+      ));
+      const memory = makeScopeMemory();
+      memory.get.mockReturnValue({ kind: 'file', path: '/root/nested/Nested.sln' });
+      const broker = new WebviewMessageBroker(
+        stub, makeBackend(), parser, makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        memory,
+      );
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(stub.setScope).toHaveBeenCalledWith(expect.objectContaining({ kind: 'solution', solutionPath: '/root/nested/Nested.sln' }));
+      const init = posted.find((m) => m.type === 'INIT_STATE') as any;
+      expect(init.scope).toEqual(expect.objectContaining({ kind: 'solution', solutionPath: '/root/nested/Nested.sln' }));
+      expect(init.scopeChoices ?? null).toBeNull();
+    });
   });
 
   it('rejects INSTALL_PACKAGE for a blocked installed id', async () => {

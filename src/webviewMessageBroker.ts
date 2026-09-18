@@ -916,10 +916,16 @@ export class WebviewMessageBroker {
    * level below a root one. Counting solutions correctly is exactly the
    * question this method exists to answer, so it cannot reuse that shortcut.
    *
-   * More than one solution is ambiguous: a remembered choice for this folder
-   * (#113 item 4) is tried first and, when it still applies, resolved
-   * silently; otherwise `choices` carries what the in-panel chooser needs to
-   * ask instead of the caller giving up with nothing.
+   * That full list answers two different questions, and only one of them
+   * wants every solution counted equally: whether the folder is genuinely
+   * ambiguous asks where each solution sits, not just how many there are (#126).
+   * A remembered choice (#113 item 4) is consulted first and, when it still
+   * applies, resolved silently — including in a folder that was never
+   * ambiguous, so a deliberate switch away from an obvious solution sticks.
+   * Failing that: a single solution at the folder root decides it however
+   * many solutions sit nested below; a single solution anywhere decides it
+   * when none is in the root; otherwise it falls through to the project/folder
+   * rules and finally the chooser.
    */
   private async _detectWorkspaceScope(): Promise<{ scope: WorkspaceScope | null; choices: ScopeChoices | null }> {
     const folders = vscode.workspace.workspaceFolders;
@@ -932,6 +938,30 @@ export class WebviewMessageBroker {
     ]);
     if (solutionFiles.length === 0 && projects.length === 0) return { scope: null, choices: null };
 
+    let choices: ScopeChoices | null | undefined;
+    const scopeChoices = async () => choices ??= await buildScopeChoices(rootPath, this.solutionParser);
+
+    const remembered = this.scopeMemory?.get(rootPath);
+    if (remembered) {
+      const built = await scopeChoices();
+      const resolved = built && resolveRememberedChoice(remembered, built);
+      if (resolved) {
+        const scope = resolved.kind === 'folder'
+          ? await scopeFromFolder(
+            rootPath,
+            built!.projects.map((p) => ({ name: p.name, relativePath: p.relativePath, absolutePath: p.path })),
+          )
+          : await scopeFromDotnetFile(resolved.path, this.solutionParser);
+        return { scope, choices: null };
+      }
+    }
+
+    const rootSolutions = solutionFiles.filter((s) => pathsEqual(path.dirname(s), rootPath));
+    if (rootSolutions.length === 1) {
+      const projectList = await this.solutionParser.getProjects(rootSolutions[0]);
+      return { scope: { kind: 'solution', solutionPath: rootSolutions[0], projects: projectList }, choices: null };
+    }
+
     if (solutionFiles.length === 1) {
       const projectList = await this.solutionParser.getProjects(solutionFiles[0]);
       return { scope: { kind: 'solution', solutionPath: solutionFiles[0], projects: projectList }, choices: null };
@@ -942,24 +972,8 @@ export class WebviewMessageBroker {
       return { scope: await scopeFromFolder(rootPath, projects), choices: null };
     }
 
-    // More than one solution — ambiguous. Try what was remembered for this
-    // folder before asking again.
-    const choices = await buildScopeChoices(rootPath, this.solutionParser);
-    if (!choices) return { scope: null, choices: null };
-
-    const remembered = this.scopeMemory?.get(rootPath);
-    const resolved = remembered && resolveRememberedChoice(remembered, choices);
-    if (resolved) {
-      const scope = resolved.kind === 'folder'
-        ? await scopeFromFolder(
-          rootPath,
-          choices.projects.map((p) => ({ name: p.name, relativePath: p.relativePath, absolutePath: p.path })),
-        )
-        : await scopeFromDotnetFile(resolved.path, this.solutionParser);
-      return { scope, choices: null };
-    }
-
-    return { scope: null, choices };
+    // More than one solution, none singularly in the root — ambiguous.
+    return { scope: null, choices: (await scopeChoices()) ?? null };
   }
 
   private async _initForScope(scope: WorkspaceScope): Promise<void> {

@@ -1104,6 +1104,7 @@ export class WebviewMessageBroker {
         latestVersion: cached.latestVersion,
         sourceName: cached.sourceName,
         versions: cached.versions,
+        versionFlags: this._versionFlagsFor(cached),
       });
     }
     this.provider.postMessage({ type: 'ENRICH_PROGRESS', done: uniqueIds.length, total: uniqueIds.length });
@@ -3264,6 +3265,7 @@ export class WebviewMessageBroker {
             latestVersion: cached.latestVersion,
             sourceName: cached.sourceName,
             versions: cached.versions,
+            versionFlags: this._versionFlagsFor(cached),
           });
         }
       } else {

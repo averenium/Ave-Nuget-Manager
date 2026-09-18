@@ -23,6 +23,7 @@ function withUnionedDeps(entries: ImplicitPackage[]): ImplicitPackage {
 export function ImplicitList() {
   const { state, dispatch } = useNugetManager();
   const { implicit, installed, searchQuery, isLoadingPackages, vulnerabilities } = state.packages;
+  const flagsByPackageId = state.updates.flagsByPackageId;
 
   // Exclude packages already shown in the Installed list
   const installedIds = new Set(installed.map((p) => p.id.toLowerCase()));
@@ -74,6 +75,7 @@ export function ImplicitList() {
                 selected={state.detail.selectedPackageId === pkg.id}
                 allProjectEntries={allEntries}
                 findings={vulnerabilities}
+                versionFlags={flagsByPackageId[pkg.id.toLowerCase()]}
                 onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
               />
             );

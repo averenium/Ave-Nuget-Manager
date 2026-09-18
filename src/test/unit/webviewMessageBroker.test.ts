@@ -4942,5 +4942,100 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     });
   });
 
+  /**
+   * A directly installed deprecated package used to lose its list mark for up
+   * to `cacheTtlMs` after a scope switch: `INSTALLED_PACKAGES` clears
+   * `flagsByPackageId`, and both the same-scope replay and the enrich wave's
+   * own cache-hit branch re-sent `latestVersion`/`sourceName`/`versions`
+   * without `versionFlags`, even though the cache entry already had them and
+   * `_versionFlagsFor` already existed to read them (#118).
+   */
+  describe('cached PACKAGE_INFO_UPDATE carries versionFlags, not just latest/source (#118)', () => {
+    it('same-scope replay includes the deprecation mark from the cache entry', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [makeInstalledPkg('Example.Deprecated', '/p/App.csproj')],
+        implicit: [],
+      });
+      backend.enrichPackage.mockResolvedValue({
+        latestVersion: '2.0.0',
+        sourceName: 'nuget.org',
+        versions: ['2.0.0', '1.0.0'],
+        metadataByVersion: { '1.0.0': { deprecation: 'Legacy' } },
+      });
+      const resolver = makeConfigResolver();
+      resolver.resolve.mockResolvedValue([{
+        filePath: '/p/nuget.config',
+        sources: [{
+          name: 'nuget.org',
+          url: 'https://api.nuget.org',
+          enabled: true,
+          configFilePath: '/p/nuget.config',
+        }],
+      }]);
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+      broker.attach();
+
+      // First WEBVIEW_READY: genuine first open, real enrich fetch.
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+
+      // Second WEBVIEW_READY for the same scope: replayed from cache, not re-fetched.
+      posted.length = 0;
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+
+      const info = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as
+        { versionFlags?: Record<string, { deprecation?: string }> } | undefined;
+      expect(info?.versionFlags?.['1.0.0']?.deprecation).toBe('Legacy');
+    });
+
+    it('a within-TTL enrich cache hit includes the deprecation mark from the cache entry', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [makeInstalledPkg('Example.Deprecated', '/p/App.csproj')],
+        implicit: [],
+      });
+      backend.enrichPackage.mockResolvedValue({
+        latestVersion: '2.0.0',
+        sourceName: 'nuget.org',
+        versions: ['2.0.0', '1.0.0'],
+        metadataByVersion: { '1.0.0': { deprecation: 'Legacy' } },
+      });
+      const resolver = makeConfigResolver();
+      resolver.resolve.mockResolvedValue([{
+        filePath: '/p/nuget.config',
+        sources: [{
+          name: 'nuget.org',
+          url: 'https://api.nuget.org',
+          enabled: true,
+          configFilePath: '/p/nuget.config',
+        }],
+      }]);
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+
+      // REFRESH_PACKAGES re-runs the enrich wave; within the TTL this hits the
+      // cache-hit branch of `_enrichInstalledPackages` rather than re-fetching.
+      posted.length = 0;
+      simulateMessage({ type: 'REFRESH_PACKAGES' });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+
+      const info = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as
+        { versionFlags?: Record<string, { deprecation?: string }> } | undefined;
+      expect(info?.versionFlags?.['1.0.0']?.deprecation).toBe('Legacy');
+    });
+  });
 
 });

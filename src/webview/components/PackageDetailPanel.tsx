@@ -26,8 +26,10 @@ import { resolveVersionSpread } from '../../packageResolvedVersions';
 import { LicenseSideText } from './LicenseSideText';
 import { VersionChangesBand } from './VersionChangesBand';
 import { sortTargetFrameworksDesc } from '../../targetFrameworks';
+import { highestCompatibleVersion } from '../../frameworkCompatibility';
 import { nearestUnaffectedVersion } from '../utils/nearestUnaffected';
 import { flagsForVersion } from '../utils/versionFlags';
+import { incompatibilityReason } from '../utils/versionCompatibility';
 import type { VulnerabilityFinding } from '../../types';
 
 /** How long the version selection has to hold still before the question goes out (#89, #114). */
@@ -171,9 +173,30 @@ export function PackageDetailPanel() {
   const isInstalled = state.packages.installed.some((p) => packageIdsEqual(p.id, selectedPackageId));
   const updatesBlocked = isInstalled && isPackageBlocked(selectedPackageId, state.packages.blockedPackages);
 
-  const effectiveVersion = selectedVersion || allVersions[0] || metadata?.version || '';
   const installedEntries = state.packages.installed.filter((p) => packageIdsEqual(p.id, selectedPackageId));
   const installedVersions = installedEntries.map((p) => p.resolvedVersion);
+  const frameworksOf = (projectPath: string): string[] => state.packages.projectFrameworks[projectPath]
+    ?? Object.entries(state.packages.projectFrameworks)
+      .find(([key]) => pathsEqual(key, projectPath))?.[1]
+    ?? [];
+  // Every framework of every project this package is installed into, plus —
+  // when the scope names exactly one project — that project's own
+  // frameworks even if nothing is installed there yet (#107). A single
+  // project scope is the one case where "which project" is never in doubt:
+  // the Install button writes straight to it with no picker in between, so
+  // the default proposed here has to hold for it from the very first click,
+  // not just once something is already installed to read a framework back
+  // from. Solution/folder scope stays unfiltered for a not-yet-installed
+  // package — which project the popup will end up targeting isn't known
+  // until the reader picks one there.
+  const packageProjectTfms = [...new Set([
+    ...installedEntries.flatMap((p) => frameworksOf(p.projectPath)),
+    ...(scope?.kind === 'project' ? frameworksOf(scope.projectPath) : []),
+  ])];
+  const compatibleVersion = highestCompatibleVersion(
+    allVersions, (v) => flagsForVersion(state.detail.versionFlags, v)?.declaredDependencies, packageProjectTfms,
+  );
+  const effectiveVersion = selectedVersion || compatibleVersion || allVersions[0] || metadata?.version || '';
   // The local .nuspec and the restore graph (#86) are readable for anything the
   // restore put on disk, and a transitive package's folder and its entry in
   // project.assets.json are as present as a direct one's. Deliberately not
@@ -388,6 +411,24 @@ export function PackageDetailPanel() {
       .map((p) => p.absolutePath);
   })();
 
+  /**
+   * Why `effectiveVersion` can't serve a project, keyed by absolute path
+   * (#107) — the popup applies one version across every project checked, with
+   * no per-project picker the way an already-installed row has, so this is
+   * what stops it from writing an incompatible version silently into a
+   * project the reader only meant to include because it was on by default.
+   */
+  const incompatibleProjects = (() => {
+    const map = new Map<string, string>();
+    if (!scope || (scope.kind !== 'solution' && scope.kind !== 'folder')) return map;
+    const groups = flagsForVersion(state.detail.versionFlags, effectiveVersion)?.declaredDependencies;
+    for (const p of scope.projects) {
+      const reason = incompatibilityReason(groups, frameworksOf(p.absolutePath));
+      if (reason) map.set(p.absolutePath, reason);
+    }
+    return map;
+  })();
+
   /** Those of them the user actually narrowed, named for the confirmation. */
   const splittingProjects = (frameworks?: Record<string, string[]>) => {
     if (!frameworks || !scope || (scope.kind !== 'solution' && scope.kind !== 'folder')) return [];
@@ -495,6 +536,7 @@ export function PackageDetailPanel() {
             onChange={setSelectedVersion}
             restoredVersion={restoredEntry?.resolvedVersion ?? ''}
             restoredProjectPath={restoredEntry?.projectPath ?? ''}
+            projectTfms={packageProjectTfms}
           />
           <button
             className={`btn btn--icon version-apply__btn ${
@@ -818,6 +860,7 @@ export function PackageDetailPanel() {
           targetVersion={showPopup === 'install' ? effectiveVersion : undefined}
           frameworksByProject={showPopup === 'install' ? state.packages.projectFrameworks : undefined}
           splitsReference={showPopup === 'install' ? splitsReference : undefined}
+          incompatibleProjects={showPopup === 'install' ? incompatibleProjects : undefined}
           onConfirm={handlePopupConfirm}
           onCancel={() => setShowPopup(null)}
         />

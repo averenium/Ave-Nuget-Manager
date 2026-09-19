@@ -156,6 +156,12 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
   );
   const solutionParser = new SolutionParser();
   const roslynProbe = new RoslynSdkProbe(runner);
+  // Where a package restored with no compile asset for a project's target
+  // framework is reported (#107 Part 1) — VS Code's own Problems panel, not
+  // the webview's, since the fact belongs to the project file being compiled
+  // rather than to anything the panel is currently showing.
+  const compileAssetDiagnostics = vscode.languages.createDiagnosticCollection('AVE NuGet Manager');
+  context.subscriptions.push(compileAssetDiagnostics);
 
   const viewProviderDisposable = vscode.window.registerWebviewViewProvider(
     NugetManagerViewProvider.viewId,
@@ -235,6 +241,7 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
       },
     },
     scopeChoiceMemory(context.workspaceState),
+    compileAssetDiagnostics,
   );
   broker.attach();
   log.info('broker attached');

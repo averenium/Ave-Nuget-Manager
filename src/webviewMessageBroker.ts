@@ -45,6 +45,9 @@ import {
 import { buildScopeChoices } from './scopeChoices';
 import { resolveRememberedChoice, type RememberedScopeChoice, type ScopeChoiceMemory } from './scopeChoiceMemory';
 import { readProjectAssets, readPackageFolders, readAssetsJson } from './projectAssets';
+import { findMissingCompileAssets } from './missingCompileAssets';
+import { highestCompatibleVersion } from './frameworkCompatibility';
+import { projectFrameworkKey } from './frameworkPins';
 import { computeEntangledCluster } from './batchUpdates';
 import { findNuspecFile, findLicenseFile, listRuntimeIdentifiers } from './nuspecLocator';
 import { parseNuspec } from './nuspecParser';
@@ -298,6 +301,15 @@ export class WebviewMessageBroker {
    *  guaranteed to resolve in start order even though the second one aborts
    *  the first's signal. */
   private _vulnScanGeneration = 0;
+  /**
+   * Bumped at the start of every `_updateMissingCompileAssetDiagnostics` call
+   * — the same shape as `_vulnScanGeneration`, for the same reason: the
+   * `readAssetsJson` reads it awaits have no fixed duration, so two calls
+   * back-to-back (two lists in quick succession) are not guaranteed to finish
+   * in start order, and an older one finishing last would `clear()` the
+   * collection right after a newer one had already set it correctly (#107).
+   */
+  private _compileAssetDiagnosticsGeneration = 0;
 
   /** Snapshots from the last failed add, used by the Rollback button (`onFailedUpdate: keep`). */
   private _pendingRollback: { packageId: string; attempts: InstallAttempt[] } | null = null;
@@ -384,6 +396,14 @@ export class WebviewMessageBroker {
     },
     /** Remembers a folder's chooser pick across sessions (#113 item 4). */
     private readonly scopeMemory?: ScopeChoiceMemory,
+    /**
+     * Where a package restored with no compile asset for a project's target
+     * framework is reported (#107 Part 1) — a disk fact read from
+     * `project.assets.json` after every list/restore, costing no network call.
+     * Owned by the caller, which disposes it; `undefined` in tests that don't
+     * exercise this.
+     */
+    private readonly diagnostics?: vscode.DiagnosticCollection,
   ) {
   }
 
@@ -1096,7 +1116,7 @@ export class WebviewMessageBroker {
       ...(await this._skillFields()),
     });
 
-    const installed = this._stampCachedLatest(listed.installed);
+    const installed = this._stampCachedLatest(listed.installed, listed.projectFrameworks);
     this._installedIds = new Set(installed.map((pkg) => pkg.id.toLowerCase()));
     this.provider.postMessage({
       type: 'INSTALLED_PACKAGES',
@@ -1116,6 +1136,7 @@ export class WebviewMessageBroker {
         type: 'PACKAGE_INFO_UPDATE',
         packageId: id,
         latestVersion: cached.latestVersion,
+        latestVersionByProject: this._latestVersionByProject(id, cached),
         sourceName: cached.sourceName,
         versions: cached.versions,
         versionFlags: this._versionFlagsFor(cached),
@@ -1493,13 +1514,14 @@ export class WebviewMessageBroker {
     // alone, and reporting "nothing is marked" for it blanks the dropdown.
     const out: Record<string, VersionFlag> = { ...entry.versionFlags };
     for (const [v, m] of Object.entries(entry.metadataByVersion ?? {})) {
-      if (m.vulnerable || m.deprecation || m.published) {
+      if (m.vulnerable || m.deprecation || m.published || m.declaredDependencies?.length) {
         out[v] = {
           ...out[v],
           vulnerable: m.vulnerable,
           deprecation: m.deprecation,
           advisories: m.advisories,
           published: m.published ?? out[v]?.published,
+          declaredDependencies: m.declaredDependencies ?? out[v]?.declaredDependencies,
         };
       }
     }
@@ -1577,13 +1599,15 @@ export class WebviewMessageBroker {
           ...this._versionFlagsFor(this._cache.get(key)),
         };
         for (const [v, flags] of Object.entries(versionFlags)) {
-          if (flags.vulnerable || flags.deprecation || flags.published || flags.listed === false) {
+          if (flags.vulnerable || flags.deprecation || flags.published || flags.listed === false
+            || flags.declaredDependencies?.length) {
             mergedFlags[v] = {
               vulnerable: flags.vulnerable,
               deprecation: flags.deprecation,
               advisories: flags.advisories,
               published: flags.published,
               listed: flags.listed,
+              declaredDependencies: flags.declaredDependencies,
             };
           }
         }
@@ -2889,7 +2913,7 @@ export class WebviewMessageBroker {
       return;
     }
 
-    const installed = this._stampCachedLatest(listed.installed);
+    const installed = this._stampCachedLatest(listed.installed, listed.projectFrameworks);
     this._installedIds = new Set(installed.map((pkg) => pkg.id.toLowerCase()));
     this.provider.postMessage({
       type: 'INSTALLED_PACKAGES',
@@ -2899,6 +2923,7 @@ export class WebviewMessageBroker {
     this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
 
     this._lastListed = listed;
+    void this._updateMissingCompileAssetDiagnostics(listed.installed);
     this._cancelVulnScan();
     const vulnSignal = this._vulnAbort.signal;
     const vuln = this._scanVulnerabilities(listed, vulnSignal);
@@ -2914,7 +2939,10 @@ export class WebviewMessageBroker {
     else void vuln;
   }
 
-  private _stampCachedLatest(installed: InstalledPackage[]): InstalledPackage[] {
+  private _stampCachedLatest(
+    installed: InstalledPackage[],
+    projectFrameworks?: Record<string, string[]>,
+  ): InstalledPackage[] {
     const now = Date.now();
     const ttl = getConfig().cacheTtlMs;
     return installed.map((pkg) => {
@@ -2922,11 +2950,173 @@ export class WebviewMessageBroker {
       if (!cached || now - cached.fetchedAt >= ttl) return pkg;
       return {
         ...pkg,
-        latestVersion: pkg.latestVersion || cached.latestVersion,
+        latestVersion: pkg.latestVersion || this._compatibleLatest(cached, pkg, projectFrameworks),
         sourceName: pkg.sourceName || cached.sourceName,
         versions: pkg.versions?.length ? pkg.versions : cached.versions,
       };
     });
+  }
+
+  /**
+   * The version an update proposes for one row — the highest one this
+   * package's own project framework(s) can actually use (#107), not the
+   * feed's raw latest. Falls back to the row's own resolved version (no ↑)
+   * rather than the raw latest when a framework is known but nothing
+   * compatible was found, and to the raw latest itself when the framework
+   * isn't known at all — the same "nothing to judge against, nothing ruled
+   * out" rule `isVersionCompatible` applies everywhere else.
+   */
+  private _compatibleLatest(
+    cached: CacheEntry,
+    pkg: InstalledPackage,
+    projectFrameworks: Record<string, string[]> | undefined,
+  ): string {
+    // A per-framework pinned entry (#82) already names its one framework;
+    // otherwise every framework the project declares is in play, since one
+    // unconditional reference is read from all of them.
+    const tfms = pkg.framework ? [pkg.framework] : this._frameworksForProject(projectFrameworks, pkg.projectPath);
+    if (tfms.length === 0) return cached.latestVersion;
+    const compatible = highestCompatibleVersion(
+      cached.versions, (v) => cached.metadataByVersion?.[v]?.declaredDependencies, tfms,
+    );
+    return compatible ?? pkg.resolvedVersion;
+  }
+
+  /**
+   * `projectFrameworks[projectPath]`, tolerant of a differently-written key —
+   * the same fallback `PackageDetailPanel`, `ProjectListSection` and
+   * `memberProjectTfms` already carry for exactly this reason (#107). Without
+   * it, a key that merely disagrees on spelling silently reads as "no
+   * framework known" and both `_compatibleLatest` and the id-level answer
+   * below fall back to the raw feed latest with nothing to say why.
+   */
+  private _frameworksForProject(
+    projectFrameworks: Record<string, string[]> | undefined,
+    projectPath: string,
+  ): string[] {
+    if (!projectFrameworks) return [];
+    return projectFrameworks[projectPath]
+      ?? Object.entries(projectFrameworks).find(([key]) => pathsEqual(key, projectPath))?.[1]
+      ?? [];
+  }
+
+  /**
+   * The same question as `_compatibleLatest`, asked at the id level rather
+   * than one row's — used where the enrich wave answers once for every
+   * project that references an id at once, and no single resolved version
+   * exists to fall back to. `tfms` is the union of every framework any of
+   * those projects declares (#107); requiring compatibility with the whole
+   * union is the conservative reading, since one broadcast value has to serve
+   * every row that shares this id until the next full list corrects it with
+   * `_compatibleLatest`'s per-row answer.
+   *
+   * When nothing at all is compatible — Part 1's own territory, an installed
+   * version already missing its compile assets — this must not fall back to
+   * the raw feed latest: that is exactly the incompatible version #107 opens
+   * with, and it would sit in webview state proposing an ↑ to it until the
+   * next full list corrected it. The lowest resolved version among the rows
+   * that share this id is never newer than any of them, so it proposes no ↑
+   * for any row instead of guessing.
+   */
+  private _compatibleLatestForTfms(
+    cached: CacheEntry,
+    tfms: readonly string[],
+    resolvedVersions: readonly string[],
+  ): string {
+    if (tfms.length === 0) return cached.latestVersion;
+    const compatible = highestCompatibleVersion(
+      cached.versions, (v) => cached.metadataByVersion?.[v]?.declaredDependencies, tfms,
+    );
+    if (compatible) return compatible;
+    const lowest = [...resolvedVersions].sort(compareSemVer)[0];
+    return lowest ?? cached.latestVersion;
+  }
+
+  /**
+   * `_compatibleLatest`, answered separately for every project this id is
+   * referenced from (#107) — for a `PACKAGE_INFO_UPDATE` broadcast to carry
+   * instead of a single value the reducer would otherwise apply to every row
+   * that shares the id. Computed even for a single project, so the reducer
+   * never has to fall back to the conservative id-wide `latestVersion` for a
+   * row this broker can answer precisely for; `undefined` only when the id
+   * matches nothing in the last list at all (a stale/cancelled request).
+   *
+   * Keyed by project path *and* framework where a framework is pinned (#82):
+   * `dotnet list` reports a framework-scoped pin as two entries that share
+   * the same project path and differ only in `framework`, so a plain
+   * project-path key would have let the second overwrite the first in this
+   * map — collapsing two independently-pinned ceilings into whichever one
+   * happened to be read last, and applying it to both once the reducer
+   * looked the shared path back up.
+   */
+  private _latestVersionByProject(id: string, cached: CacheEntry): Record<string, string> | undefined {
+    const rows = (this._lastListed?.installed ?? []).filter((p) => packageIdsEqual(p.id, id));
+    if (rows.length === 0) return undefined;
+    const projectFrameworks = this._lastListed?.projectFrameworks;
+    const map: Record<string, string> = {};
+    for (const row of rows) {
+      map[projectFrameworkKey(row)] = this._compatibleLatest(cached, row, projectFrameworks);
+    }
+    return map;
+  }
+
+  /** Every framework, and every resolved version, any project in `installed` references this id from — unioned per id (#107). */
+  private _perIdContext(
+    installed: readonly InstalledPackage[],
+  ): Map<string, { tfms: string[]; resolvedVersions: string[] }> {
+    const projectFrameworks = this._lastListed?.projectFrameworks;
+    const perId = new Map<string, { tfms: Set<string>; resolvedVersions: string[] }>();
+    for (const pkg of installed) {
+      const key = pkg.id.toLowerCase();
+      const tfms = pkg.framework ? [pkg.framework] : this._frameworksForProject(projectFrameworks, pkg.projectPath);
+      const entry = perId.get(key) ?? { tfms: new Set<string>(), resolvedVersions: [] };
+      for (const tfm of tfms) entry.tfms.add(tfm);
+      entry.resolvedVersions.push(pkg.resolvedVersion);
+      perId.set(key, entry);
+    }
+    return new Map([...perId].map(([id, v]) => [id, { tfms: [...v.tfms], resolvedVersions: v.resolvedVersions }]));
+  }
+
+  /**
+   * Reports the silent case #107 opens with: a package restored with no
+   * compile asset for a project's target framework, which `dotnet restore`
+   * accepts and only a later compile error (never naming the package) reveals.
+   * Read straight from `project.assets.json` — no network call, no waiting on
+   * a fresh one since the list this runs from already implies a restore.
+   *
+   * The whole collection is rebuilt every call rather than patched, so a
+   * package that stops being a problem (removed, or a version that now ships
+   * the right assets) drops out on the very next list instead of lingering.
+   */
+  private async _updateMissingCompileAssetDiagnostics(installed: InstalledPackage[]): Promise<void> {
+    if (!this.diagnostics) return;
+    const generation = ++this._compileAssetDiagnosticsGeneration;
+    const projectPaths = [...new Set(installed.map((pkg) => pkg.projectPath))];
+    const perProject = await Promise.all(projectPaths.map(async (projectPath) => {
+      const assetsJson = await readAssetsJson(projectPath);
+      return { projectPath, missing: assetsJson ? findMissingCompileAssets(assetsJson) : [] };
+    }));
+    // A newer call already started (and will finish and clear/rebuild on its
+    // own) while this one was reading from disk — writing this call's
+    // now-stale answer would overwrite that newer one's.
+    if (generation !== this._compileAssetDiagnosticsGeneration) return;
+
+    this.diagnostics.clear();
+    for (const { projectPath, missing } of perProject) {
+      if (missing.length === 0) continue;
+      const range = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
+      const rowDiagnostics = missing.map((m) => {
+        const shipped = m.shipsOnly.length > 0 ? ` (ships ${m.shipsOnly.join(', ')} only)` : '';
+        const diagnostic = new vscode.Diagnostic(
+          range,
+          `${m.id} ${m.version} has no compile assets for ${m.framework}${shipped}`,
+          vscode.DiagnosticSeverity.Warning,
+        );
+        diagnostic.source = 'AVE NuGet Manager';
+        return diagnostic;
+      });
+      this.diagnostics.set(vscode.Uri.file(projectPath), rowDiagnostics);
+    }
   }
 
   private _allLatestCached(installed: InstalledPackage[]): boolean {
@@ -2998,6 +3188,13 @@ export class WebviewMessageBroker {
       installed: results.flatMap((r) => r.installed),
       implicit: results.flatMap((r) => r.implicit),
       error: results.find((r) => r.error)?.error,
+      // Merged rather than dropped (#107): a single-project scope is exactly
+      // where a project's own target framework is known with no ambiguity at
+      // all, and the compatibility filtering downstream needs it by project
+      // path the same way the solution-scope answer already carries it.
+      projectFrameworks: results.reduce<Record<string, string[]>>(
+        (acc, r) => (r.projectFrameworks ? { ...acc, ...r.projectFrameworks } : acc), {},
+      ),
     };
     await this._applyListedPackages(listed, opts);
   }
@@ -3267,16 +3464,20 @@ export class WebviewMessageBroker {
 
     const uniqueIds = [...new Set(installed.map((p) => p.id))];
     const now = Date.now();
+    const perId = this._perIdContext(installed);
+    const emptyContext = { tfms: [] as string[], resolvedVersions: [] as string[] };
 
     const needsFetch: string[] = [];
     for (const id of uniqueIds) {
       const cached = this._cache.get(id.toLowerCase());
       if (cached && now - cached.fetchedAt < getConfig().cacheTtlMs) {
         if (!opts?.quietCacheHits) {
+          const ctx = perId.get(id.toLowerCase()) ?? emptyContext;
           this.provider.postMessage({
             type: 'PACKAGE_INFO_UPDATE',
             packageId: id,
-            latestVersion: cached.latestVersion,
+            latestVersion: this._compatibleLatestForTfms(cached, ctx.tfms, ctx.resolvedVersions),
+            latestVersionByProject: this._latestVersionByProject(id, cached),
             sourceName: cached.sourceName,
             versions: cached.versions,
             versionFlags: this._versionFlagsFor(cached),
@@ -3305,7 +3506,8 @@ export class WebviewMessageBroker {
     const failedIds: string[] = [];
     const tasks = needsFetch.map((id) => async () => {
       if (signal.aborted) return;
-      const ok = await this._tryEnrichPackage(id, configFiles, signal);
+      const ctx = perId.get(id.toLowerCase()) ?? emptyContext;
+      const ok = await this._tryEnrichPackage(id, configFiles, signal, ctx.tfms, ctx.resolvedVersions);
       if (signal.aborted) return;
       if (ok) {
         done++;
@@ -3325,7 +3527,8 @@ export class WebviewMessageBroker {
       this.trace?.recordBroker('enrich-retry', { count: failedIds.length });
       const retries = failedIds.map((id) => async () => {
         if (signal.aborted) return;
-        await this._tryEnrichPackage(id, configFiles, signal);
+        const ctx = perId.get(id.toLowerCase()) ?? emptyContext;
+        await this._tryEnrichPackage(id, configFiles, signal, ctx.tfms, ctx.resolvedVersions);
         if (signal.aborted) return;
         done++;
         this.provider.postMessage({ type: 'ENRICH_PROGRESS', done, total });
@@ -3348,6 +3551,8 @@ export class WebviewMessageBroker {
     id: string,
     configFiles: string[],
     signal: AbortSignal,
+    tfms: readonly string[],
+    resolvedVersions: readonly string[],
   ): Promise<boolean> {
     try {
       const { latestVersion, sourceName, versions, metadataByVersion } = await this.backend.enrichPackage(
@@ -3356,11 +3561,13 @@ export class WebviewMessageBroker {
       if (signal.aborted) return false;
       if (!latestVersion && !sourceName) return false;
 
-      this._cache.set(id.toLowerCase(), { latestVersion, sourceName, versions, metadataByVersion, fetchedAt: Date.now() });
+      const cached: CacheEntry = { latestVersion, sourceName, versions, metadataByVersion, fetchedAt: Date.now() };
+      this._cache.set(id.toLowerCase(), cached);
       this.provider.postMessage({
         type: 'PACKAGE_INFO_UPDATE',
         packageId: id,
-        latestVersion,
+        latestVersion: this._compatibleLatestForTfms(cached, tfms, resolvedVersions),
+        latestVersionByProject: this._latestVersionByProject(id, cached),
         sourceName,
         versions,
         versionFlags: feedFlags(metadataByVersion),

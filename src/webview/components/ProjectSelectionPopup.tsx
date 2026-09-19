@@ -25,13 +25,23 @@ interface Props {
    * the change is to the shape of the project file and not just to a version.
    */
   splitsReference?: string[];
+  /**
+   * Why `targetVersion` can't serve a project, keyed by absolute path — set
+   * only for the projects it doesn't work for (#107). A shared version
+   * applied across several projects at once has no per-project picker the
+   * way an installed row does, so this is the one warning available before
+   * Apply writes it anyway; a project it names starts unchecked, but nothing
+   * stops picking it back — the same "dim, not remove" rule the version list
+   * itself follows.
+   */
+  incompatibleProjects?: Map<string, string>;
   onConfirm: (selected: string[], frameworks?: Record<string, string[]>) => void;
   onCancel: () => void;
 }
 
 export function ProjectSelectionPopup({
   title, projects, initiallySelected, currentVersions, targetVersion, frameworksByProject,
-  splitsReference, onConfirm, onCancel,
+  splitsReference, incompatibleProjects, onConfirm, onCancel,
 }: Props) {
   const installedSet = useMemo(
     () => new Set(Object.keys(currentVersions ?? {})),
@@ -39,7 +49,10 @@ export function ProjectSelectionPopup({
   );
 
   const [checked, setChecked] = useState<Set<string>>(
-    () => new Set(initiallySelected ?? projects.map((p) => p.absolutePath)),
+    () => new Set(
+      (initiallySelected ?? projects.map((p) => p.absolutePath))
+        .filter((p) => !incompatibleProjects?.has(p)),
+    ),
   );
   const [query, setQuery] = useState('');
   /**
@@ -176,10 +189,12 @@ export function ProjectSelectionPopup({
             const from = currentVersions?.[p.absolutePath];
             const tone = versionTone(from, targetVersion);
             const label = versionLabel(from, targetVersion);
+            const incompatReason = incompatibleProjects?.get(p.absolutePath);
             const rowClass = [
               'popup__item',
               tone === 'up' ? 'popup__item--up' : '',
               tone === 'down' ? 'popup__item--down' : '',
+              incompatReason ? 'popup__item--incompatible' : '',
             ].filter(Boolean).join(' ');
 
             const frameworks = frameworksByProject?.[p.absolutePath] ?? [];
@@ -193,7 +208,7 @@ export function ProjectSelectionPopup({
               <label
                 key={p.absolutePath}
                 className={rowClass}
-                title={[p.name, p.relativePath, label].filter(Boolean).join('\n')}
+                title={[p.name, p.relativePath, label, incompatReason].filter(Boolean).join('\n')}
               >
                 <input
                   type="checkbox"
@@ -210,6 +225,14 @@ export function ProjectSelectionPopup({
                     )}
                   </span>
                   <span className="popup__item-path">{p.relativePath}</span>
+                  {incompatReason && (
+                    // Same wording the version list's own disclosure uses for
+                    // this exact version, since it is the same fact (#107):
+                    // not a link, not a link to open, just what stops this
+                    // project from taking the version the popup is about to
+                    // write everywhere it's checked.
+                    <span className="popup__item-incompatible-note">{incompatReason}</span>
+                  )}
                   {showFrameworks && (
                     // Visible rather than hidden behind a right-click: a project
                     // targeting several frameworks can take the package into
@@ -250,7 +273,12 @@ export function ProjectSelectionPopup({
 
         <div className="popup__actions">
           <button className="btn btn--secondary" onClick={onCancel}>Cancel</button>
-          <button className="btn btn--primary" onClick={handleConfirm}>Apply</button>
+          <button
+            className="btn btn--primary"
+            onClick={handleConfirm}
+            disabled={checked.size === 0}
+            title={checked.size === 0 ? 'Nothing checked — nothing would be applied' : undefined}
+          >Apply</button>
         </div>
 
 

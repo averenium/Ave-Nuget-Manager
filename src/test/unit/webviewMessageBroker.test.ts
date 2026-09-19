@@ -406,6 +406,136 @@ describe('WebviewMessageBroker', () => {
     expect(implicit?.packages[0].id).toBe('Microsoft.Extensions.Logging');
   });
 
+  it('reports a package restored with no compile asset for the project TFM as a Problems diagnostic (#107)', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Microsoft.AspNetCore.OpenApi', '/p/App.csproj')],
+      implicit: [],
+    });
+    const assetsJson = JSON.stringify({
+      targets: {
+        'net8.0': {
+          'Microsoft.AspNetCore.OpenApi/10.0.12': {
+            type: 'package',
+            build: { 'build/Microsoft.AspNetCore.OpenApi.targets': {} },
+          },
+        },
+      },
+      libraries: {
+        'Microsoft.AspNetCore.OpenApi/10.0.12': { files: ['lib/net10.0/Microsoft.AspNetCore.OpenApi.dll'] },
+      },
+    });
+    const readFileSpy = jest.spyOn(fsPromises, 'readFile').mockImplementation((p: any) =>
+      String(p).includes('project.assets.json') ? Promise.resolve(assetsJson as any) : Promise.reject(new Error('ENOENT')));
+
+    const diagnostics = vscode.languages.createDiagnosticCollection('test');
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      diagnostics,
+    );
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const rows = diagnostics.get(vscode.Uri.file('/p/App.csproj'));
+    expect(rows).toHaveLength(1);
+    expect(rows?.[0].message).toBe(
+      'Microsoft.AspNetCore.OpenApi 10.0.12 has no compile assets for net8.0 (ships lib/net10.0 only)',
+    );
+    expect(rows?.[0].severity).toBe(vscode.DiagnosticSeverity.Warning);
+    readFileSpy.mockRestore();
+  });
+
+  it('clears a compile-asset diagnostic once the package no longer mismatches (#107)', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+    const readFileSpy = jest.spyOn(fsPromises, 'readFile').mockImplementation((p: any) =>
+      String(p).includes('project.assets.json')
+        ? Promise.resolve(JSON.stringify({
+          targets: { 'net8.0': { 'Newtonsoft.Json/13.0.3': { type: 'package', compile: { 'lib/netstandard2.0/Newtonsoft.Json.dll': {} } } } },
+          libraries: { 'Newtonsoft.Json/13.0.3': { files: ['lib/netstandard2.0/Newtonsoft.Json.dll'] } },
+        }) as any)
+        : Promise.reject(new Error('ENOENT')));
+
+    const diagnostics = vscode.languages.createDiagnosticCollection('test');
+    diagnostics.set(vscode.Uri.file('/p/App.csproj'), [
+      new vscode.Diagnostic(
+        new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0)),
+        'stale finding from a previous restore',
+      ),
+    ]);
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      diagnostics,
+    );
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(diagnostics.get(vscode.Uri.file('/p/App.csproj'))).toBeUndefined();
+    readFileSpy.mockRestore();
+  });
+
+  it('does not let a slower, older diagnostics read clobber a faster, newer one (#107)', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject
+      .mockResolvedValueOnce({
+        installed: [makeInstalledPkg('OldPkg', '/p/App.csproj')],
+        implicit: [],
+      })
+      .mockResolvedValueOnce({
+        installed: [makeInstalledPkg('NewPkg', '/p/App.csproj')],
+        implicit: [],
+      });
+
+    const oldAssetsJson = JSON.stringify({
+      targets: { 'net8.0': { 'OldPkg/1.0.0': { type: 'package', build: {} } } },
+      libraries: { 'OldPkg/1.0.0': { files: ['lib/net10.0/OldPkg.dll'] } },
+    });
+    const newAssetsJson = JSON.stringify({
+      targets: { 'net8.0': { 'NewPkg/1.0.0': { type: 'package', compile: { 'lib/net8.0/NewPkg.dll': {} } } } },
+      libraries: { 'NewPkg/1.0.0': { files: ['lib/net8.0/NewPkg.dll'] } },
+    });
+    let readCount = 0;
+    const readFileSpy = jest.spyOn(fsPromises, 'readFile').mockImplementation((p: any) => {
+      if (!String(p).includes('project.assets.json')) return Promise.reject(new Error('ENOENT'));
+      readCount++;
+      // The first (older) list's read resolves after the second (newer)
+      // one's, the same way two `dotnet list` + assets reads in quick
+      // succession are not guaranteed to settle in start order.
+      const [json, delayMs] = readCount === 1 ? [oldAssetsJson, 30] : [newAssetsJson, 5];
+      return new Promise((resolve) => setTimeout(() => resolve(json as any), delayMs));
+    });
+
+    const diagnostics = vscode.languages.createDiagnosticCollection('test');
+    const broker = new WebviewMessageBroker(
+      stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      diagnostics,
+    );
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 5));
+    simulateMessage({ type: 'REFRESH_PACKAGES' });
+    await new Promise((r) => setTimeout(r, 60));
+
+    // NewPkg has a compile asset — the OldPkg finding must not reappear just
+    // because its own (older) read happened to finish last.
+    expect(diagnostics.get(vscode.Uri.file('/p/App.csproj'))).toBeUndefined();
+    readFileSpy.mockRestore();
+  });
+
   it('restores the project in parallel with list on WEBVIEW_READY', async () => {
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
@@ -575,6 +705,289 @@ describe('WebviewMessageBroker', () => {
     const err = posted.find((m) => m.type === 'ERROR') as { message?: string; details?: string } | undefined;
     expect(err?.message).toBe('Restore failed');
     expect(err?.details).toContain('NU1605');
+  });
+
+  it('proposes the highest compatible version instead of the feed\'s raw latest (#107)', async () => {
+    // Example.Api targets net8.0 and has Example.Extensions.OpenApi 8.0.11
+    // installed. The feed's raw latest, 10.0.12, ships lib/net10.0 only; the
+    // update mark and the row's own "available" version must both point at
+    // 9.1.0 instead, the highest version net8.0 can actually use.
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [{
+        id: 'Example.Extensions.OpenApi', requestedVersion: '8.0.11', resolvedVersion: '8.0.11', projectPath: '/p/App.csproj',
+      }],
+      implicit: [],
+      projectFrameworks: { '/p/App.csproj': ['net8.0'] },
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '10.0.12',
+      sourceName: 'nuget.org',
+      versions: ['10.0.12', '9.1.0', '8.0.11'],
+      metadataByVersion: {
+        '10.0.12': { declaredDependencies: [{ targetFramework: 'net10.0', dependencies: [] }] },
+        '9.1.0': { declaredDependencies: [{ targetFramework: 'net8.0', dependencies: [] }] },
+        '8.0.11': { declaredDependencies: [{ targetFramework: 'net8.0', dependencies: [] }] },
+      },
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const info = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as { latestVersion?: string } | undefined;
+    expect(info?.latestVersion).toBe('9.1.0');
+  });
+
+  it('answers the update mark per project when the same id spans projects on different frameworks (#107)', async () => {
+    // Example.Extensions.Http referenced from A (net9.0) and B (net10.0), both
+    // at 8.0.11. 10.0.12 ships net10.0 only; 9.1.0 ships net8.0 (so both
+    // projects can take it). A single shared `latestVersion` cannot say "9.1.0
+    // for A, 10.0.12 for B" — the reducer applies whatever `latestVersion`
+    // says to every row sharing the id, so without a per-project answer B's
+    // own real update would be capped to A's, or A's non-answer would hide
+    // B's entirely (measured: reported as "no changes" after the fix that
+    // only touched collectUpdatableItems, because the broadcast had already
+    // forced both rows to the same value before that function ever saw them).
+    const { stub, posted, simulateMessage } = makeProvider(SOLUTION_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForSolution.mockResolvedValue({
+      installed: [
+        { id: 'Example.Extensions.Http', requestedVersion: '8.0.11', resolvedVersion: '8.0.11', projectPath: '/sol/A/A.csproj' },
+        { id: 'Example.Extensions.Http', requestedVersion: '8.0.11', resolvedVersion: '8.0.11', projectPath: '/sol/B/B.csproj' },
+      ],
+      implicit: [],
+      projectFrameworks: { '/sol/A/A.csproj': ['net9.0'], '/sol/B/B.csproj': ['net10.0'] },
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '10.0.12',
+      sourceName: 'nuget.org',
+      versions: ['10.0.12', '9.1.0', '8.0.11'],
+      metadataByVersion: {
+        '10.0.12': { declaredDependencies: [{ targetFramework: 'net10.0', dependencies: [] }] },
+        '9.1.0': { declaredDependencies: [{ targetFramework: 'net8.0', dependencies: [] }] },
+        '8.0.11': { declaredDependencies: [{ targetFramework: 'net8.0', dependencies: [] }] },
+      },
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/sol/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/sol/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const info = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as
+      { latestVersionByProject?: Record<string, string> } | undefined;
+    expect(info?.latestVersionByProject).toEqual({
+      '/sol/A/A.csproj': '9.1.0',
+      '/sol/B/B.csproj': '10.0.12',
+    });
+  });
+
+  it('keeps a framework-scoped pin\'s two ceilings apart even though both entries share one project path (#82, #107)', async () => {
+    // One project, package pinned per framework (#82): dotnet list reports
+    // two entries with the SAME projectPath and different `.framework`. The
+    // per-project map must key on both, or the second entry read would
+    // silently overwrite the first's ceiling in the map, and the reducer —
+    // which only has `pkg.projectPath` to look up with — would then hand
+    // both framework-pinned rows whichever ceiling happened to survive.
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [
+        {
+          id: 'Example.Extensions.Http', requestedVersion: '8.0.11', resolvedVersion: '8.0.11',
+          projectPath: '/p/App.csproj', framework: 'net9.0',
+        },
+        {
+          id: 'Example.Extensions.Http', requestedVersion: '8.0.11', resolvedVersion: '8.0.11',
+          projectPath: '/p/App.csproj', framework: 'net10.0',
+        },
+      ],
+      implicit: [],
+      projectFrameworks: { '/p/App.csproj': ['net9.0', 'net10.0'] },
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '10.0.12',
+      sourceName: 'nuget.org',
+      versions: ['10.0.12', '9.1.0', '8.0.11'],
+      metadataByVersion: {
+        '10.0.12': { declaredDependencies: [{ targetFramework: 'net10.0', dependencies: [] }] },
+        '9.1.0': { declaredDependencies: [{ targetFramework: 'net8.0', dependencies: [] }] },
+        '8.0.11': { declaredDependencies: [{ targetFramework: 'net8.0', dependencies: [] }] },
+      },
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const info = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as
+      { latestVersionByProject?: Record<string, string> } | undefined;
+    expect(info?.latestVersionByProject).toEqual({
+      '/p/App.csproj\0net9.0': '9.1.0',
+      '/p/App.csproj\0net10.0': '10.0.12',
+    });
+  });
+
+  it('falls back to the raw latest for the row-level mark when compatibility is unknown (CLI-only path)', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Newtonsoft.Json', '/p/App.csproj')],
+      implicit: [],
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '13.0.3',
+      sourceName: 'nuget.org',
+      versions: ['13.0.3', '1.0.0'],
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const info = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as { latestVersion?: string } | undefined;
+    expect(info?.latestVersion).toBe('13.0.3');
+  });
+
+  it('proposes no update when nothing at all is compatible, instead of the raw feed latest (#107)', async () => {
+    // Part 1's own territory: every version the feed has ever shipped for
+    // this package declares net10.0 only, including the one installed — a
+    // net8.0 project can use none of them. The mockup is explicit: "no ↑,
+    // even though the feed's raw latest is higher" — the broadcast must not
+    // propose 10.0.12 (the raw latest) over 9.0.0 (what's installed), because
+    // neither actually compiles here.
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [{
+        id: 'Example.Extensions.OpenApi', requestedVersion: '9.0.0', resolvedVersion: '9.0.0', projectPath: '/p/App.csproj',
+      }],
+      implicit: [],
+      projectFrameworks: { '/p/App.csproj': ['net8.0'] },
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '10.0.12',
+      sourceName: 'nuget.org',
+      versions: ['10.0.12', '9.0.0'],
+      metadataByVersion: {
+        '10.0.12': { declaredDependencies: [{ targetFramework: 'net10.0', dependencies: [] }] },
+        '9.0.0': { declaredDependencies: [{ targetFramework: 'net10.0', dependencies: [] }] },
+      },
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const info = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as { latestVersion?: string } | undefined;
+    expect(info?.latestVersion).toBe('9.0.0');
+  });
+
+  it('still finds the project\'s framework when projectFrameworks spells the path differently (#107)', async () => {
+    // dotnet list can report a project path with different casing from the
+    // one the install/resolved-version rows carry; ProjectListSection and
+    // PackageDetailPanel already tolerate this with a pathsEqual fallback —
+    // the broker's own compatibility lookups must too, or the feature
+    // silently degrades to pre-#107 behaviour with no signal that it did.
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [{
+        id: 'Example.Extensions.OpenApi', requestedVersion: '8.0.11', resolvedVersion: '8.0.11', projectPath: '/p/App.csproj',
+      }],
+      implicit: [],
+      projectFrameworks: { '/P/APP.CSPROJ': ['net8.0'] },
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '10.0.12',
+      sourceName: 'nuget.org',
+      versions: ['10.0.12', '9.1.0', '8.0.11'],
+      metadataByVersion: {
+        '10.0.12': { declaredDependencies: [{ targetFramework: 'net10.0', dependencies: [] }] },
+        '9.1.0': { declaredDependencies: [{ targetFramework: 'net8.0', dependencies: [] }] },
+        '8.0.11': { declaredDependencies: [{ targetFramework: 'net8.0', dependencies: [] }] },
+      },
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const info = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as { latestVersion?: string } | undefined;
+    expect(info?.latestVersion).toBe('9.1.0');
   });
 
   it('posts ENRICH_PROGRESS complete when latest versions are already cached', async () => {
@@ -1664,6 +2077,33 @@ describe('WebviewMessageBroker', () => {
     const msg = posted.find((m) => m.type === 'ALL_VERSIONS') as
       { versionFlags?: Record<string, { vulnerable?: boolean; deprecation?: string }> } | undefined;
     expect(msg?.versionFlags).toEqual({ '12.0.3': { vulnerable: true, deprecation: undefined } });
+  });
+
+  it('ALL_VERSIONS carries the declared groups per version, for the picker to filter by TFM (#107)', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.getAllVersions.mockResolvedValue({
+      versions: ['10.0.12', '8.0.11'],
+      versionFlags: {
+        '10.0.12': { declaredDependencies: [{ targetFramework: 'net10.0', dependencies: [] }] },
+        '8.0.11': { declaredDependencies: [{ targetFramework: 'net8.0', dependencies: [] }] },
+      },
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({
+      type: 'GET_ALL_VERSIONS',
+      packageId: 'Example.Extensions.OpenApi',
+      configFiles: ['/p/nuget.config'],
+      prerelease: false,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const msg = posted.find((m) => m.type === 'ALL_VERSIONS') as
+      { versionFlags?: Record<string, { declaredDependencies?: Array<{ targetFramework?: string }> }> } | undefined;
+    expect(msg?.versionFlags?.['10.0.12'].declaredDependencies).toEqual([{ targetFramework: 'net10.0', dependencies: [] }]);
+    expect(msg?.versionFlags?.['8.0.11'].declaredDependencies).toEqual([{ targetFramework: 'net8.0', dependencies: [] }]);
   });
 
   // ── GET_PACKAGE_METADATA (#86) ─────────────────────────────────────────────

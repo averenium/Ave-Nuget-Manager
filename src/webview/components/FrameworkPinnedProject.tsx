@@ -9,6 +9,7 @@ import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { RoslynCapPopup } from './RoslynCapPopup';
 import { CrossLinePopup } from './CrossLinePopup';
 import { sameMajorLine } from '../../frameworkPins';
+import { highestCompatibleVersion } from '../../frameworkCompatibility';
 import { VersionSelect } from './VersionSelector';
 import { versionTone } from '../utils/versionTone';
 import { IconCheck, IconChevronDown, IconInstall, IconTrash } from '../utils/icons';
@@ -145,7 +146,12 @@ function FrameworkRow({
 }: RowProps) {
   const p = project.absolutePath;
   const referenced = row.resolvedVersion !== undefined;
-  const startingVersion = row.resolvedVersion ?? allVersions[0] ?? '';
+  // Not yet referenced from this framework: the version offered by default is
+  // the newest one it can actually use (#107), not the feed's raw latest.
+  const startingVersion = row.resolvedVersion
+    ?? highestCompatibleVersion(allVersions, (v) => state.detail.versionFlags?.[v]?.declaredDependencies, [row.framework])
+    ?? allVersions[0]
+    ?? '';
   const [localVersion, setLocalVersion] = useState(startingVersion);
   const [showRoslynWarning, setShowRoslynWarning] = useState(false);
   const [showCrossLine, setShowCrossLine] = useState(false);
@@ -232,6 +238,7 @@ function FrameworkRow({
           onChange={setLocalVersion}
           versionFlags={state.detail.versionFlags}
           versionLine={row.resolvedVersion}
+          projectTfms={[row.framework]}
         />
         <button
           className={`btn btn--icon version-apply__btn ${updateTone === 'same' ? 'btn--secondary' : 'btn--primary'}`}

@@ -282,9 +282,25 @@ export type ExtensionMessage =
   | {
       type: 'PACKAGE_INFO_UPDATE';
       packageId: string;
+      /**
+       * The conservative id-wide answer — compatible with every project this
+       * id is referenced from at once — used for a row this id's own project
+       * map below says nothing about.
+       */
       latestVersion: string;
       sourceName: string;
       versions?: string[];
+      /**
+       * `latestVersion`, computed per project instead of once for the whole
+       * id (#107) — keyed by absolute project path, present only when more
+       * than one project references this id and their own frameworks could
+       * disagree. Without this, one broadcast answering for every row that
+       * shares an id had no way to tell a net10.0 project's own real update
+       * apart from a net9.0 sibling's — the reducer applied one answer to
+       * both, undoing whatever a fresher per-row computation (`INSTALLED_PACKAGES`)
+       * had just gotten right.
+       */
+      latestVersionByProject?: Record<string, string>;
       /**
        * What the feed marks about this package's versions — vulnerable,
        * deprecated — trimmed to the versions it marks at all. The enrich wave

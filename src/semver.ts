@@ -18,6 +18,11 @@ export function versionsEqual(a: string, b: string): boolean {
   return compareSemVer(strip(a), strip(b)) === 0;
 }
 
+/** Whether a version string carries a pre-release label (`-preview`, `-rc.1`, …). */
+export function isPrerelease(version: string): boolean {
+  return version.includes('-');
+}
+
 export function compareSemVer(a: string, b: string): number {
   const pa = parseSemVer(a);
   const pb = parseSemVer(b);

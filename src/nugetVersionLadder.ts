@@ -29,7 +29,7 @@
  */
 
 import { getConfig } from './config';
-import { compareSemVer } from './semver';
+import { compareSemVer, isPrerelease } from './semver';
 import {
   parseRegistrationIndex,
   parseRegistrationPageEntries,
@@ -139,10 +139,6 @@ function withQuery(base: string, params: Record<string, string>): string {
     const query = new URLSearchParams(params).toString();
     return base.includes('?') ? `${base}&${query}` : `${base}?${query}`;
   }
-}
-
-function isPrerelease(version: string): boolean {
-  return version.includes('-');
 }
 
 function sortDescending(versions: Iterable<string>): string[] {

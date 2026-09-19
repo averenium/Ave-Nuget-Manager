@@ -1,4 +1,4 @@
-import { versionsEqual } from '../../semver';
+import { isPrerelease, versionsEqual } from '../../semver';
 
 /**
  * The same version reaches this code spelled differently depending on where it
@@ -23,5 +23,18 @@ describe('versionsEqual', () => {
 
   it('tolerates surrounding space', () => {
     expect(versionsEqual(' 1.0.0 ', '1.0.0')).toBe(true);
+  });
+});
+
+describe('isPrerelease', () => {
+  it('recognises the standard pre-release suffixes', () => {
+    expect(isPrerelease('11.0.0-rc.1')).toBe(true);
+    expect(isPrerelease('2.0.0-preview.2')).toBe(true);
+    expect(isPrerelease('1.0.0-alpha')).toBe(true);
+  });
+
+  it('does not flag a stable version', () => {
+    expect(isPrerelease('10.0.12')).toBe(false);
+    expect(isPrerelease('1.0')).toBe(false);
   });
 });

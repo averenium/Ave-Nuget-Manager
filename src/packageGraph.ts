@@ -12,6 +12,13 @@ export function assetsLibraryId(libKey: string): string | null {
   return libKey.slice(0, slash);
 }
 
+/** The version half of an `Id/1.2.3` assets library key. */
+export function assetsLibraryVersion(libKey: string): string | null {
+  const slash = libKey.lastIndexOf('/');
+  if (slash < 0 || slash === libKey.length - 1) return null;
+  return libKey.slice(slash + 1);
+}
+
 /**
  * Direct package → dependency ids from NuGet `project.assets.json`.
  * TFMs are unioned. Project references (`type: project`) are skipped.

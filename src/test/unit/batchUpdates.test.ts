@@ -1,14 +1,20 @@
-import type { InstalledPackage } from '../../types';
+import type { InstalledPackage, VersionFlag } from '../../types';
 import {
   collectFamilyGroups,
   collectOtherItems,
   collectUpdatableItems,
+  compatibleFamilyVersions,
+  compatibleMemberVersions,
   computeEntangledCluster,
+  familyHasBlockedMember,
   familyItemsAtVersion,
   formatBatchUpdateError,
   intersectVersions,
+  memberProjectTfms,
   preserveInstalledEnrichment,
+  splitFamilyMembers,
   type EntangledClusterInput,
+  type FamilyMember,
 } from '../../batchUpdates';
 
 function pkg(
@@ -73,6 +79,45 @@ describe('collectUpdatableItems', () => {
     ]);
     expect(items).toHaveLength(1);
     expect(items[0].projects).toEqual(['/b/B.csproj']);
+  });
+
+  it('gives each project its own achievable target instead of capping every project to whichever one answered first (#107)', () => {
+    // Example.Extensions.Http referenced from a net9.0 project (own ceiling
+    // 9.1.0) and a net10.0 project (own ceiling 10.0.12, which net9.0 could
+    // never take). Each project's own `.latestVersion` is already correct —
+    // collectUpdatableItems must not collapse them into one shared value.
+    const items = collectUpdatableItems([
+      pkg('Example.Extensions.Http', '8.0.11', '9.1.0', '/p/Net9.csproj'),
+      pkg('Example.Extensions.Http', '8.0.11', '10.0.12', '/p/Net10.csproj'),
+    ]);
+    expect(items).toHaveLength(2);
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ toVersion: '9.1.0', projects: ['/p/Net9.csproj'] }),
+      expect.objectContaining({ toVersion: '10.0.12', projects: ['/p/Net10.csproj'] }),
+    ]));
+  });
+
+  it('does not hide one project\'s real update behind a sibling project that has none at all (#107)', () => {
+    // The net9.0 project has nothing newer at all (its own ceiling equals
+    // what's installed); the net10.0 project does. The old first-entry
+    // ceiling would have picked net9.0's non-upgrade and reported nothing.
+    const items = collectUpdatableItems([
+      pkg('Example.Extensions.Http', '8.0.11', '8.0.11', '/p/Net9.csproj'),
+      pkg('Example.Extensions.Http', '8.0.11', '10.0.12', '/p/Net10.csproj'),
+    ]);
+    expect(items).toEqual([
+      expect.objectContaining({ toVersion: '10.0.12', projects: ['/p/Net10.csproj'] }),
+    ]);
+  });
+
+  it('still merges projects that already agree on the same achievable target', () => {
+    const items = collectUpdatableItems([
+      pkg('Example.Extensions.Http', '8.0.11', '9.1.0', '/p/A.csproj'),
+      pkg('Example.Extensions.Http', '8.0.0', '9.1.0', '/p/B.csproj'),
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0].projects.sort()).toEqual(['/p/A.csproj', '/p/B.csproj']);
+    expect(items[0].toVersion).toBe('9.1.0');
   });
 
   it('orders All by the restore dependency graph', () => {
@@ -371,6 +416,235 @@ describe('intersectVersions', () => {
       ['9.0.0', '8.0.0', '8.0.1'],
       ['9.0.0', '8.0.1'],
     ])).toEqual(['9.0.0', '8.0.1']);
+  });
+});
+
+function familyMember(over: Partial<FamilyMember>): FamilyMember {
+  return { packageId: 'Example.Extensions.Http', fromVersion: '8.0.11', projects: ['/p/App.csproj'], ...over };
+}
+
+describe('memberProjectTfms (#107)', () => {
+  it('reads the member\'s own framework pin when it has one, ignoring the project map', () => {
+    expect(memberProjectTfms(familyMember({ framework: 'net9.0' }), { '/p/App.csproj': ['net8.0'] }))
+      .toEqual(['net9.0']);
+  });
+
+  it('unions every framework across the member\'s projects', () => {
+    expect(memberProjectTfms(
+      familyMember({ projects: ['/p/A.csproj', '/p/B.csproj'] }),
+      { '/p/A.csproj': ['net8.0'], '/p/B.csproj': ['net9.0', 'net8.0'] },
+    )).toEqual(['net8.0', 'net9.0']);
+  });
+
+  it('finds nothing for a project the map has no entry for', () => {
+    expect(memberProjectTfms(familyMember({}), {})).toEqual([]);
+  });
+});
+
+describe('compatibleMemberVersions (#107)', () => {
+  const flags = (byVersion: Record<string, string | undefined>): Record<string, VersionFlag> =>
+    Object.fromEntries(Object.entries(byVersion).map(([v, tfm]) =>
+      [v, { declaredDependencies: tfm ? [{ targetFramework: tfm, dependencies: [] }] : undefined }]));
+
+  it('drops a version the member\'s own project framework cannot use', () => {
+    const member = familyMember({});
+    const result = compatibleMemberVersions(
+      member,
+      ['10.0.12', '9.1.0', '8.0.11'],
+      flags({ '10.0.12': 'net10.0', '9.1.0': 'net8.0', '8.0.11': 'net8.0' }),
+      { '/p/App.csproj': ['net8.0'] },
+    );
+    expect(result).toEqual(['9.1.0', '8.0.11']);
+  });
+
+  it('leaves the list untouched when no flags are known (CLI-only path)', () => {
+    const member = familyMember({});
+    expect(compatibleMemberVersions(member, ['10.0.12', '8.0.11'], undefined, { '/p/App.csproj': ['net8.0'] }))
+      .toEqual(['10.0.12', '8.0.11']);
+  });
+
+  it('leaves the list untouched when the project framework is unknown', () => {
+    const member = familyMember({});
+    expect(compatibleMemberVersions(
+      member, ['10.0.12', '8.0.11'], flags({ '10.0.12': 'net10.0' }), {},
+    )).toEqual(['10.0.12', '8.0.11']);
+  });
+});
+
+describe('familyHasBlockedMember (#107)', () => {
+  const flags = (byVersion: Record<string, string | undefined>): Record<string, VersionFlag> =>
+    Object.fromEntries(Object.entries(byVersion).map(([v, tfm]) =>
+      [v, { declaredDependencies: tfm ? [{ targetFramework: tfm, dependencies: [] }] : undefined }]));
+
+  it('flags a family where one member\'s project can use none of its own versions at all', () => {
+    // Example.Extensions.Http: member A on a net10.0 project. Member B is on
+    // a net8.0 project, and every version its own package ever released
+    // declares net10.0 only — the #107 repro, but for a sibling package in
+    // the same family rather than the one the family itself is anchored on.
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/A.csproj'] });
+    const b = familyMember({ packageId: 'Example.Extensions.Json', projects: ['/p/B.csproj'] });
+    const versionsByPackageId = {
+      'example.extensions.http': ['9.1.0', '8.0.11'],
+      'example.extensions.json': ['10.0.12', '10.0.0'],
+    };
+    const flagsByPackageId = {
+      'example.extensions.http': flags({ '9.1.0': 'net8.0', '8.0.11': 'net8.0' }),
+      'example.extensions.json': flags({ '10.0.12': 'net10.0', '10.0.0': 'net10.0' }),
+    };
+    const projectFrameworks = { '/p/A.csproj': ['net10.0'], '/p/B.csproj': ['net8.0'] };
+
+    expect(familyHasBlockedMember([a, b], versionsByPackageId, flagsByPackageId, projectFrameworks)).toBe(true);
+  });
+
+  it('does not flag a member whose versions simply have not loaded yet', () => {
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/A.csproj'] });
+    const b = familyMember({ packageId: 'Example.Extensions.Json', projects: ['/p/B.csproj'] });
+    const versionsByPackageId = { 'example.extensions.http': ['9.1.0', '8.0.11'] }; // B not loaded yet
+    const flagsByPackageId = { 'example.extensions.http': flags({ '9.1.0': 'net8.0', '8.0.11': 'net8.0' }) };
+    const projectFrameworks = { '/p/A.csproj': ['net10.0'], '/p/B.csproj': ['net8.0'] };
+
+    expect(familyHasBlockedMember([a, b], versionsByPackageId, flagsByPackageId, projectFrameworks)).toBe(false);
+  });
+
+  it('does not flag a family where every member has at least one compatible version', () => {
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/A.csproj'] });
+    const b = familyMember({ packageId: 'Example.Extensions.Json', projects: ['/p/B.csproj'] });
+    const versionsByPackageId = {
+      'example.extensions.http': ['9.1.0', '8.0.11'],
+      'example.extensions.json': ['9.0.0', '8.0.0'],
+    };
+    const flagsByPackageId = {
+      'example.extensions.http': flags({ '9.1.0': 'net8.0', '8.0.11': 'net8.0' }),
+      'example.extensions.json': flags({ '9.0.0': 'net8.0', '8.0.0': 'net8.0' }),
+    };
+    const projectFrameworks = { '/p/A.csproj': ['net8.0'], '/p/B.csproj': ['net8.0'] };
+
+    expect(familyHasBlockedMember([a, b], versionsByPackageId, flagsByPackageId, projectFrameworks)).toBe(false);
+  });
+
+  it('flags one member referenced from two projects on different frameworks, when the target only covers the newer one', () => {
+    // The exact report: Example.Extensions.Http referenced from a net9.0
+    // project and a net10.0 project. Every version the feed declares a
+    // framework for here only declares net10.0 — none of them can serve the
+    // net9.0 project too, even though a plain per-tfm compatibility check
+    // (net10.0 accepts net10.0) would say each version is "fine" on its own.
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/Net9.csproj', '/p/Net10.csproj'] });
+    const b = familyMember({ packageId: 'Example.Extensions.Json', projects: ['/p/Net9.csproj'] });
+    const versionsByPackageId = {
+      'example.extensions.http': ['10.0.12', '10.0.0'],
+      'example.extensions.json': ['9.0.0', '8.0.0'],
+    };
+    const flagsByPackageId = {
+      'example.extensions.http': flags({ '10.0.12': 'net10.0', '10.0.0': 'net10.0' }),
+      'example.extensions.json': flags({ '9.0.0': 'net8.0', '8.0.0': 'net8.0' }),
+    };
+    const projectFrameworks = { '/p/Net9.csproj': ['net9.0'], '/p/Net10.csproj': ['net10.0'] };
+
+    expect(familyHasBlockedMember([a, b], versionsByPackageId, flagsByPackageId, projectFrameworks)).toBe(true);
+  });
+
+  it('does not flag one member spanning two frameworks when a version covers both', () => {
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/Net9.csproj', '/p/Net10.csproj'] });
+    const versionsByPackageId = { 'example.extensions.http': ['10.0.12', '9.1.0', '8.0.11'] };
+    const flagsByPackageId = {
+      // 9.1.0 declares net8.0, which both net9.0 and net10.0 projects accept.
+      'example.extensions.http': flags({ '10.0.12': 'net10.0', '9.1.0': 'net8.0', '8.0.11': 'net8.0' }),
+    };
+    const projectFrameworks = { '/p/Net9.csproj': ['net9.0'], '/p/Net10.csproj': ['net10.0'] };
+
+    expect(familyHasBlockedMember([a], versionsByPackageId, flagsByPackageId, projectFrameworks)).toBe(false);
+  });
+});
+
+describe('splitFamilyMembers (#107)', () => {
+  it('groups members by the exact framework set their own projects declare', () => {
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/A.csproj'] });
+    const b = familyMember({ packageId: 'Example.Extensions.Json', projects: ['/p/B.csproj'] });
+    const projectFrameworks = { '/p/A.csproj': ['net9.0'], '/p/B.csproj': ['net10.0'] };
+
+    const groups = splitFamilyMembers([a, b], projectFrameworks);
+    expect(groups).toEqual([
+      { frameworks: ['net9.0'], members: [a] },
+      { frameworks: ['net10.0'], members: [b] },
+    ]);
+  });
+
+  it('keeps members with the same framework set in one group', () => {
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/A.csproj'] });
+    const b = familyMember({ packageId: 'Example.Extensions.Json', projects: ['/p/B.csproj'] });
+    const projectFrameworks = { '/p/A.csproj': ['net8.0'], '/p/B.csproj': ['net8.0'] };
+
+    expect(splitFamilyMembers([a, b], projectFrameworks)).toEqual([
+      { frameworks: ['net8.0'], members: [a, b] },
+    ]);
+  });
+
+  it('keys a member spanning several projects by all of their frameworks together, sorted', () => {
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/Net10.csproj', '/p/Net9.csproj'] });
+    const projectFrameworks = { '/p/Net9.csproj': ['net9.0'], '/p/Net10.csproj': ['net10.0'] };
+
+    expect(splitFamilyMembers([a], projectFrameworks)).toEqual([
+      { frameworks: ['net10.0', 'net9.0'], members: [a] },
+    ]);
+  });
+});
+
+describe('compatibleFamilyVersions (#107)', () => {
+  const flags = (byVersion: Record<string, string | undefined>): Record<string, VersionFlag> =>
+    Object.fromEntries(Object.entries(byVersion).map(([v, tfm]) =>
+      [v, { declaredDependencies: tfm ? [{ targetFramework: tfm, dependencies: [] }] : undefined }]));
+
+  it('intersects every member\'s own compatible list once all have answered', () => {
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/A.csproj'] });
+    const b = familyMember({ packageId: 'Example.Extensions.Json', projects: ['/p/B.csproj'] });
+    const versionsByPackageId = {
+      'example.extensions.http': ['9.1.0', '9.0.0'],
+      'example.extensions.json': ['9.0.0', '8.0.0'],
+    };
+    const flagsByPackageId = {
+      'example.extensions.http': flags({ '9.1.0': 'net8.0', '9.0.0': 'net8.0' }),
+      'example.extensions.json': flags({ '9.0.0': 'net8.0', '8.0.0': 'net8.0' }),
+    };
+    const projectFrameworks = { '/p/A.csproj': ['net8.0'], '/p/B.csproj': ['net8.0'] };
+
+    expect(compatibleFamilyVersions([a, b], versionsByPackageId, flagsByPackageId, projectFrameworks))
+      .toEqual(['9.0.0']);
+  });
+
+  it('falls back to the union of what has loaded so far while a member is still pending (raw list empty because it hasn\'t answered yet)', () => {
+    const a = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/A.csproj'] });
+    const b = familyMember({ packageId: 'Example.Extensions.Json', projects: ['/p/B.csproj'] });
+    const versionsByPackageId = { 'example.extensions.http': ['9.1.0'] }; // b: no entry at all yet
+    const flagsByPackageId = {};
+    const projectFrameworks = { '/p/A.csproj': ['net8.0'], '/p/B.csproj': ['net8.0'] };
+
+    expect(compatibleFamilyVersions([a, b], versionsByPackageId, flagsByPackageId, projectFrameworks))
+      .toEqual(['9.1.0']);
+  });
+
+  it('reports nothing shared — not the union — when a member has answered with nothing compatible at all', () => {
+    // The exact split-group repro: a family split by splitFamilyMembers can
+    // land a blocked member together with others on the same framework
+    // signature (net10.0 here). B's raw list is non-empty — it has
+    // answered — but every version it ever released only ever declared
+    // classic .NET Framework, which a net10.0 project cannot take at all.
+    // Falling through to the union of C's own versions would propose
+    // exactly the version B cannot take, the one outcome splitting the
+    // family exists to prevent.
+    const b = familyMember({ packageId: 'Example.Extensions.Json', projects: ['/p/Net10.csproj'] });
+    const c = familyMember({ packageId: 'Example.Extensions.Http', projects: ['/p/Net10.csproj'] });
+    const versionsByPackageId = {
+      'example.extensions.json': ['9.0.0', '8.0.0'], // answered, but net472 is not net10.0-compatible
+      'example.extensions.http': ['10.0.12', '10.0.0'],
+    };
+    const flagsByPackageId = {
+      'example.extensions.json': flags({ '9.0.0': 'net472', '8.0.0': 'net472' }),
+      'example.extensions.http': flags({ '10.0.12': 'net10.0', '10.0.0': 'net10.0' }),
+    };
+    const projectFrameworks = { '/p/Net10.csproj': ['net10.0'] };
+
+    expect(compatibleFamilyVersions([b, c], versionsByPackageId, flagsByPackageId, projectFrameworks))
+      .toEqual([]);
   });
 });
 

@@ -117,6 +117,15 @@ export interface VersionFlag {
    * reason to hide it from anything that already asked for it by name.
    */
   listed?: boolean;
+  /**
+   * The dependency groups this exact version declares, per target framework
+   * (#107) — a proxy for the `lib/` folders a version ships, read from the
+   * same registration walk that produces the rest of this record, so it costs
+   * nothing beyond what `GET_ALL_VERSIONS` already fetches for one package.
+   * Absent has the same meaning as everywhere else this shape is read: the
+   * feed did not say, not that the answer is "no compatibility".
+   */
+  declaredDependencies?: DeclaredDependencyGroup[];
 }
 
 /**

@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { searchableConfigFiles } from '../../searchConfigFiles';
 import type { VersionFlag } from '../utils/familyVersionFlags';
+import { compatibilityFor, hiddenVersions } from '../utils/versionCompatibility';
 
 /** Tooltip text for a version the feed flags — vulnerable and/or deprecated (#86); undefined when neither applies. */
 function versionWarningTitle(flags: VersionFlag | undefined): string | undefined {
@@ -30,6 +31,7 @@ export function VersionSelect({
   label,
   versionFlags,
   versionLine,
+  projectTfms,
 }: {
   versions: string[];
   selected: string;
@@ -45,13 +47,33 @@ export function VersionSelect({
    * still a legitimate thing to do — it is doing it by accident that is not.
    */
   versionLine?: string;
+  /**
+   * The target framework(s) this picker installs into (#107). A version the
+   * feed declares no compatible group for is collapsed behind a disclosure
+   * rather than dimmed in place — undefined/empty leaves every version exactly
+   * as offered today, which is what a caller with nothing to judge by passes.
+   */
+  projectTfms?: readonly string[];
 }) {
   const [open, setOpen] = useState(false);
+  const [disclosed, setDisclosed] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const firstHiddenRef = useRef<HTMLButtonElement>(null);
   const options = versions.length > 0 ? versions : (selected ? [selected] : []);
   const empty = options.length === 0;
   const selectedWarning = versionWarningTitle(versionFlags?.[selected]);
   const line = versionLine === undefined ? undefined : majorOf(versionLine);
+
+  // The selected version — even one reached through the disclosure itself,
+  // or one installed before the feed ever described its frameworks — always
+  // stays in the visible list: a picker that hides its own current value on
+  // open would be worse than one that never learned to dim anything at all.
+  const compat = compatibilityFor(options, versionFlags, projectTfms);
+  const hiddenSet = new Set(hiddenVersions(compat, selected));
+  const visibleOptions = options.filter((v) => !hiddenSet.has(v));
+  const hiddenOptions = options.filter((v) => hiddenSet.has(v));
+  const optionsKey = options.join(' ');
 
   useEffect(() => {
     if (!open) return;
@@ -68,6 +90,69 @@ export function VersionSelect({
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+
+  // Collapsed again for a version list this picker has not seen before —
+  // otherwise switching packages while the section happened to be open would
+  // carry that state to a package whose reader never asked for it.
+  useEffect(() => { setDisclosed(false); }, [optionsKey]);
+
+  // The disclosure sits pinned to the bottom of the dropdown precisely so it
+  // never needs scrolling to reach — but the versions it reveals render
+  // *below* it in the flow, off-screen in exactly the same way, unless the
+  // dropdown scrolls to meet them. To the *start* of that new section, not to
+  // the bottom of the whole list: a package with many hidden versions would
+  // otherwise land on the very last of them, with every other newly-revealed
+  // one sitting above, unseen, exactly the scroll this exists to avoid.
+  // Before paint, so the reader never sees the still-scrolled-up frame first.
+  useLayoutEffect(() => {
+    if (!disclosed) return;
+    firstHiddenRef.current?.scrollIntoView({ block: 'start' });
+  }, [disclosed]);
+
+  const renderOption = (v: string, i: number, forcedOffLine: boolean, ref?: React.Ref<HTMLButtonElement>) => {
+    const warning = versionWarningTitle(versionFlags?.[v]);
+    const incompatReason = compat.reason(v);
+    const outside = forcedOffLine || (line !== undefined && majorOf(v) !== line);
+    // The first option that leaves the line gets the rule above it, so the
+    // two halves of the list read as two halves — and the first version the
+    // disclosure reveals needs exactly the same rule for exactly the same
+    // reason (#107): the disclosure button that used to mark this boundary
+    // is itself gone once expanded, replaced in the flow by these options,
+    // and dimming alone does not draw a line between two dimmed things.
+    const firstOutside = forcedOffLine ? i === 0 : (outside && (i === 0 || majorOf(visibleOptions[i - 1]) === line));
+    return (
+      <button
+        key={v}
+        ref={ref}
+        type="button"
+        role="option"
+        aria-selected={v === selected}
+        className={[
+          'version-select__option',
+          v === selected ? 'version-select__option--selected' : '',
+          outside ? 'version-select__option--off-line' : '',
+          firstOutside ? 'version-select__option--line-break' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        title={[
+          v,
+          // A version that is both outside the major line and off-framework
+          // needs only one explanation: what stops the reader from using it
+          // here is the more concrete fact (#107).
+          incompatReason ?? (outside ? `leaves the ${line}.x line` : ''),
+          warning ?? '',
+        ].filter(Boolean).join(' — ')}
+        onClick={() => {
+          onChange(v);
+          setOpen(false);
+        }}
+      >
+        {v}
+        {warning && <span className="version-select__warn" aria-hidden="true"> ⚠</span>}
+      </button>
+    );
+  };
 
   return (
     <div className="version-select" ref={rootRef}>
@@ -86,42 +171,19 @@ export function VersionSelect({
         <span className="version-select__arrow" aria-hidden="true">▾</span>
       </button>
       {open && !empty && (
-        <div className="version-select__dropdown" role="listbox" aria-label={label}>
-          {options.map((v, i) => {
-            const warning = versionWarningTitle(versionFlags?.[v]);
-            const outside = line !== undefined && majorOf(v) !== line;
-            // The first option that leaves the line gets the rule above it, so
-            // the two halves of the list read as two halves.
-            const firstOutside = outside && (i === 0 || majorOf(options[i - 1]) === line);
-            return (
-              <button
-                key={v}
-                type="button"
-                role="option"
-                aria-selected={v === selected}
-                className={[
-                  'version-select__option',
-                  v === selected ? 'version-select__option--selected' : '',
-                  outside ? 'version-select__option--off-line' : '',
-                  firstOutside ? 'version-select__option--line-break' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                title={[
-                  v,
-                  outside ? `leaves the ${line}.x line` : '',
-                  warning ?? '',
-                ].filter(Boolean).join(' — ')}
-                onClick={() => {
-                  onChange(v);
-                  setOpen(false);
-                }}
-              >
-                {v}
-                {warning && <span className="version-select__warn" aria-hidden="true"> ⚠</span>}
-              </button>
-            );
-          })}
+        <div className="version-select__dropdown" role="listbox" aria-label={label} ref={dropdownRef}>
+          {visibleOptions.map((v, i) => renderOption(v, i, false))}
+          {hiddenOptions.length > 0 && !disclosed && (
+            <button
+              type="button"
+              className="version-select__disclose"
+              onClick={() => setDisclosed(true)}
+            >
+              <span className="version-select__disclose-chev" aria-hidden="true">▸</span>
+              {hiddenOptions.length} version{hiddenOptions.length === 1 ? '' : 's'} that can&apos;t install here
+            </button>
+          )}
+          {disclosed && hiddenOptions.map((v, i) => renderOption(v, i, true, i === 0 ? firstHiddenRef : undefined))}
         </div>
       )}
     </div>
@@ -137,6 +199,8 @@ interface Props {
   restoredVersion?: string;
   /** Project whose local NuGet cache to check for `restoredVersion`'s .nuspec. Only meaningful together with `restoredVersion`. */
   restoredProjectPath?: string;
+  /** See `VersionSelect`'s own prop of the same name (#107). */
+  projectTfms?: readonly string[];
 }
 
 export function VersionSelector({
@@ -146,6 +210,7 @@ export function VersionSelector({
   onChange,
   restoredVersion,
   restoredProjectPath,
+  projectTfms,
 }: Props) {
   const { send, state } = useNugetManager();
   const configFiles = searchableConfigFiles(state.sources.configChain);
@@ -180,6 +245,7 @@ export function VersionSelector({
       selected={selected}
       versionFlags={state.detail.versionFlags}
       label={`Version for ${packageId}`}
+      projectTfms={projectTfms}
       onChange={(v) => {
         onChange(v);
         send({ type: 'GET_PACKAGE_METADATA', packageId, version: v, configFiles, projectPath: projectPathFor(v) });

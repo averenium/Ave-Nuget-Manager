@@ -302,6 +302,57 @@ export enum FileType {
   SymbolicLink = 64,
 }
 
+// ─── Diagnostics (#107) ─────────────────────────────────────────────────────────
+
+export enum DiagnosticSeverity {
+  Error = 0,
+  Warning = 1,
+  Information = 2,
+  Hint = 3,
+}
+
+export class Diagnostic {
+  source?: string;
+  constructor(
+    public range: Range,
+    public message: string,
+    public severity: DiagnosticSeverity = DiagnosticSeverity.Error,
+  ) {}
+}
+
+export class DiagnosticCollection {
+  readonly name: string;
+  private readonly _entries = new Map<string, { uri: Uri; diagnostics: readonly Diagnostic[] }>();
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  set(uri: Uri, diagnostics: readonly Diagnostic[]): void {
+    this._entries.set(uri.fsPath, { uri, diagnostics });
+  }
+
+  delete(uri: Uri): void {
+    this._entries.delete(uri.fsPath);
+  }
+
+  clear(): void {
+    this._entries.clear();
+  }
+
+  get(uri: Uri): readonly Diagnostic[] | undefined {
+    return this._entries.get(uri.fsPath)?.diagnostics;
+  }
+
+  dispose(): void {
+    this._entries.clear();
+  }
+}
+
+export const languages = {
+  createDiagnosticCollection: jest.fn((name: string): DiagnosticCollection => new DiagnosticCollection(name)),
+};
+
 // ─── WebviewView (stub for provider tests) ───────────────────────────────────
 
 export interface WebviewView {

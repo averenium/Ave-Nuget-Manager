@@ -113,6 +113,73 @@ export function defaultGroupFor<T extends { targetFramework?: string }>(
   return selectCompatibleGroup(groups, undefined) ?? newestGroup(groups);
 }
 
+/**
+ * Which of `projectTfms` have no compatible group among `groups` at all
+ * (#107) — the individual failures `isVersionCompatible` collapses into one
+ * yes/no, kept apart so a message can name exactly the framework(s) that
+ * actually fail rather than the whole set asked about. A version compatible
+ * with only the newest of two frameworks fails for the *other* one, not for
+ * both — a message naming both would say a version that works fine for
+ * net10.0 doesn't work for net10.0 either.
+ *
+ * `groups` absent or empty means the feed said nothing about frameworks at
+ * all for this version — an older/incomplete answer, not a claim of "none" —
+ * so nothing is reported as failing on a signal that was never given. A
+ * catch-all group (no named framework) always accepts, the same as
+ * everywhere else this module reads one.
+ */
+export function unsatisfiedFrameworks<T extends { targetFramework?: string }>(
+  groups: readonly T[] | undefined,
+  projectTfms: readonly string[],
+): string[] {
+  if (!groups || groups.length === 0) return [];
+  return projectTfms.filter((tfm) => !groups.some((g) => {
+    if (!frameworkKey(g.targetFramework)) return true;
+    return frameworkAccepts(tfm, g.targetFramework!);
+  }));
+}
+
+/**
+ * Whether a version compatible with `projectTfms` at all (#107) — the
+ * question behind the version list's disclosure, the update mark's default,
+ * and the Groups family intersection alike, all fed from the same feed-stated
+ * groups.
+ *
+ * An empty `projectTfms` is nothing to judge against, so nothing is ruled
+ * out — the same silence `unsatisfiedFrameworks` already treats as no
+ * failures (it would report none regardless, since there is nothing to
+ * filter).
+ *
+ * `projectTfms` with more than one entry means every one of them has to find
+ * its own compatible group, not merely one of them — the same version gets
+ * installed into all of them at once, whether they are several frameworks of
+ * one multi-targeted project sharing an unconditional reference or several
+ * different projects a Groups family member spans. A version compatible with
+ * only the newest of two frameworks is not "compatible enough"; it fails to
+ * restore for the other one exactly as it would if named alone.
+ */
+export function isVersionCompatible<T extends { targetFramework?: string }>(
+  groups: readonly T[] | undefined,
+  projectTfms: readonly string[],
+): boolean {
+  if (projectTfms.length === 0) return true;
+  return unsatisfiedFrameworks(groups, projectTfms).length === 0;
+}
+
+/**
+ * The newest version among `versionsDesc` (already sorted newest first) whose
+ * declared groups are compatible with `projectTfms`, or `undefined` when none
+ * is (#107) — the version an update proposes by default, instead of the
+ * feed's raw latest regardless of framework.
+ */
+export function highestCompatibleVersion<T extends { targetFramework?: string }>(
+  versionsDesc: readonly string[],
+  groupsByVersion: (version: string) => readonly T[] | undefined,
+  projectTfms: readonly string[],
+): string | undefined {
+  return versionsDesc.find((v) => isVersionCompatible(groupsByVersion(v), projectTfms));
+}
+
 function newestGroup<T extends { targetFramework?: string }>(
   groups: readonly T[],
 ): T | undefined {

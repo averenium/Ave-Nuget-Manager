@@ -204,6 +204,35 @@ describe('HttpCatalogBackend when HTTP can answer', () => {
     expect((await backend.getAllVersions('X', ['a.config'])).versions).toEqual(['1.0.0']);
     expect(cli.calls).toEqual([]);
   });
+
+  it('carries the declared groups per version, for TFM filtering the picker does later (#107)', async () => {
+    // The exact #107 repro: 10.0.12 declares net10.0 only, 8.0.11 declares
+    // net8.0. One catalog walk already has both; nothing extra is fetched.
+    const ladder = ladderStub({
+      catalog: {
+        [FEED_A]: [
+          entry('10.0.12', { dependencyGroups: [{ targetFramework: 'net10.0', dependencies: [] }] }),
+          entry('8.0.11', { dependencyGroups: [{ targetFramework: 'net8.0', dependencies: [] }] }),
+        ],
+      },
+    });
+    const backend = new HttpCatalogBackend(
+      cliStub({}).backend,
+      ladder,
+      capabilityStub([FEED_A]),
+      resolverFor({ 'a.config': httpOnly(FEED_A) }),
+      { isEnabled: () => true },
+    );
+
+    const result = await backend.getAllVersions('X', ['a.config']);
+
+    expect(result.versionFlags['10.0.12'].declaredDependencies).toEqual([
+      { targetFramework: 'net10.0', dependencies: [] },
+    ]);
+    expect(result.versionFlags['8.0.11'].declaredDependencies).toEqual([
+      { targetFramework: 'net8.0', dependencies: [] },
+    ]);
+  });
 });
 
 describe('HttpCatalogBackend when the CLI must still run', () => {
@@ -357,6 +386,39 @@ describe('HttpCatalogBackend filling the details panel', () => {
     const backend = panelBackend({ [FEED_A]: [entry('1.0.0', { description: 'Old.' }), entry('2.0.0', { description: 'New.' })] });
 
     expect((await backend.getMetadata('X', '1.0.0', ['a.config'])).description).toBe('Old.');
+  });
+
+  it('describes the newest stable version when none is named, not a prerelease that outranks it', async () => {
+    // Measured against nuget.org: Microsoft.AspNetCore.OpenApi's actual
+    // latest entry is 11.0.0-rc.1, ahead of the latest stable 10.0.12. The
+    // panel's first click on a package nothing has installed yet asks with
+    // no version at all — that must not hand back the prerelease just
+    // because it sorts first.
+    const backend = panelBackend({
+      [FEED_A]: [
+        entry('11.0.0-rc.1', { description: 'Preview.' }),
+        entry('10.0.12', { description: 'Stable.' }),
+        entry('9.0.20', { description: 'Older stable.' }),
+      ],
+    });
+
+    expect((await backend.getMetadata('X', '', ['a.config'])).description).toBe('Stable.');
+  });
+
+  it('falls back to the newest prerelease when nothing stable has ever shipped', async () => {
+    const backend = panelBackend({
+      [FEED_A]: [entry('2.0.0-preview.2', { description: 'Newer preview.' }), entry('2.0.0-preview.1', { description: 'Older preview.' })],
+    });
+
+    expect((await backend.getMetadata('X', '', ['a.config'])).description).toBe('Newer preview.');
+  });
+
+  it('still finds a version asked for by name even when it is itself a prerelease', async () => {
+    const backend = panelBackend({
+      [FEED_A]: [entry('11.0.0-rc.1', { description: 'Preview.' }), entry('10.0.12', { description: 'Stable.' })],
+    });
+
+    expect((await backend.getMetadata('X', '11.0.0-rc.1', ['a.config'])).description).toBe('Preview.');
   });
 
   it('describes a version withdrawn from the feed rather than pretending it is gone', async () => {

@@ -39,6 +39,20 @@ function pairKey(packageId: string, projectPath: string): string {
 }
 
 /**
+ * The key one (project, framework) slot occupies in a per-project answer a
+ * broadcast has to keep apart (#107) — `dotnet list` reports a
+ * framework-scoped pin (#82) as two entries sharing the same project path
+ * and differing only in `framework`, so the plain path alone is not a safe
+ * key: two independently-pinned ceilings would collapse into whichever one
+ * was written last. Exported so the one place that builds this key (the
+ * broker) and the one place that reads it back (the webview reducer) can
+ * never drift apart on how it is spelled.
+ */
+export function projectFrameworkKey(pkg: { projectPath: string; framework?: string }): string {
+  return pkg.framework ? `${pkg.projectPath}\0${pkg.framework}` : pkg.projectPath;
+}
+
+/**
  * The (package, project) pairs that are pinned per framework — one project
  * holding more than one resolved version for the id across its frameworks.
  *

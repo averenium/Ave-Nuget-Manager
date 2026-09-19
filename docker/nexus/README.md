@@ -30,7 +30,7 @@ docker compose -f docker/nexus/docker-compose.yml exec nexus cat /nexus-data/adm
 | proxy nuget.org | `http://localhost:8081/repository/nuget.org-proxy/index.json` |
 | hosted (push і restore) | `http://localhost:8081/repository/nuget-hosted/` **без** `index.json` |
 
-`index.json` — v3 service index (restore/search). У Nexus там **немає** `PackagePublish`, тому `dotnet nuget push` пише *This version of nuget.exe does not support updating packages to package source 'nexus-hosted'*. Це не про логін і не про версію exe.
+`index.json` — v3 service index (restore/search). Раніше hosted-репо в ньому не оголошував `PackagePublish`, тому `dotnet nuget push` писав *This version of nuget.exe does not support updating packages to package source 'nexus-hosted'* — це було не про логін і не про версію exe. Виміряно під час #107: hosted тепер оголошує `PackagePublish/2.0.0` і в `index.json` теж, але джерело для push все одно варто вказувати на URL **без** `index.json` (нижче) — так налаштований `push-private.ps1` і так це перевірено в лабораторії.
 
 Push і restore — **логін/пароль** у глобальному `%APPDATA%\NuGet\NuGet.Config` (без `--api-key`). Source `nexus-hosted` має вказувати на URL **без** `index.json`:
 

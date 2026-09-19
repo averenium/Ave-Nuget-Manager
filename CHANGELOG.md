@@ -15,6 +15,9 @@
 - **Package details**: a **What changes** band listing the dependencies an update would add, move or drop (#114)
 - **Package details**: the **Dependencies** section can be read for any framework the package declares, not only the one an install would use (#114)
 - **Packages**: a folder with several solutions asks in the panel which solution or project to manage, and remembers the answer (#113)
+- **Package details**: versions the project's target framework can't use are collapsed behind a disclosure in the version list, and no longer proposed by the update mark or a **Groups** family target (#107)
+- **Problems** (native, not the panel's own): a package restored with no compile assets for the project's target framework, which `dotnet restore` accepts silently (#107)
+- **Package details**: installing across several projects starts with a project the target version can't use left unchecked, marked with why, rather than writing it there silently (#107)
 
 ### Fixed
 
@@ -23,6 +26,7 @@
 - The version picker and source filter lists are opaque, so text behind them no longer shows through the rows (#112)
 - **Packages**: a slower answer to an earlier search no longer replaces the results of a newer one still being typed (#121)
 - **Package details**: reads `net8.0`/`net9.0`/`net10.0` correctly on feeds (Nexus-hosted, measured) that mangle them into `.NETFramework` versions (#123)
+- **Package details**: a package nothing has installed yet no longer defaults to a prerelease version just because it is numerically newest (#128)
 
 ## 0.8.0
 

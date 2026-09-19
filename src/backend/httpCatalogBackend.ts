@@ -36,7 +36,7 @@ import type {
 } from '../types';
 import type { INuGetBackend } from './INuGetBackend';
 import { getConfig } from '../config';
-import { compareSemVer, versionsEqual } from '../semver';
+import { compareSemVer, isPrerelease, versionsEqual } from '../semver';
 import { severityFromInt } from '../nugetHttpCacheVdb';
 import type { CatalogVersionEntry, CatalogDeprecation } from '../nugetRegistration';
 import { normalizeSourceKey, type ProbeTarget, type SourceCapabilityStore } from '../nugetSourceCapabilities';
@@ -233,13 +233,16 @@ export class HttpCatalogBackend implements INuGetBackend {
       const versions: string[] = [];
       const versionFlags: Record<string, SearchedVersionMetadata> = {};
       for (const entry of catalog) {
-        // The date travels beside the marks rather than inside `flagsFrom`,
-        // which answers "is anything wrong with this version". Nothing is wrong
-        // with a version for having a date — but the details panel needs one per
-        // version, and this walk is the only place they all pass through (#114).
+        // The date and the declared groups travel beside the marks rather than
+        // inside `flagsFrom`, which answers "is anything wrong with this
+        // version". Nothing is wrong with a version for having a date or a
+        // declared framework — but the version picker needs both for every
+        // version up front (#107, #114), and this walk is the only place they
+        // all pass through.
         const flags = flagsFrom(entry);
-        if (flags || entry.published) {
-          versionFlags[entry.version] = { ...flags, published: entry.published };
+        const declaredDependencies = declaredFrom(entry);
+        if (flags || entry.published || declaredDependencies) {
+          versionFlags[entry.version] = { ...flags, published: entry.published, declaredDependencies };
         }
         // A version withdrawn from the feed never appears in the CLI answer,
         // because search does not return unlisted packages at all — so it stays
@@ -451,7 +454,24 @@ export class HttpCatalogBackend implements INuGetBackend {
     // catalog version came from the feed; the two spell the same version
     // differently often enough that string identity would send a full metadata
     // download to waste.
-    const entry = (version ? sorted.find((e) => versionsEqual(e.version, version)) : undefined) ?? sorted[0];
+    //
+    // No version named: the walk above is asked with `includePrerelease: true`
+    // regardless, so a version this call was told to find by name — installed,
+    // or already on screen — is always reachable even if it is itself a
+    // prerelease. But "no version named" means the caller has no opinion at
+    // all yet, and `sorted[0]` alone would hand it whichever is numerically
+    // newest without asking whether it opted into prereleases — measured on
+    // `Microsoft.AspNetCore.OpenApi`, whose `11.0.0-rc.1` outranks the actual
+    // latest stable `10.0.12`. The newest *stable* entry is the honest default;
+    // only a package with no stable release at all falls through to `sorted[0]`.
+    // This only scans the page `newestOnly` already fetched above, so a
+    // package with many trailing prereleases spanning more than one page could
+    // still miss an older stable release — narrow enough not to be worth a
+    // wider walk for what this call only ever wanted one version's worth of
+    // detail from.
+    const entry = version
+      ? sorted.find((e) => versionsEqual(e.version, version))
+      : sorted.find((e) => !isPrerelease(e.version)) ?? sorted[0];
     if (!entry) return this._inner.getMetadata(packageId, version, configFiles);
     return toPackageMetadata(packageId, entry, found.sourceName);
   }

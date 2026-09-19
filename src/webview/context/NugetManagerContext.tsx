@@ -3,6 +3,7 @@ import { compareSemVer } from '../../semver';
 import { fileNameNoExt } from '../utils/pathUtils';
 import { pathsEqual, packageIdsEqual } from '../../pathCompare';
 import { formatBatchUpdateError, preserveInstalledEnrichment } from '../../batchUpdates';
+import { projectFrameworkKey } from '../../frameworkPins';
 import { applySearchResults } from '../utils/search';
 import type {
   WorkspaceScope,
@@ -560,12 +561,16 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       };
 
     case 'PACKAGE_INFO_UPDATE': {
-      // Update latestVersion + sourceName for all installed packages with this id
+      // Update latestVersion + sourceName for all installed packages with this
+      // id. `latestVersionByProject` answers per project — a package
+      // referenced from a net9.0 project and a net10.0 one can have genuinely
+      // different targets (#107), and one shared `latestVersion` would say
+      // the same thing for both regardless of which project a row is about.
       const updated = state.packages.installed.map((pkg) =>
         pkg.id.toLowerCase() === msg.packageId.toLowerCase()
           ? {
             ...pkg,
-            latestVersion: msg.latestVersion,
+            latestVersion: msg.latestVersionByProject?.[projectFrameworkKey(pkg)] ?? msg.latestVersion,
             sourceName: msg.sourceName,
             versions: msg.versions ?? pkg.versions,
           }

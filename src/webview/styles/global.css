@@ -724,6 +724,27 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   margin-top: var(--spacing-xs);
   padding-top: var(--spacing-sm);
 }
+/* Versions the project's target framework cannot use (#107) — collapsed
+   behind this toggle by default rather than shown dimmed in place, since a
+   package that moved to a new TFM entirely would otherwise bury every usable
+   version below the fold. Text colours only, matching project-row__toggle
+   rather than the blue `a` this panel uses for real links: this is a local
+   disclosure, not a link.
+   Sticky to the bottom of the (scrollable) dropdown rather than flowing after
+   the compatible options: a package with a long history can have well over a
+   hundred of those above it, and a toggle only reachable by scrolling past
+   every one of them first defeats the point of surfacing it at all. An opaque
+   background is required for a sticky element — otherwise the options
+   scrolling underneath show through it. */
+.version-select__disclose {
+  display: flex; align-items: center; gap: var(--spacing-xs);
+  width: 100%; padding: var(--spacing-xs) var(--spacing-sm);
+  border: none; border-top: 1px solid var(--color-border); background: var(--color-dropdown-bg);
+  font: inherit; color: inherit; font-size: 11px; text-align: left; cursor: pointer;
+  position: sticky; bottom: 0; z-index: 1;
+}
+.version-select__disclose-chev { color: var(--color-tab-inactive); flex-shrink: 0; }
+.version-select__disclose:hover .version-select__disclose-chev { color: var(--color-fg); }
 /* Feed-reported vulnerable/deprecated mark on a version, before it's even chosen (#86). */
 .version-select__value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The `▾` SourceFilterDropdown already uses, at the button's own size and
@@ -1251,6 +1272,31 @@ a.badge:hover { text-decoration: underline; }
 .version-row { display: flex; align-items: center; gap: var(--spacing-xs); min-width: 0; }
 .version-row .version-apply { flex: 1 1 auto; }
 .version-apply .version-select { flex: 1 1 auto; min-width: 0; }
+/* A family with no single shared target (#107) — one row per group it split
+   into, each carrying its own picker; `.project-row__tfm` names which
+   framework(s) that row's own target has to hold for, reusing the badge
+   already drawn for #82's per-framework project rows rather than inventing a
+   second kind of label for the same fact. There is no apply button per row:
+   the header's own button above already sends every row's current choice at
+   once. */
+.version-apply-split {
+  display: flex; flex-direction: column; gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+}
+.version-apply-split__row {
+  display: flex; align-items: center; gap: var(--spacing-sm);
+  min-width: 0;
+}
+.version-apply-split__row .version-select { flex: 1 1 auto; min-width: 0; }
+/* A group with nothing compatible at all (#107) — said plainly rather than
+   left as a disabled, empty picker with no sign it will never open. Muted
+   like the version list's own off-line dimming, not warning/error toned:
+   the split already happened for this exact reason, this is only naming it. */
+.version-apply-split__blocked {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 12px; color: var(--color-tab-inactive);
+  padding: 4px 7px;
+}
 
 /* The segments give their borders up to the pair and keep only the seam.
 
@@ -1909,6 +1955,17 @@ a.badge:hover { text-decoration: underline; }
    muted: it is a change to the project file, not a note about it. */
 .popup__item-split {
   color: var(--color-warning);
+  font-size: 11px;
+  line-height: 1.3;
+}
+/* A project the version being applied here can't use (#107) — dimmed the
+   same way an off-line version already is in the version list, not
+   warning/error toned: the signal is a proxy, not a guarantee, and it starts
+   unchecked rather than gone, the same "dim, don't remove" rule as
+   everywhere else this fact is shown. */
+.popup__item--incompatible { opacity: 0.6; }
+.popup__item-incompatible-note {
+  color: var(--color-tab-inactive);
   font-size: 11px;
   line-height: 1.3;
 }

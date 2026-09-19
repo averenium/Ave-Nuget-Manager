@@ -39,6 +39,27 @@ describe('CliBackend.getMetadata', () => {
     expect(meta.projectUrl).toBe('https://old.example');
   });
 
+  it('matches the requested version through versionsEqual, not exact string identity', async () => {
+    // A spelling mismatch (project file vs. feed string, e.g. `1.0` vs
+    // `1.0.0`) must not fall through to `?? sorted[0]` and silently return
+    // the newest stable version's metadata instead of the one asked about.
+    const json = JSON.stringify({
+      version: 1,
+      searchResult: [{
+        sourceName: 'nuget.org',
+        packages: [
+          { id: 'Dapper', version: '1.0.0', description: 'Requested.' },
+          { id: 'Dapper', version: '2.0.0', description: 'Newest.' },
+        ],
+      }],
+    });
+    const runner = fakeRunner(() => ok(json));
+    const backend = new CliBackend(runner);
+    const meta = await backend.getMetadata('Dapper', '1.0', ['/p/nuget.config']);
+    expect(meta.version).toBe('1.0.0');
+    expect(meta.description).toBe('Requested.');
+  });
+
   it('picks the newest version when none was requested', async () => {
     const runner = fakeRunner(() => ok(SEARCH_JSON));
     const backend = new CliBackend(runner);
@@ -46,6 +67,47 @@ describe('CliBackend.getMetadata', () => {
     expect(meta.version).toBe('2.0.123');
     expect(meta.description).toBe('new desc');
     expect(meta.tags).toEqual(['orm', 'sql']);
+  });
+
+  it('picks the newest stable version when none was requested, not a prerelease that outranks it (#107)', async () => {
+    // The search always includes prereleases (`--prerelease`, unconditionally)
+    // so a version asked for by name is reachable either way — but with no
+    // name given, a prerelease numerically ahead of the latest stable must
+    // not become the default. Measured on Microsoft.AspNetCore.OpenApi:
+    // 11.0.0-rc.1 outranks the actual latest stable 10.0.12.
+    const json = JSON.stringify({
+      version: 1,
+      searchResult: [{
+        sourceName: 'nuget.org',
+        packages: [
+          { id: 'Example.Extensions.OpenApi', version: '10.0.12', description: 'Stable.' },
+          { id: 'Example.Extensions.OpenApi', version: '11.0.0-rc.1', description: 'Preview.' },
+        ],
+      }],
+    });
+    const runner = fakeRunner(() => ok(json));
+    const backend = new CliBackend(runner);
+    const meta = await backend.getMetadata('Example.Extensions.OpenApi', '', ['/p/nuget.config']);
+    expect(meta.version).toBe('10.0.12');
+    expect(meta.description).toBe('Stable.');
+  });
+
+  it('still finds a version asked for by name even when it is itself a prerelease', async () => {
+    const json = JSON.stringify({
+      version: 1,
+      searchResult: [{
+        sourceName: 'nuget.org',
+        packages: [
+          { id: 'Example.Extensions.OpenApi', version: '10.0.12', description: 'Stable.' },
+          { id: 'Example.Extensions.OpenApi', version: '11.0.0-rc.1', description: 'Preview.' },
+        ],
+      }],
+    });
+    const runner = fakeRunner(() => ok(json));
+    const backend = new CliBackend(runner);
+    const meta = await backend.getMetadata('Example.Extensions.OpenApi', '11.0.0-rc.1', ['/p/nuget.config']);
+    expect(meta.version).toBe('11.0.0-rc.1');
+    expect(meta.description).toBe('Preview.');
   });
 
   it('passes --verbosity detailed so description/projectUrl come back at all', async () => {

@@ -10,6 +10,7 @@ import { RoslynCapPopup } from './RoslynCapPopup';
 import { versionTone } from '../utils/versionTone';
 import { IconCheck, IconChevronRight, IconInstall, IconTrash } from '../utils/icons';
 import { frameworkRowsFor, needsFrameworkRows } from '../../frameworkPins';
+import { highestCompatibleVersion } from '../../frameworkCompatibility';
 import { FrameworkPinnedProject } from './FrameworkPinnedProject';
 
 interface Props {
@@ -222,7 +223,16 @@ function ProjectRow({
     .find(([k]) => pathsEqual(k, p))?.[1]
     ?? currentPkg?.resolvedVersion
     ?? '';
-  const currentVersion = installedVersion || allVersions[0] || '';
+  // Not yet referenced here: the version offered by default is the newest one
+  // this project's own framework(s) can actually use (#107), not the feed's
+  // raw latest — falling back to it only when nothing compatible was found or
+  // the feed never said (CLI-only path, or no HTTP catalog data yet).
+  const compatibleVersion = highestCompatibleVersion(
+    allVersions,
+    (v) => state.detail.versionFlags?.[v]?.declaredDependencies,
+    frameworks ?? [],
+  );
+  const currentVersion = installedVersion || compatibleVersion || allVersions[0] || '';
   const isLoading = [...state.detail.projectLoadingSet].some((k) => pathsEqual(k, p));
   const errorKey = Object.keys(state.detail.projectErrors).find((k) => pathsEqual(k, p));
   const error = errorKey ? state.detail.projectErrors[errorKey] : undefined;
@@ -330,6 +340,7 @@ function ProjectRow({
           label={`Version for ${project.name}`}
           onChange={setLocalVersion}
           versionFlags={state.detail.versionFlags}
+          projectTfms={frameworks}
         />
         <button
           className={`btn btn--icon version-apply__btn ${updateTone === 'same' ? 'btn--secondary' : 'btn--primary'}`}

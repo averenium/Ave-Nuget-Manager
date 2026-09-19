@@ -4,11 +4,16 @@ import {
   collectFamilyGroups,
   collectOtherItems,
   collectUpdatableItems,
+  compatibleFamilyVersions,
+  compatibleMemberVersions,
+  familyHasBlockedMember,
   familyItemsAtVersion,
   intersectVersions,
   sortVersionsDesc,
+  splitFamilyMembers,
   suggestedFamilyVersion,
   type FamilyGroup,
+  type FamilyMember,
 } from '../../batchUpdates';
 import { isCodeAnalysisFamily, versionsAtOrBelow } from '../../roslynSdkCap';
 import { compareSemVer } from '../../semver';
@@ -195,6 +200,13 @@ export function UpdatesTab() {
 
   const [selection, setSelection] = useState<Selection | null>(null);
   const [familyTarget, setFamilyTarget] = useState('');
+  /**
+   * One target per split group, keyed by its own sorted framework signature
+   * (#107) — used only once `familyBlocked` says no single `familyTarget` can
+   * serve every member, the same "family falls apart into its per-framework
+   * groups" precedent #82 already set for a plain version disagreement.
+   */
+  const [splitTargets, setSplitTargets] = useState<Record<string, string>>({});
   const [resultLockKey, setResultLockKey] = useState('');
   const requestedRef = useRef('');
 
@@ -243,11 +255,22 @@ export function UpdatesTab() {
     [selectedFamily, flagsByPackageId],
   );
 
+  // See `familyHasBlockedMember` (#107): a member with nothing compatible at
+  // all blocks a shared target rather than silently dropping out of it.
+  const familyBlocked = useMemo(
+    () => !!selectedFamily
+      && familyHasBlockedMember(selectedFamily.members, versionsByPackageId, flagsByPackageId, state.packages.projectFrameworks),
+    [selectedFamily, versionsByPackageId, flagsByPackageId, state.packages.projectFrameworks],
+  );
+
   const familyVersions = useMemo(() => {
-    if (!selectedFamily) return [];
-    const lists = selectedFamily.members.map(
-      (m) => versionsByPackageId[m.packageId.toLowerCase()] ?? [],
-    );
+    if (!selectedFamily || familyBlocked) return [];
+    const lists = selectedFamily.members.map((m) => compatibleMemberVersions(
+      m,
+      versionsByPackageId[m.packageId.toLowerCase()] ?? [],
+      flagsByPackageId[m.packageId.toLowerCase()],
+      state.packages.projectFrameworks,
+    ));
     const loaded = lists.filter((l) => l.length > 0);
     const suggested = suggestedFamilyVersion(selectedFamily.members, selectedFamily.fromVersion);
     const extras = suggested ? [suggested] : [];
@@ -259,10 +282,13 @@ export function UpdatesTab() {
       versions = sortVersionsDesc(versionsAtOrBelow(versions, roslynCap.compilerVersion));
     }
     return versions;
-  }, [selectedFamily, versionsByPackageId, roslynCap]);
+  }, [selectedFamily, familyBlocked, versionsByPackageId, flagsByPackageId, state.packages.projectFrameworks, roslynCap]);
 
   useEffect(() => {
-    if (!selectedFamily) {
+    if (!selectedFamily || familyBlocked) {
+      // `familyBlocked` means a member with nothing compatible at all —
+      // `suggested` below has no idea about frameworks, so falling through to
+      // it here would propose the exact version that member can't use (#107).
       setFamilyTarget('');
       return;
     }
@@ -275,23 +301,99 @@ export function UpdatesTab() {
       const newer = familyVersions.find((v) => compareSemVer(v, selectedFamily.fromVersion) > 0);
       return newer ?? familyVersions[0] ?? suggested ?? '';
     });
-  }, [selectionKey(selection), familyVersions.join(','), selectedFamily?.fromVersion]);
+  }, [selectionKey(selection), familyVersions.join(','), selectedFamily?.fromVersion, familyBlocked]);
+
+  // No shared version works for everyone — the family falls apart into the
+  // groups that can each share one (#82's own precedent for a plain version
+  // disagreement, extended to a framework one). Computed only once blocked:
+  // splitting on framework alone whenever frameworks merely differ would
+  // separate members a version could still have served together (#107).
+  const splitGroups = useMemo(
+    () => (selectedFamily && familyBlocked
+      ? splitFamilyMembers(selectedFamily.members, state.packages.projectFrameworks)
+      : []),
+    [selectedFamily, familyBlocked, state.packages.projectFrameworks],
+  );
+
+  const splitKey = (g: { frameworks: string[] }) => g.frameworks.join(',') || '(none)';
+
+  const splitVersionsByKey = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const g of splitGroups) {
+      let versions = compatibleFamilyVersions(g.members, versionsByPackageId, flagsByPackageId, state.packages.projectFrameworks);
+      if (isCodeAnalysisFamily(selectedFamily!.family)) {
+        versions = roslynCap ? sortVersionsDesc(versionsAtOrBelow(versions, roslynCap.compilerVersion)) : [];
+      }
+      map[splitKey(g)] = versions;
+    }
+    return map;
+  }, [splitGroups, versionsByPackageId, flagsByPackageId, state.packages.projectFrameworks, roslynCap, selectedFamily]);
+
+  // A group with an empty version list stays that way forever exactly when
+  // one of its own members is blocked (#107) — as opposed to merely still
+  // loading, which also shows up as empty but resolves once the answer
+  // arrives. Told apart here so the group can say which one it is, instead
+  // of a disabled "…" box that gives no sign it will never open.
+  const splitGroupBlockedByKey = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const g of splitGroups) {
+      map[splitKey(g)] = familyHasBlockedMember(g.members, versionsByPackageId, flagsByPackageId, state.packages.projectFrameworks);
+    }
+    return map;
+  }, [splitGroups, versionsByPackageId, flagsByPackageId, state.packages.projectFrameworks]);
+
+  useEffect(() => {
+    if (splitGroups.length === 0) {
+      setSplitTargets({});
+      return;
+    }
+    setSplitTargets((current) => {
+      const next: Record<string, string> = {};
+      for (const g of splitGroups) {
+        const key = splitKey(g);
+        const versions = splitVersionsByKey[key] ?? [];
+        if (current[key] && versions.includes(current[key])) {
+          next[key] = current[key];
+          continue;
+        }
+        const suggested = suggestedFamilyVersion(g.members, selectedFamily!.fromVersion);
+        const newer = versions.find((v) => compareSemVer(v, selectedFamily!.fromVersion) > 0);
+        next[key] = newer ?? versions[0] ?? suggested ?? '';
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionKey(selection), splitGroups.map(splitKey).join('|'), JSON.stringify(splitVersionsByKey)]);
+
+  // The target for one member: its split group's own choice once the family
+  // has fallen apart, or the one shared `familyTarget` otherwise (#107).
+  const targetForMember = (m: FamilyMember): string => {
+    if (splitGroups.length === 0) return familyTarget;
+    const group = splitGroups.find((g) => g.members.includes(m));
+    return group ? (splitTargets[splitKey(group)] ?? '') : '';
+  };
 
   const previewItems: BatchUpdateItem[] =
     selection?.type === 'all' ? updatable
       : selection?.type === 'other' ? otherItems
         : selectedFamily
-          ? withoutBlocked(familyItemsAtVersion(selectedFamily.members, familyTarget), blockedPackages)
+          ? withoutBlocked(
+            splitGroups.length > 0
+              ? splitGroups.flatMap((g) => familyItemsAtVersion(g.members, splitTargets[splitKey(g)] ?? ''))
+              : familyItemsAtVersion(selectedFamily.members, familyTarget),
+            blockedPackages,
+          )
           : [];
 
   const previewRows = selection?.type === 'family' && selectedFamily
     ? selectedFamily.members.map((m) => {
         const blocked = isPackageBlocked(m.packageId, blockedPackages);
+        const target = targetForMember(m);
         return {
           packageId: m.packageId,
           fromVersion: m.fromVersion,
-          toVersion: familyTarget || m.latestVersion || m.fromVersion,
-          skipped: blocked || !familyTarget || familyTarget === m.fromVersion,
+          toVersion: target || m.latestVersion || m.fromVersion,
+          skipped: blocked || !target || target === m.fromVersion,
           blocked,
           projects: m.projects,
           framework: m.framework,
@@ -536,9 +638,11 @@ export function UpdatesTab() {
                     >
                       ■
                     </button>
-                  ) : selection.type === 'family' ? null : (
-                    // All and Other have no version to choose, so their button
-                    // stays here; a family's sits joined to its target below (#82).
+                  ) : selection.type === 'family' && splitGroups.length === 0 ? null : (
+                    // All, Other, and a split family (no single version to
+                    // join a button to — see the framework rows below) have
+                    // their button here; an unsplit family's sits joined to
+                    // its one target below instead (#82).
                     <button
                       type="button"
                       className={`btn btn--icon ${groupTone === 'same' ? 'btn--secondary' : 'btn--primary'}`}
@@ -546,7 +650,7 @@ export function UpdatesTab() {
                       aria-disabled={blockedOnly || undefined}
                       title={blockedOnly
                         ? BLOCKED_UPDATES_TOOLTIP
-                        : `Update ${previewItems.length} package(s) to latest`}
+                        : `Update ${previewItems.length} package(s)`}
                       aria-label="Update"
                       onClick={startBatch}
                     >
@@ -554,7 +658,50 @@ export function UpdatesTab() {
                     </button>
                   )}
                 >
-                  {selection.type === 'family' && (
+                  {selection.type === 'family' && splitGroups.length > 0 && (
+                    // No single version works for every member (#107) — the
+                    // family falls apart into the groups that can each share
+                    // one, the same way #82 already does for a plain version
+                    // disagreement. One row per group, each free to move on
+                    // its own; Apply above sends every group's own target at
+                    // once rather than needing one click per row.
+                    <div className="version-apply-split">
+                      {splitGroups.map((g) => {
+                        const key = splitKey(g);
+                        const versions = splitVersionsByKey[key] ?? [];
+                        const blocked = versions.length === 0 && !!splitGroupBlockedByKey[key];
+                        return (
+                          <div key={key} className="version-apply-split__row">
+                            <span className="project-row__tfm" title={`Members here are referenced only from ${g.frameworks.join(', ') || 'no known framework'}`}>
+                              {g.frameworks.join(', ') || '—'}
+                            </span>
+                            {blocked ? (
+                              // Empty forever, not just until an answer
+                              // arrives (#107): one of this group's own
+                              // members has nothing compatible at all, which
+                              // is why the family split here in the first
+                              // place — said plainly instead of a disabled
+                              // "…" box that never explains why it stays one.
+                              <span
+                                className="version-apply-split__blocked"
+                                title={`No version installs for ${g.frameworks.join(', ') || 'this group'} — at least one member here has never released anything compatible`}
+                              >No version installs here</span>
+                            ) : (
+                              <VersionSelect
+                                versions={versions}
+                                selected={splitTargets[key] ?? ''}
+                                label={`Target version for ${g.frameworks.join(', ')}`}
+                                onChange={(v) => setSplitTargets((cur) => ({ ...cur, [key]: v }))}
+                                versionFlags={familyVersionFlags}
+                                projectTfms={g.frameworks}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {selection.type === 'family' && splitGroups.length === 0 && (
                     // Joined to the button that applies it, the same pair the
                     // package rows use (#82). All and Other have no version to
                     // pick, so their button stays in the header above.
@@ -607,10 +754,14 @@ export function UpdatesTab() {
                     <div className="pkg-section__list">
                       {listRows.map((row) => (
                         <PkgListRow
-                          // One id can be here once per target framework (#82),
-                          // so the id alone is not a key — two rows sharing one
-                          // would have React reuse the wrong element.
-                          key={row.framework ? `${row.packageId}::${row.framework}` : row.packageId}
+                          // One id can be here more than once — per target
+                          // framework (#82), or per project ceiling when the
+                          // same id spans projects whose own frameworks
+                          // disagree (#107) — so the id alone is not a key;
+                          // two rows sharing one would have React reuse the
+                          // wrong element. `toVersion` tells those apart too:
+                          // it is exactly what differs between them.
+                          key={`${row.packageId}::${row.framework ?? ''}::${row.toVersion}`}
                           name={row.packageId}
                           nameTitle={row.framework
                             ? `${row.packageId} · ${row.framework}`
@@ -708,8 +859,10 @@ function BatchJobList({ job }: { job: BatchUpdateJob }) {
           return (
             <PkgListRow
               // Same reason as the preview list: a framework-pinned package
-              // appears once per TFM, and two rows cannot share a key (#82).
-              key={item.framework ? `${item.packageId}::${item.framework}` : item.packageId}
+              // appears once per TFM (#82), or once per project ceiling when
+              // the same id spans projects whose frameworks disagree (#107),
+              // and two rows cannot share a key.
+              key={`${item.packageId}::${item.framework ?? ''}::${item.toVersion}`}
               className={stale ? undefined : rowTone(item)}
               name={item.packageId}
               nameTitle={item.error ?? [

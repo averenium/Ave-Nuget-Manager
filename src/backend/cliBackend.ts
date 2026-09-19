@@ -19,6 +19,7 @@ import { parseDotnetVulnerableJson } from '../vulnerabilities';
 import { delayInstallRetry, INSTALL_RETRY_EXTRA_ATTEMPTS } from '../cliRetry';
 import { searchedMetadataToPackageMetadata } from '../searchMetadataMapping';
 import { classifyConfigSources } from '../localPackageSources';
+import { isPrerelease, versionsEqual } from '../semver';
 
 // ─── dotnet JSON output shapes ────────────────────────────────────────────────
 
@@ -385,9 +386,17 @@ export class CliBackend implements INuGetBackend {
 
     // Pick the entry matching the requested version; if none was requested,
     // pick the newest — never "whichever happens to come first in dotnet's
-    // own JSON output", which for --exact-match is oldest-first.
+    // own JSON output", which for --exact-match is oldest-first. The search
+    // itself always includes prereleases regardless of the caller's own
+    // setting (so a version asked for by name, installed or already on
+    // screen, is always reachable even if it is itself a prerelease) — but
+    // with no name given, the newest *stable* entry is the honest default;
+    // only a package with no stable release at all falls through to the
+    // newest entry overall.
     const sorted = [...result.entries].sort((a, b) => compareSemVerDesc(a.version, b.version));
-    const entry = (version ? sorted.find((e) => e.version === version) : undefined) ?? sorted[0];
+    const entry = version
+      ? sorted.find((e) => versionsEqual(e.version, version)) ?? sorted[0]
+      : sorted.find((e) => !isPrerelease(e.version)) ?? sorted[0];
 
     return searchedMetadataToPackageMetadata(packageId, entry.version, entry);
   }

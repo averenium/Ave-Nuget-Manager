@@ -2740,6 +2740,401 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     }
   });
 
+  // The F# SDK declares `FSharp.Core` itself via `Microsoft.FSharp.NetSdk.props`
+  // (#124): the project states an override, if it states anything at all,
+  // with `Update=` rather than `Include=`, and `dotnet add`/`dotnet remove`
+  // refuse to edit an item that lives in that imported file.
+  describe('SDK-style project stating a reference via Update= (#124)', () => {
+    const FSHARP_PROJECT = '/p/App.fsproj';
+
+    it('updates the Update= item instead of calling dotnet add', async () => {
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+        path: FSHARP_PROJECT,
+        content: `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="9.0.303" />
+  </ItemGroup>
+</Project>`,
+      }]);
+      try {
+        const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.restoreProject.mockResolvedValue(makeCliResult());
+        backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+
+        simulateMessage({
+          type: 'INSTALL_PACKAGE',
+          projectPath: FSHARP_PROJECT,
+          packageId: 'FSharp.Core',
+          version: '10.1.401',
+        });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(backend.installPackage).not.toHaveBeenCalled();
+        expect(writeSpy).toHaveBeenCalledTimes(1);
+        expect(writeSpy.mock.calls[0][1]).toContain('<PackageReference Update="FSharp.Core" Version="10.1.401" />');
+        expect(backend.restoreProject).toHaveBeenCalledWith(FSHARP_PROJECT, undefined);
+        expect(posted.some((m) => m.type === 'OPERATION_SUCCESS')).toBe(true);
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+
+    it('writes a new Update= override when the project states nothing but dotnet list already resolved it', async () => {
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+        path: FSHARP_PROJECT,
+        content: '<Project Sdk="Microsoft.NET.Sdk"></Project>',
+      }]);
+      try {
+        const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.restoreProject.mockResolvedValue(makeCliResult());
+        backend.listAllForProject.mockResolvedValue({
+          installed: [makeInstalledPkg('FSharp.Core', FSHARP_PROJECT)],
+          implicit: [],
+        });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+        // Populates `_lastListed`, which is the only place this scenario's
+        // "already referenced" fact lives: the project file states neither
+        // `Include=` nor `Update=` for it.
+        simulateMessage({ type: 'WEBVIEW_READY' });
+        await new Promise((r) => setTimeout(r, 20));
+
+        simulateMessage({
+          type: 'INSTALL_PACKAGE',
+          projectPath: FSHARP_PROJECT,
+          packageId: 'FSharp.Core',
+          version: '10.1.401',
+        });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(backend.installPackage).not.toHaveBeenCalled();
+        expect(writeSpy).toHaveBeenCalledTimes(1);
+        expect(writeSpy.mock.calls[0][1]).toContain('<PackageReference Update="FSharp.Core" Version="10.1.401" />');
+        expect(backend.restoreProject).toHaveBeenCalledWith(FSHARP_PROJECT, undefined);
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+
+    it('still goes to dotnet add for a fresh install of a package the project does not have', async () => {
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+        path: FSHARP_PROJECT,
+        content: '<Project Sdk="Microsoft.NET.Sdk"></Project>',
+      }]);
+      try {
+        const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.installPackage.mockResolvedValue(makeCliResult());
+        backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+        simulateMessage({ type: 'WEBVIEW_READY' });
+        await new Promise((r) => setTimeout(r, 20));
+
+        simulateMessage({
+          type: 'INSTALL_PACKAGE',
+          projectPath: FSHARP_PROJECT,
+          packageId: 'Newtonsoft.Json',
+          version: '13.0.3',
+        });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(writeSpy).not.toHaveBeenCalled();
+        expect(backend.installPackage).toHaveBeenCalledWith(
+          FSHARP_PROJECT, 'Newtonsoft.Json', '13.0.3', undefined,
+        );
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+
+    it('leaves an Include= project on dotnet add', async () => {
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+        path: FSHARP_PROJECT,
+        content: `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+  </ItemGroup>
+</Project>`,
+      }]);
+      try {
+        const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.installPackage.mockResolvedValue(makeCliResult());
+        backend.listAllForProject.mockResolvedValue({
+          installed: [makeInstalledPkg('Newtonsoft.Json', FSHARP_PROJECT)],
+          implicit: [],
+        });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+        simulateMessage({ type: 'WEBVIEW_READY' });
+        await new Promise((r) => setTimeout(r, 20));
+
+        simulateMessage({
+          type: 'INSTALL_PACKAGE',
+          projectPath: FSHARP_PROJECT,
+          packageId: 'Newtonsoft.Json',
+          version: '13.0.3',
+        });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(writeSpy).not.toHaveBeenCalled();
+        expect(backend.installPackage).toHaveBeenCalledWith(
+          FSHARP_PROJECT, 'Newtonsoft.Json', '13.0.3', undefined,
+        );
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+
+    it('leaves a framework-scoped write on the CLI instead of writing Update= unconditionally', async () => {
+      // The Update= write has no Condition of its own — firing it here would
+      // land the version on every framework of this multi-target project at
+      // once, exactly what naming one `framework` is supposed to prevent
+      // (#82). The combination is not in #124's own routing table, so it
+      // stays on the CLI rather than risk a framework nobody asked to touch.
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+        path: FSHARP_PROJECT,
+        content: `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFrameworks>net9.0;net10.0</TargetFrameworks></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="9.0.303" />
+  </ItemGroup>
+</Project>`,
+      }]);
+      try {
+        const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.installPackage.mockResolvedValue(makeCliResult());
+        backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+
+        simulateMessage({
+          type: 'INSTALL_PACKAGE',
+          projectPath: FSHARP_PROJECT,
+          packageId: 'FSharp.Core',
+          version: '10.1.401',
+          framework: 'net9.0',
+        });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(writeSpy).not.toHaveBeenCalled();
+        expect(backend.installPackage).toHaveBeenCalledWith(
+          FSHARP_PROJECT, 'FSharp.Core', '10.1.401', undefined, 'net9.0',
+        );
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+
+    it('keeps central package management on dotnet add even with no local Include=', async () => {
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+        { path: FSHARP_PROJECT, content: '<Project Sdk="Microsoft.NET.Sdk"></Project>' },
+        { path: '/p/Directory.Packages.props', content: '<Project><ItemGroup></ItemGroup></Project>' },
+      ]);
+      try {
+        const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.installPackage.mockResolvedValue(makeCliResult());
+        backend.listAllForProject.mockResolvedValue({
+          installed: [makeInstalledPkg('FSharp.Core', FSHARP_PROJECT)],
+          implicit: [],
+        });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+        simulateMessage({ type: 'WEBVIEW_READY' });
+        await new Promise((r) => setTimeout(r, 20));
+
+        simulateMessage({
+          type: 'INSTALL_PACKAGE',
+          projectPath: FSHARP_PROJECT,
+          packageId: 'FSharp.Core',
+          version: '10.1.401',
+        });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(writeSpy).not.toHaveBeenCalled();
+        expect(backend.installPackage).toHaveBeenCalledWith(
+          FSHARP_PROJECT, 'FSharp.Core', '10.1.401', undefined,
+        );
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+
+    it('skips the write when the project already states the target version via Update=', async () => {
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+        path: FSHARP_PROJECT,
+        content: `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="10.1.401" />
+  </ItemGroup>
+</Project>`,
+      }]);
+      try {
+        const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+
+        simulateMessage({
+          type: 'INSTALL_PACKAGE',
+          projectPath: FSHARP_PROJECT,
+          packageId: 'FSharp.Core',
+          version: '10.1.401',
+        });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(writeSpy).not.toHaveBeenCalled();
+        expect(backend.installPackage).not.toHaveBeenCalled();
+        expect(backend.restoreProject).not.toHaveBeenCalled();
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+
+    it('neither skips nor corrupts a reference already split into per-framework Update= groups', async () => {
+      // `isFrameworkScopedReference`/`frameworksToUpdate` only read `Include=`
+      // conditions, so this file looks unconditional to them — net9.0 already
+      // has the target version, net10.0 does not. The naive `previousVersion`
+      // read (first Update= in the file) would otherwise report "already at
+      // this version" and skip net10.0 silently; the new XML write, if it
+      // fired here, would keep one conditional group as the "real" one and
+      // delete the other, dropping its pin entirely.
+      const SPLIT_UPDATE = `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFrameworks>net9.0;net10.0</TargetFrameworks></PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Update="FSharp.Core" Version="10.1.401" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Update="FSharp.Core" Version="9.0.303" />
+  </ItemGroup>
+</Project>`;
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+        path: FSHARP_PROJECT,
+        content: SPLIT_UPDATE,
+      }]);
+      try {
+        const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.installPackage.mockResolvedValue(makeCliResult());
+        backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+
+        simulateMessage({
+          type: 'INSTALL_PACKAGE',
+          projectPath: FSHARP_PROJECT,
+          packageId: 'FSharp.Core',
+          version: '10.1.401',
+        });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(writeSpy).not.toHaveBeenCalled();
+        expect(backend.installPackage).toHaveBeenCalledWith(
+          FSHARP_PROJECT, 'FSharp.Core', '10.1.401', undefined,
+        );
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+
+    it('deletes the Update= override on remove and explains what applies afterwards', async () => {
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+        path: FSHARP_PROJECT,
+        content: `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="10.1.401" />
+  </ItemGroup>
+</Project>`,
+      }]);
+      try {
+        const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.restoreProject.mockResolvedValue(makeCliResult());
+        backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+
+        simulateMessage({ type: 'REMOVE_PACKAGE', projectPath: FSHARP_PROJECT, packageId: 'FSharp.Core' });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(backend.removePackage).not.toHaveBeenCalled();
+        expect(writeSpy).toHaveBeenCalledTimes(1);
+        expect(writeSpy.mock.calls[0][1]).not.toContain('FSharp.Core');
+        expect(backend.restoreProject).toHaveBeenCalledWith(FSHARP_PROJECT);
+        const success = posted.find((m) => m.type === 'OPERATION_SUCCESS') as any;
+        expect(success?.operation).toBe('remove');
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+
+    it('refuses to remove a reference the project does not state locally, before calling the CLI', async () => {
+      const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
+      const snapSpy = jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([{
+        path: FSHARP_PROJECT,
+        content: '<Project Sdk="Microsoft.NET.Sdk"></Project>',
+      }]);
+      try {
+        const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+        const backend = makeBackend();
+        backend.listAllForProject.mockResolvedValue({
+          installed: [makeInstalledPkg('FSharp.Core', FSHARP_PROJECT)],
+          implicit: [],
+        });
+
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+        broker.attach();
+
+        simulateMessage({ type: 'REMOVE_PACKAGE', projectPath: FSHARP_PROJECT, packageId: 'FSharp.Core' });
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(backend.removePackage).not.toHaveBeenCalled();
+        expect(writeSpy).not.toHaveBeenCalled();
+        const err = posted.find((m) => m.type === 'OPERATION_ERROR') as any;
+        expect(err?.failures[0].stderr).toContain('FSharp.Core');
+        expect(err?.failures[0].stderr.toLowerCase()).toContain('imported file');
+      } finally {
+        writeSpy.mockRestore();
+        snapSpy.mockRestore();
+      }
+    });
+  });
+
   it('skips packages.config projects without writing', async () => {
     const writeSpy = jest.spyOn(legacyPr, 'writeProjectXml').mockResolvedValue(undefined);
     const cfgSpy = jest.spyOn(projectStyle, 'packagesConfigExists').mockResolvedValue(true);

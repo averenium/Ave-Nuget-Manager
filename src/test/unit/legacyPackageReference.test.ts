@@ -4,6 +4,7 @@ import {
 } from '../../projectPackageStyle';
 import {
   countPackageReferences,
+  findPackageReferenceSpans,
   removePackageReferences,
   upsertPackageReference,
 } from '../../legacyPackageReference';
@@ -181,5 +182,85 @@ describe('removePackageReferences', () => {
     expect(next).toContain('<!-- was <PackageReference Include="Foo" Version="1.0.0" /> -->');
     expect(countPackageReferences(next, 'Foo')).toBe(0);
     expect(countPackageReferences(next, 'Bar')).toBe(1);
+  });
+
+  it('deletes an Update= line and leaves the rest of the ItemGroup intact (#124)', () => {
+    const xml = `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="10.1.401" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+  </ItemGroup>
+</Project>`;
+    const next = removePackageReferences(xml, 'FSharp.Core');
+    expect(next).not.toContain('FSharp.Core');
+    expect(next).toContain('<PackageReference Include="Newtonsoft.Json" Version="13.0.1" />');
+  });
+});
+
+// The `Update=` cases from #124: the F# SDK declares `FSharp.Core` itself via
+// `Microsoft.FSharp.NetSdk.props`, so a project overriding its version states
+// only `Update=`, never `Include=` — and `dotnet add`/`dotnet remove` refuse
+// to edit an item that lives in that imported file, which is why these
+// readers and writers have to understand `Update=` directly.
+describe('Update= references (#124)', () => {
+  const FSHARP_OVERRIDE = `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="9.0.303" />
+  </ItemGroup>
+</Project>`;
+
+  it('findPackageReferenceSpans finds a reference declared with Update=', () => {
+    const spans = findPackageReferenceSpans(FSHARP_OVERRIDE, 'FSharp.Core', { attribute: 'Update' });
+    expect(spans).toHaveLength(1);
+    expect(spans[0].text).toBe('<PackageReference Update="FSharp.Core" Version="9.0.303" />');
+  });
+
+  it('findPackageReferenceSpans does not treat a commented-out Update= as a reference (#85)', () => {
+    const xml = `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- <PackageReference Update="FSharp.Core" Version="9.0.303" /> -->
+  </ItemGroup>
+</Project>`;
+    expect(findPackageReferenceSpans(xml, 'FSharp.Core', { attribute: 'Update' })).toHaveLength(0);
+    expect(upsertPackageReference(xml, 'FSharp.Core', '10.1.401', { attribute: 'Update' }))
+      .toContain('<!-- <PackageReference Update="FSharp.Core" Version="9.0.303" /> -->');
+  });
+
+  it('upsertPackageReference sets the version without changing the attribute', () => {
+    const next = upsertPackageReference(FSHARP_OVERRIDE, 'FSharp.Core', '10.1.401');
+    expect(next).toContain('<PackageReference Update="FSharp.Core" Version="10.1.401" />');
+  });
+
+  it('upsertPackageReference never turns an Update= item into an Include= one (measured NU1504)', () => {
+    const next = upsertPackageReference(FSHARP_OVERRIDE, 'FSharp.Core', '10.1.401');
+    expect(next).not.toContain('Include="FSharp.Core"');
+    expect(findPackageReferenceSpans(next, 'FSharp.Core', { attribute: 'Include' })).toHaveLength(0);
+    expect(findPackageReferenceSpans(next, 'FSharp.Core', { attribute: 'Update' })).toHaveLength(1);
+  });
+
+  it('upsertPackageReference keeps the Include= item and drops a stray Update=, whichever comes first in the file', () => {
+    // A file where the override line happens to be written before the real
+    // declaration — position alone must not decide which one survives, or
+    // the real reference is deleted and the file is left in exactly the
+    // silently-inert state #124 warns about.
+    const xml = `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="9.0.303" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.400" />
+  </ItemGroup>
+</Project>`;
+    const next = upsertPackageReference(xml, 'FSharp.Core', '10.1.401');
+    expect(next).toContain('<PackageReference Include="FSharp.Core" Version="10.1.401" />');
+    expect(next).not.toContain('Update="FSharp.Core"');
+    expect(countPackageReferences(next, 'FSharp.Core')).toBe(1);
+  });
+
+  it('upsertPackageReference inserts an Update= item when asked to and the project states none', () => {
+    const xml = '<Project Sdk="Microsoft.NET.Sdk"></Project>';
+    const next = upsertPackageReference(xml, 'FSharp.Core', '10.1.401', { attribute: 'Update' });
+    expect(next).toContain('<PackageReference Update="FSharp.Core" Version="10.1.401" />');
+    expect(next).not.toContain('Include="FSharp.Core"');
   });
 });

@@ -78,9 +78,17 @@ Snapshot робиться **до** будь-якого add, щоб спільн�
 
 | Стиль | Як міняємо версію |
 |---|---|
-| SDK (`<Project Sdk=…>`, зокрема SDK `net48`) | як раніше: snapshot → `dotnet add` → rollback/keep |
+| SDK (`<Project Sdk=…>`, зокрема SDK `net48`), посилання через `Include=` | snapshot → `dotnet add` → rollback/keep |
+| SDK, посилання лише через `Update=` (SDK сам додає `Include=` з імпортованого файлу — так робить F# SDK для `FSharp.Core`) | snapshot → правка `Update=` у XML на місці → `dotnet restore` |
+| SDK, посилання не заявлене в проєкті взагалі, але `dotnet list` уже його резолвить (той самий випадок implicit-референсу без жодного локального рядка) | snapshot → вставка нового `<PackageReference Update=… />` → `dotnet restore` |
+| SDK, пакета взагалі немає (свіжий install) | як раніше: `dotnet add` |
 | Legacy + PackageReference | snapshot → один `PackageReference` у XML (зайві вузли прибираються) → `dotnet restore` цього проєкту |
 | `packages.config` | skip, якщо в csproj **немає** PackageReference. Якщо вузли вже є (неповна міграція) — XML-шлях. У Packages — банер; у Groups — не error |
+| Central Package Management (є `Directory.Packages.props`) | завжди `dotnet add`/`dotnet remove`, навіть коли `Include=` сидить в імпортованому файлі — `Version` на `PackageReference` під CPM це NU1008 |
+
+`dotnet add`/`dotnet remove` відмовляються редагувати `PackageReference`, що фізично лежить в імпортованому файлі («Cannot edit items in imported files») — звідси три нові рядки вище (#124). Видалення дзеркалить це: `Update=`-оверрайд просто видаляється рядком і йде `restore`; посилання, якого проєкт локально взагалі не заявляє, extension відмовляється видаляти ще до виклику CLI (`OPERATION_ERROR` з поясненням) — CLI б однаково відмовив, але вже після завантаження пакета.
+
+**Межа: `Update=` по framework не пишемо.** Другий і третій рядки таблиці не спрацьовують, коли викликач назвав конкретний `framework` (#82), і не спрацьовують, коли сам файл уже розкладає `Update=` по кількох умовних `ItemGroup` (по одному на TFM) — обидва випадки лишаються на CLI, який чесно відмовить, замість мовчки писати одну версію на всі фреймворки або губити чужі умовні групи через `upsertPackageReference`. `isFrameworkScopedReference`/`frameworksToUpdate` (`frameworkConditions.ts`) досі бачать лише `Include=`, тож `sameVersion`-гард для такого файлу теж не довіряє наївному читанню першого `Update=` — інакше друга умовна група могла б мовчки лишитись на старій версії. Писати умовний `Update=` по TFM — окрема, ще не зроблена робота.
 
 Перший update також зліплює вже намножені дублікати. Rollback як і раніше відновлює знімок — зокрема після timeout `dotnet restore` (файл уже записаний до restore).
 

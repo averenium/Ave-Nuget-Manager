@@ -28,6 +28,7 @@
 - **Package details**: reads `net8.0`/`net9.0`/`net10.0` correctly on feeds (Nexus-hosted, measured) that mangle them into `.NETFramework` versions (#123)
 - **Package details**: a package nothing has installed yet no longer defaults to a prerelease version just because it is numerically newest (#128)
 - The corner scope control now opens the chooser from any tab, not only **Packages** (#129)
+- Installing or removing a package an SDK (or `Directory.Build.props`) declares for the project, such as F#'s implicit `FSharp.Core`, no longer fails after `dotnet add`/`dotnet remove` refuse to edit the imported reference (#124)
 
 ## 0.8.0
 

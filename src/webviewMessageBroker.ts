@@ -111,6 +111,7 @@ import {
   snapshotProjectFiles,
   restoreFileSnapshots,
   readPackageVersionFromSnapshots,
+  hasCentralPackageManagement,
   type FileSnapshot,
 } from './projectFileSnapshot';
 import {
@@ -121,6 +122,7 @@ import {
 } from './projectPackageStyle';
 import {
   countPackageReferences,
+  findPackageReferenceSpans,
   removePackageReferences,
   upsertPackageReference,
   writeProjectXml,
@@ -2046,6 +2048,18 @@ export class WebviewMessageBroker {
     };
   }
 
+  /**
+   * Whether the last `dotnet list` for this project resolved `packageId` at
+   * all — the only way to tell a fresh install from an update to a reference
+   * an import declares, when the project file itself states neither
+   * `Include=` nor `Update=` for it (#124).
+   */
+  private _isPackageInstalledInProject(projectPath: string, packageId: string): boolean {
+    return (this._lastListed?.installed ?? []).some(
+      (p) => packageIdsEqual(p.id, packageId) && pathsEqual(p.projectPath, projectPath),
+    );
+  }
+
   private async _addOrUpdatePackage(
     projectPath: string,
     snapshots: FileSnapshot[],
@@ -2081,11 +2095,24 @@ export class WebviewMessageBroker {
     // the file — so a write another framework needed was skipped, the operation
     // ended having done nothing, and the progress strip waited on a refresh
     // that never came (#82).
+    //
+    // `isFrameworkScopedReference`/`frameworksToUpdate` only read `Include=`
+    // conditions, so a project that splits an `Update=` override into one
+    // conditional group per framework looks unconditional to them — the same
+    // hazard the comment above describes, just for a shape those two cannot
+    // see at all (#124). `updateSpanCount` catches it directly: more than one
+    // `Update=` line for this id means the naive single-version comparison
+    // cannot be trusted either, so this never silently reports "already at
+    // this version" for it — better an attempted write that the CLI then
+    // explains than one skipped without a trace.
+    const updateSpanCount = findPackageReferenceSpans(xml, packageId, { attribute: 'Update' }).length;
     const sameVersion = framework
       ? versionForFramework(xml, packageId, framework) === version
       : isFrameworkScopedReference(xml, packageId)
         ? frameworksToUpdate(xml, packageId, version, { acrossLines }).length === 0
-        : previousVersion !== null && compareSemVer(previousVersion, version) === 0;
+        : updateSpanCount > 1
+          ? false
+          : previousVersion !== null && compareSemVer(previousVersion, version) === 0;
     const duplicateLegacy = style === 'legacy-packageref'
       && countPackageReferences(xml, packageId) > 1;
     if (sameVersion && !duplicateLegacy) {
@@ -2116,6 +2143,69 @@ export class WebviewMessageBroker {
         result: await this.backend.restoreProject(projectPath, signal),
         mutated: true,
       };
+    }
+
+    // An SDK-style project can still declare the reference itself, with
+    // `Update=` rather than `Include=` — the F# SDK's own
+    // `Microsoft.FSharp.NetSdk.props` does this for `FSharp.Core`, and so
+    // does a `PackageReference Include=` sitting in `Directory.Build.props`
+    // with a project-local `Update=` meant to override it — or not declare
+    // it at all, when nothing local overrides the SDK's implicit reference
+    // yet. `dotnet add`/`dotnet remove` refuse to edit an item that lives in
+    // an imported file, so this has to be a direct XML write instead (#124).
+    // Central package management keeps its own path regardless: a `Version`
+    // on a `PackageReference` is an error under CPM (NU1008), and the CLI
+    // was measured to handle CPM correctly even when the `Include=` itself
+    // sits in an imported file.
+    //
+    // Left to the `framework` branch below when one was named, or when the
+    // file already splits the reference into more than one conditional
+    // `Update=` group on its own (`updateSpanCount > 1`, `!framework`
+    // notwithstanding): the write this does has no `Condition`, so it would
+    // land on every framework of a multi-target project at once — #82's
+    // whole reason for narrowing to one `--framework`, or one conditional
+    // group, in the first place. Worse than the unconditional case, here
+    // `upsertPackageReference` would keep one existing conditional group as
+    // the "real" one and delete the rest as duplicates, silently dropping
+    // whatever versions the other frameworks were pinned to. #124's own
+    // proposal never named this combination, so it stays on the CLI here
+    // rather than risk either; teaching this write path to produce a
+    // conditional `Update=` group is its own piece of work.
+    if (
+      !framework
+      && updateSpanCount <= 1
+      && isSdkStyleProject(xml)
+      && !hasCentralPackageManagement(snapshots)
+      && !findPackageReferenceSpans(xml, packageId, { attribute: 'Include' }).length
+    ) {
+      const hasUpdate = updateSpanCount > 0;
+      // Writing `Update=` for a package nothing declares is silently inert —
+      // it never matches an item to override — so this may only fire for a
+      // package the project already has, which is the difference between an
+      // update and a fresh install; the caller already knows which this is,
+      // via what `dotnet list` reported.
+      if (hasUpdate || this._isPackageInstalledInProject(projectPath, packageId)) {
+        const next = upsertPackageReference(xml, packageId, version, { attribute: 'Update' });
+        await writeProjectXml(projectPath, next);
+        this.logger.logCliOperation({
+          timestamp: new Date(),
+          kind: 'edit',
+          command: 'edit PackageReference',
+          args: [projectPath, packageId, version],
+          stdout: `Set ${packageId} to ${version} (SDK-declared reference, ${
+            hasUpdate ? 'overriding the existing Update=' : 'adding an Update= override'
+          })`,
+          stderr: '',
+          exitCode: 0,
+          timedOut: false,
+          durationMs: 0,
+        });
+        this.trace?.recordBroker('sdk-update-override', { project: path.basename(projectPath), packageId, version });
+        return {
+          result: await this.backend.restoreProject(projectPath, signal),
+          mutated: true,
+        };
+      }
     }
 
     if (framework) {
@@ -2166,6 +2256,41 @@ export class WebviewMessageBroker {
         command: 'edit PackageReference',
         args: [projectPath, packageId],
         stdout: `Removed ${packageId} (legacy csproj)`,
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 0,
+      });
+      return this.backend.restoreProject(projectPath);
+    }
+
+    // Same reasoning as the write side (#124): `dotnet remove` cannot touch a
+    // reference declared with `Update=` in an imported file either, and it
+    // fails identically for one declared with no local line at all — worse,
+    // only after downloading the package first. CPM stays on the CLI, which
+    // handles it correctly.
+    if (
+      isSdkStyleProject(xml)
+      && !hasCentralPackageManagement(snapshots)
+      && !findPackageReferenceSpans(xml, packageId, { attribute: 'Include' }).length
+    ) {
+      const hasUpdate = findPackageReferenceSpans(xml, packageId, { attribute: 'Update' }).length > 0;
+      if (!hasUpdate) {
+        return {
+          exitCode: 1,
+          stdout: '',
+          stderr: `${packageId} is not declared in ${path.basename(projectPath)} — it comes from `
+            + 'the SDK or an imported file, so there is no local reference here to remove.',
+          timedOut: false,
+        };
+      }
+      await writeProjectXml(projectPath, removePackageReferences(xml, packageId));
+      this.logger.logCliOperation({
+        timestamp: new Date(),
+        kind: 'edit',
+        command: 'edit PackageReference',
+        args: [projectPath, packageId],
+        stdout: `Removed the ${packageId} override; the version the import declares now applies.`,
         stderr: '',
         exitCode: 0,
         timedOut: false,

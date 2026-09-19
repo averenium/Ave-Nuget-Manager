@@ -6,6 +6,7 @@ import {
   restoreFileSnapshots,
   readPackageVersionFromXml,
   readPackageVersionFromSnapshots,
+  hasCentralPackageManagement,
 } from '../../projectFileSnapshot';
 
 describe('projectFileSnapshot', () => {
@@ -35,6 +36,23 @@ describe('projectFileSnapshot', () => {
     expect(readPackageVersionFromXml(xml, 'Pkg')).toBe('1.0.0');
   });
 
+  // The F# SDK declares `FSharp.Core` itself via `Microsoft.FSharp.NetSdk.props`,
+  // so a project overriding its version states only `Update=` (#124).
+  it('reads the version off an Update= item', () => {
+    const xml = `<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
+      <PackageReference Update="FSharp.Core" Version="9.0.303" />
+    </ItemGroup></Project>`;
+    expect(readPackageVersionFromXml(xml, 'FSharp.Core')).toBe('9.0.303');
+  });
+
+  it('still prefers the Include= item when a file has both, since that is the one dotnet add would edit', () => {
+    const xml = `<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
+      <PackageReference Include="FSharp.Core" Version="1" />
+      <PackageReference Update="FSharp.Core" Version="2" />
+    </ItemGroup></Project>`;
+    expect(readPackageVersionFromXml(xml, 'FSharp.Core')).toBe('1');
+  });
+
   it('snapshots csproj and restores previous content', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nuget-snap-'));
     const csproj = path.join(dir, 'App.csproj');
@@ -49,5 +67,18 @@ describe('projectFileSnapshot', () => {
 
     expect(await fs.readFile(csproj, 'utf8')).toBe(original);
     await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('hasCentralPackageManagement', () => {
+  it('is true once the nearest Directory.Packages.props was snapshotted', () => {
+    expect(hasCentralPackageManagement([
+      { path: 'C:\\repo\\App.csproj', content: '' },
+      { path: 'C:\\repo\\Directory.Packages.props', content: '' },
+    ])).toBe(true);
+  });
+
+  it('is false when only the project itself was snapshotted', () => {
+    expect(hasCentralPackageManagement([{ path: 'C:\\repo\\App.csproj', content: '' }])).toBe(false);
   });
 });

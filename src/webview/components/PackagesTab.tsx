@@ -6,10 +6,11 @@ import { ImplicitList } from './ImplicitList';
 import { AvailableList } from './AvailableList';
 import { PackageDetailPanel } from './PackageDetailPanel';
 import { SplitPane } from './SplitPane';
-import { ScopeChooser, type ScopePickTarget } from './ScopeChooser';
+import { ScopeChooserBody } from './ScopeChooserBody';
+import type { ScopePickTarget } from './ScopeChooser';
 import { measureTextWidth } from '../utils/measureText';
 import { matchesQuery, normalizeQuery } from '../utils/search';
-import { scopeLabel, scopeIdentityPath } from '../utils/scope';
+import { scopeLabel, scopeIdentityPath, scopeChooserRenderState } from '../utils/scope';
 import { PrereleaseToggle } from './PrereleaseToggle';
 import { ToolbarRestoreRefresh } from './ToolbarRestoreRefresh';
 import { ActivityStrip } from './ActivityStrip';
@@ -39,11 +40,8 @@ export function PackagesTab() {
   const { state, dispatch, send } = useNugetManager();
   const { searchQuery, selectedSources, prerelease, enrichProgress, installed, implicit, available } = state.packages;
   const { allSources } = state.sources;
-  const { scope, scopeChoices, scopeChooserOpen } = state;
-  // First-open (no scope at all yet) always shows the chooser; a scope
-  // already set only shows it while the corner control has it reopened (#113).
-  const chooserVisible = !!scopeChoices && (scope === null || scopeChooserOpen);
-  const chooserTight = chooserVisible && scope !== null;
+  const { scope, scopeChoices } = state;
+  const chooser = scopeChooserRenderState(scope, !!scopeChoices, state.scopeChooserOpen, 'packages');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -197,31 +195,16 @@ export function PackagesTab() {
         // committed look here would be one the chooser (or the list) then
         // has to visibly overwrite (#113).
         <div className="scope-chooser-loading" aria-live="polite">Opening workspace…</div>
-      ) : chooserVisible && scopeChoices ? (
-        chooserTight ? (
-          <div className="scope-chooser-overlay">
-            <div className="scope-chooser-overlay__backdrop" aria-hidden="true">
-              <InstalledList />
-              <ImplicitList />
-            </div>
-            <ScopeChooser
-              choices={scopeChoices}
-              currentPath={scopeIdentityPath(scope)}
-              currentLabel={scopeLabel(scope)}
-              tight
-              onPick={pickScope}
-              onClose={() => dispatch({ type: 'CLOSE_SCOPE_CHOOSER' })}
-            />
-          </div>
-        ) : (
-          <ScopeChooser
-            choices={scopeChoices}
-            currentPath={null}
-            currentLabel=""
-            tight={false}
-            onPick={pickScope}
-          />
-        )
+      ) : chooser.visible && scopeChoices ? (
+        <ScopeChooserBody
+          choices={scopeChoices}
+          currentPath={chooser.showCurrent ? scopeIdentityPath(scope) : null}
+          currentLabel={chooser.showCurrent ? scopeLabel(scope) : ''}
+          tight={chooser.tight}
+          showBackdrop={chooser.showBackdrop}
+          onPick={pickScope}
+          onClose={chooser.tight ? () => dispatch({ type: 'CLOSE_SCOPE_CHOOSER' }) : undefined}
+        />
       ) : (
         <SplitPane
           autoListWidthPx={autoListWidthPx}

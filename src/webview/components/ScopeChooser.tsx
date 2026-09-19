@@ -89,8 +89,11 @@ export function ScopeChooser({ choices, currentPath, currentLabel, tight, onPick
         </div>
         {tight && onClose && (
           <div className="scope-chooser__back">
+            {/* Wording for the no-current-scope case is provisional — the
+                folder is still ambiguous, so there is nothing named to
+                "keep" (#129, tracked in the issue for a settled label). */}
             <button type="button" className="scope-chooser__back-btn" onClick={onClose}>
-              ← Keep {currentLabel}
+              {currentLabel ? `← Keep ${currentLabel}` : '← Cancel'}
             </button>
             <span className="scope-chooser__back-kbd">Esc</span>
           </div>

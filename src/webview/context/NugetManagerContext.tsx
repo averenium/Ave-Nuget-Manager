@@ -436,7 +436,16 @@ function reduceAppState(state: AppState, action: Action): AppState {
       return { ...state, globalError: null };
 
     case 'CLOSE_SCOPE_CHOOSER':
-      return state.scope ? { ...state, scopeChooserOpen: false, scopeChoices: null } : state;
+      // Closes whatever the corner control opened, regardless of whether a
+      // scope already exists to go back to (#129) — an ambiguous folder is
+      // not an exception. With no scope pinned, the folder is still
+      // ambiguous, so the choices stay: the Packages tab's own ambient
+      // chooser needs them the moment this reopened one steps aside.
+      return {
+        ...state,
+        scopeChooserOpen: false,
+        scopeChoices: state.scope === null ? state.scopeChoices : null,
+      };
 
     case 'MSG':
       return applyExtensionMessage(state, action.msg);

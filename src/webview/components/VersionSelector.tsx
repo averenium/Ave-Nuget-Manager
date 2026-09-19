@@ -3,6 +3,7 @@ import { useNugetManager } from '../context/NugetManagerContext';
 import { searchableConfigFiles } from '../../searchConfigFiles';
 import type { VersionFlag } from '../utils/familyVersionFlags';
 import { compatibilityFor, hiddenVersions } from '../utils/versionCompatibility';
+import { versionsEqual } from '../../semver';
 
 /** Tooltip text for a version the feed flags — vulnerable and/or deprecated (#86); undefined when neither applies. */
 function versionWarningTitle(flags: VersionFlag | undefined): string | undefined {
@@ -126,10 +127,10 @@ export function VersionSelect({
         ref={ref}
         type="button"
         role="option"
-        aria-selected={v === selected}
+        aria-selected={versionsEqual(v, selected)}
         className={[
           'version-select__option',
-          v === selected ? 'version-select__option--selected' : '',
+          versionsEqual(v, selected) ? 'version-select__option--selected' : '',
           outside ? 'version-select__option--off-line' : '',
           firstOutside ? 'version-select__option--line-break' : '',
         ]

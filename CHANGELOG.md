@@ -27,6 +27,7 @@
 - **Packages**: a slower answer to an earlier search no longer replaces the results of a newer one still being typed (#121)
 - **Package details**: reads `net8.0`/`net9.0`/`net10.0` correctly on feeds (Nexus-hosted, measured) that mangle them into `.NETFramework` versions (#123)
 - **Package details**: a package nothing has installed yet no longer defaults to a prerelease version just because it is numerically newest (#128)
+- The corner scope control now opens the chooser from any tab, not only **Packages** (#129)
 
 ## 0.8.0
 

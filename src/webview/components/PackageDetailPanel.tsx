@@ -23,7 +23,7 @@ import { versionTone } from '../utils/versionTone';
 import { IconCheck, IconInstall, IconTrash } from '../utils/icons';
 import { buildPackageProblems } from '../utils/packageProblems';
 import { resolveVersionSpread } from '../../packageResolvedVersions';
-import { LicenseSideText } from './LicenseSideText';
+import { ProblemsBand } from './ProblemsBand';
 import { VersionChangesBand } from './VersionChangesBand';
 import { sortTargetFrameworksDesc } from '../../targetFrameworks';
 import { highestCompatibleVersion } from '../../frameworkCompatibility';
@@ -627,114 +627,13 @@ export function PackageDetailPanel() {
               </div>
             )}
 
-            {problems.length > 0 && (
-              <div className="problems-band">
-                <div className="detail-section__title">Problems</div>
-                <ul className="vuln-list">
-                  {problems.map((p, index) => {
-                    const via = p.kind === 'vulnerability' ? p.via : undefined;
-                    // The offer belongs to the feed advisory it corrects, not to
-                    // whatever else happens to render after it (#114) — a licence
-                    // row listed below the advisory must not make the offer read
-                    // as if it followed from that. It sits right after the last
-                    // feed-advisory row instead of after the whole list.
-                    const isLastFeedAdvisory = p.kind === 'feed-advisory'
-                      && !problems.slice(index + 1).some((later) => later.kind === 'feed-advisory');
-                    return (
-                    <React.Fragment key={p.key}>
-                    <li className={`vuln-item vuln-item--${p.tone}${via ? ' vuln-item--via' : ''}`}>
-                      <span className="vuln-item__sev">{p.label}</span>
-                      <span className="vuln-item__body">
-                        {via ? (
-                          <>
-                            <button
-                              type="button"
-                              className="vuln-item__via"
-                              onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: via })}
-                              title={`Open ${via}`}
-                            >
-                              via {via}
-                            </button>
-                            {' · '}
-                          </>
-                        ) : null}
-                        {p.kind === 'vulnerability' ? (
-                          <>
-                            {p.finding.url ? (
-                              <a href={p.finding.url} target="_blank" rel="noopener noreferrer">
-                                {p.finding.id ?? p.finding.title ?? p.finding.url}
-                              </a>
-                            ) : (
-                              p.finding.id ?? p.finding.title ?? 'Advisory'
-                            )}
-                            {p.finding.version ? ` · ${p.finding.version}` : ''}
-                            {p.finding.source ? ` · ${p.finding.source}` : ''}
-                          </>
-                        ) : p.kind === 'mapping' ? (
-                          <>
-                            No <code>packageSourceMapping</code> pattern matches <strong>{selectedPackageId}</strong> — restore
-                            will not be able to find it.
-                            {' '}Mapped sources: {p.mappedSourceNames.join(', ')}.
-                          </>
-                        ) : p.kind === 'deprecation' ? (
-                          p.message
-                        ) : p.kind === 'unlisted' ? (
-                          <>
-                            <strong>{p.version}</strong> is no longer listed on its feed — it still restores from
-                            the cache, but a clean machine may not find it
-                          </>
-                        ) : p.kind === 'feed-advisory' ? (
-                          <>
-                            {p.url ? (
-                              <a href={p.url} target="_blank" rel="noopener noreferrer">
-                                {p.url.split('/').pop()}
-                              </a>
-                            ) : 'Advisory'}
-                            {' · '}the feed flags <strong>{p.version}</strong>
-                            {isInstalled ? ', the version selected here' : ''}
-                          </>
-                        ) : p.kind === 'licence' ? (
-                          <>
-                            <strong><LicenseSideText side={p.change.from} /></strong>
-                            {' → '}
-                            <strong><LicenseSideText side={p.change.to} /></strong>
-                            {p.change.unnamed
-                              ? ' — this version carries its licence as a file, which this extension cannot read. Open it before taking the update.'
-                              : ''}
-                          </>
-                        ) : (
-                          <>
-                            Updates are blocked for this package in this workspace. Right-click the row and choose{' '}
-                            <strong>Unblock updates</strong> to allow a version change.
-                          </>
-                        )}
-                      </span>
-                    </li>
-                    {/* Every entry is already in memory, so the nearest version
-                        the advisory does not cover is free to work out — and
-                        turns a warning into something the reader can act on in
-                        one click (#114). Kept right after the advisory it
-                        corrects, inside the same list, so a licence row printed
-                        below it can't make the offer read as if it followed from
-                        that instead. */}
-                    {isLastFeedAdvisory && nearestClean && (
-                      <li className="problems-band__offer">
-                        <span aria-hidden="true">↑</span>{' '}
-                        <strong>{nearestClean}</strong> is the nearest version this advisory does not cover
-                        {' '}
-                        <button
-                          type="button"
-                          className="problems-band__pick"
-                          onClick={() => setSelectedVersion(nearestClean)}
-                        >pick it</button>
-                      </li>
-                    )}
-                    </React.Fragment>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
+            <ProblemsBand
+              problems={problems}
+              selectedPackageId={selectedPackageId}
+              nearestClean={nearestClean}
+              onSelectVia={(packageId) => dispatch({ type: 'SELECT_PACKAGE', packageId })}
+              onPickVersion={setSelectedVersion}
+            />
           </div>
 
           <PackageAttributeColumn

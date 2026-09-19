@@ -1,4 +1,5 @@
 import { packageMatchesAnyMapping } from '../../packageSourceMapping';
+import { versionsEqual } from '../../semver';
 import type { PackageSourceMapping, VulnerabilityFinding, VulnerabilitySeverity } from '../../types';
 import type { LicenseChange } from '../../packageLicense';
 
@@ -30,6 +31,20 @@ export type ProblemDescriptor =
       tone: ProblemTone;
       label: string;
       change: LicenseChange;
+    }
+  | {
+      /**
+       * The selected version clears a direct, installed vulnerability (#122)
+       * — the one positive statement this band can make, and the most useful
+       * one when it applies: it is why the reader picked this version in the
+       * first place. Carries no tone/label: it is not a problem, so it never
+       * renders through the same `<li>` the others share.
+       */
+      kind: 'resolved';
+      key: 'resolved';
+      version: string;
+      /** How many direct findings it clears — for "vulnerability" vs "vulnerabilities". */
+      count: number;
     };
 
 function vulnerabilityProblems(
@@ -122,6 +137,26 @@ export function buildPackageProblems(opts: {
     }
   }
 
+  // The most useful sentence this band can produce (#122): the reader most
+  // likely picked this version to get away from an installed vulnerability,
+  // and nothing else here says whether it worked. Only a *direct* finding
+  // counts — a transitive one lives on a different package, and changing
+  // this one's version does nothing to it. Silent whenever a finding's own
+  // version is unknown (nothing to compare) or the feed still flags the
+  // picked version itself: that is a sharper warning of its own, not a
+  // resolution — checked against the feed's raw answer, before the
+  // already-reported ones above are filtered out, since a repeat is still a
+  // reason this version is not clear.
+  const directFindings = findings.filter((f) => !viaFindings.includes(f));
+  if (
+    selectedVersion
+    && directFindings.length > 0
+    && !directFindings.some((f) => f.version === undefined || versionsEqual(f.version, selectedVersion))
+    && !selectedVersionAdvisories?.length
+  ) {
+    problems.push({ kind: 'resolved', key: 'resolved', version: selectedVersion, count: directFindings.length });
+  }
+
   if (licenseChange) {
     // A licence the tool cannot name is the stronger case: the user has to open
     // the file to learn what they would be agreeing to.
@@ -150,4 +185,47 @@ export function buildPackageProblems(opts: {
   }
 
   return problems;
+}
+
+export type ProblemGroup = 'installed' | 'selected' | 'general';
+
+/**
+ * Which subject a problem is about (#122): the version actually on disk, the
+ * version the dropdown currently holds, or the package as a whole regardless
+ * of version. Rendering every kind the same way is what let an advisory
+ * about the installed version read as one about whatever the reader had
+ * since picked — the fix is a heading naming the subject, and this is the
+ * decision behind it, kept separate from the JSX so it stays testable.
+ *
+ * `licence`, `deprecation` and `resolved` go with `selected`: a licence
+ * problem is what *taking* the picked version would change, deprecation
+ * follows whatever version the Info section is currently showing (which
+ * tracks the selection), and `resolved` is a statement about the picked
+ * version by definition. `mapping` and `blocked` are package-wide facts with
+ * no version of their own, so neither heading fits them.
+ *
+ * Written as an exhaustive switch rather than a `default` bucket on purpose:
+ * a `default: return 'general'` would let a kind added to the union later
+ * compile untouched and land in the wrong group silently, which is the exact
+ * mistake this function exists to stop making. `never` below is what turns
+ * that into a build error instead.
+ */
+export function problemGroup(kind: ProblemDescriptor['kind']): ProblemGroup {
+  switch (kind) {
+    case 'vulnerability':
+    case 'unlisted':
+      return 'installed';
+    case 'feed-advisory':
+    case 'licence':
+    case 'deprecation':
+    case 'resolved':
+      return 'selected';
+    case 'mapping':
+    case 'blocked':
+      return 'general';
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
 }

@@ -930,6 +930,15 @@ select:focus,
   background: color-mix(in srgb, var(--color-error) 8%, transparent);
   display: flex; flex-direction: column; gap: var(--spacing-xs);
 }
+/* Subject of a group of Problems rows — installed, selected, or (title-less)
+   a package-wide fact with no version of its own (#122). One step down from
+   `.detail-section__title`: still muted, not shouting over the band's own
+   title above it. */
+.problems-band__group { display: flex; flex-direction: column; gap: 4px; }
+.problems-band__group-title {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--color-tab-inactive);
+}
 
 /* Fixed-basis attribute column: never grows sideways, gets taller instead —
    a long licence or link wraps/clips inside it rather than squeezing Problems. */

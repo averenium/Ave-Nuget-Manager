@@ -1,4 +1,4 @@
-import { buildPackageProblems } from '../../webview/utils/packageProblems';
+import { buildPackageProblems, problemGroup } from '../../webview/utils/packageProblems';
 import type { VulnerabilityFinding } from '../../types';
 
 function finding(over: Partial<VulnerabilityFinding> & Pick<VulnerabilityFinding, 'packageId'>): VulnerabilityFinding {
@@ -142,4 +142,100 @@ describe('what the feed says about the version being looked at', () => {
   it('says nothing when the feed flags the selected version with no advisory', () => {
     expect(buildPackageProblems({ ...NO_MAPPING, selectedVersion: '3.1.12' })).toEqual([]);
   });
+});
+
+describe('resolved by selection (#122)', () => {
+  // The scenario the issue opens with: Npgsql 8.0.0 is flagged installed,
+  // the reader picks a newer version the scan never saw — the most useful
+  // sentence the panel can produce is that this one clears it.
+  it('reports resolved when the selected version differs from every direct finding and the feed is silent about it', () => {
+    const problems = buildPackageProblems({
+      ...NO_MAPPING,
+      findings: [finding({ packageId: 'Pkg', version: '8.0.0' })],
+      selectedVersion: '9.0.2',
+    });
+    expect(problems.map((p) => p.kind)).toEqual(['vulnerability', 'resolved']);
+    expect(problems[1]).toMatchObject({ kind: 'resolved', version: '9.0.2', count: 1 });
+  });
+
+  it('counts every direct finding it clears, for the singular/plural wording', () => {
+    const problems = buildPackageProblems({
+      ...NO_MAPPING,
+      findings: [
+        finding({ packageId: 'Pkg', version: '8.0.0', id: 'GHSA-1' }),
+        finding({ packageId: 'Pkg', version: '8.0.0', id: 'GHSA-2' }),
+      ],
+      selectedVersion: '9.0.2',
+    });
+    expect(problems.at(-1)).toMatchObject({ kind: 'resolved', count: 2 });
+  });
+
+  it('does not report resolved when the selected version is the affected one, spelled differently', () => {
+    const problems = buildPackageProblems({
+      ...NO_MAPPING,
+      findings: [finding({ packageId: 'Pkg', version: '8.0' })],
+      selectedVersion: '8.0.0',
+    });
+    expect(problems.map((p) => p.kind)).toEqual(['vulnerability']);
+  });
+
+  it('does not report resolved when the feed also flags the selected version, even with an unrelated advisory', () => {
+    const problems = buildPackageProblems({
+      ...NO_MAPPING,
+      findings: [finding({ packageId: 'Pkg', version: '8.0.0' })],
+      selectedVersion: '9.0.2',
+      selectedVersionAdvisories: [{ url: 'https://example.com/other', severity: 'low' }],
+    });
+    expect(problems.map((p) => p.kind)).toEqual(['vulnerability', 'feed-advisory']);
+  });
+
+  it('does not report resolved for a transitive finding — a different package\'s version is what would need to change', () => {
+    const via = finding({ packageId: 'Newtonsoft.Json', version: '12.0.1' });
+    const problems = buildPackageProblems({
+      ...NO_MAPPING, findings: [via], viaFindings: [via], selectedVersion: '13.0.3',
+    });
+    expect(problems.map((p) => p.kind)).toEqual(['vulnerability']);
+  });
+
+  it('does not report resolved when a finding carries no version to compare against', () => {
+    const problems = buildPackageProblems({
+      ...NO_MAPPING,
+      findings: [finding({ packageId: 'Pkg' })],
+      selectedVersion: '9.0.2',
+    });
+    expect(problems.map((p) => p.kind)).toEqual(['vulnerability']);
+  });
+
+  it('reports nothing to resolve when there is no installed finding at all', () => {
+    expect(buildPackageProblems({ ...NO_MAPPING, selectedVersion: '9.0.2' })).toEqual([]);
+  });
+});
+
+describe('problemGroup (#122)', () => {
+  it('puts scan findings and a withdrawn version under "installed" — neither moves when the selector does', () => {
+    expect(problemGroup('vulnerability')).toBe('installed');
+    expect(problemGroup('unlisted')).toBe('installed');
+  });
+
+  it('puts a feed advisory, a licence change and deprecation under "selected" — all three follow the dropdown', () => {
+    expect(problemGroup('feed-advisory')).toBe('selected');
+    expect(problemGroup('licence')).toBe('selected');
+    expect(problemGroup('deprecation')).toBe('selected');
+  });
+
+  it('puts the resolved-by-selection statement under "selected" — it is a fact about the picked version', () => {
+    expect(problemGroup('resolved')).toBe('selected');
+  });
+
+  it('leaves package-wide facts with no heading — neither is about a version at all', () => {
+    expect(problemGroup('mapping')).toBe('general');
+    expect(problemGroup('blocked')).toBe('general');
+  });
+
+  // No "covers every kind" loop here on purpose: a hardcoded kind list next
+  // to a `default: return 'general'` bucket would pass even for a kind added
+  // to the union and never wired into this function — exactly the mistake
+  // this file exists to catch. `problemGroup`'s own switch is exhaustive
+  // (`never` at its `default`), so that case is a compile error instead of a
+  // green test; the four `it`s above are what pin each kind's actual group.
 });

@@ -35,6 +35,7 @@
  * the connection itself is chosen explicitly.
  */
 
+import * as crypto from 'crypto';
 import * as http from 'http';
 import * as https from 'https';
 import * as net from 'net';
@@ -44,6 +45,7 @@ import type { IncomingMessage } from 'http';
 import { tunnelledTlsSocket } from './nugetProxyConnect';
 import type { ResolvedRoute } from './nugetProxy';
 import type { HttpFetcher } from './nugetSourceCapabilities';
+import type { TunnelPool } from './nugetProxyPool';
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 /** Registration documents reach hundreds of kilobytes; nothing legitimate is near this. */
@@ -87,6 +89,12 @@ export interface JsonFetchOptions {
    * trace asks for a large one, because that is what a trace is for.
    */
   previewBytes?: number;
+  /**
+   * Where a tunnelled connection is offered back once this request is done
+   * with it (#116). Omitted means every request opens its own tunnel, the
+   * way this always worked before pooling existed.
+   */
+  pool?: TunnelPool;
 }
 
 /** Enough to recognise an error page or a document of the wrong shape. */
@@ -119,12 +127,14 @@ export function isFetchableUrl(url: string): boolean {
 export function createJsonFetcher(
   previewBytes: () => number,
   route?: (url: string) => ResolvedRoute,
+  pool?: TunnelPool,
 ): HttpFetcher {
   return (url, signal, headers, intent) =>
     fetchJsonStatus(url, signal, headers, {
       previewBytes: previewBytes(),
       route,
       wantText: intent?.wantText,
+      pool,
     });
 }
 
@@ -150,21 +160,37 @@ export async function fetchJsonStatus(
   }
 
   try {
-    const response = await send(url, headers, timeout, options.route, 0);
-    const status = response.message.statusCode ?? 0;
+    const delivered = await send(url, headers, timeout, options.route, 0, options.pool);
+    const { message, finish } = delivered;
+    // `signal: timeout.signal` on the request only reaches as far as the
+    // request/response exchange itself; once headers have already arrived,
+    // Node's own abort-on-signal handling was measured to leave a
+    // keep-alive-flagged message's body stream with no further event of its
+    // own to end on, and no agent here to ever notice and close it. The body
+    // is this function's own read, so ending it explicitly here does not
+    // depend on that.
+    if (timeout.signal.aborted) message.destroy();
+    else timeout.signal.addEventListener('abort', () => message.destroy(), { once: true });
+    const status = message.statusCode ?? 0;
     const header = (name: string): string | undefined => {
-      const value = response.message.headers[name];
+      const value = message.headers[name];
       return Array.isArray(value) ? value[0] : value;
     };
+    // A server that asks for the connection to close is the one fact that
+    // overrides everything else below about whether this socket is worth
+    // offering back (#116).
+    const reusable = !(header('connection') ?? '').toLowerCase().includes('close');
 
     // "Nothing changed" is an answer, and the caller holds the document it
     // refers to; it carries no body by definition.
     if (status === 304) {
-      response.message.resume();
+      message.resume();
+      finish?.(reusable && await drained(message));
       return { status: 304 };
     }
     if (status >= 400) {
-      response.message.resume();
+      message.resume();
+      finish?.(reusable && await drained(message));
       return { status, retryAfter: header('retry-after') };
     }
 
@@ -172,12 +198,19 @@ export async function fetchJsonStatus(
     // streaming count below is what actually enforces it.
     const length = Number(header('content-length') ?? '0');
     if (Number.isFinite(length) && length > MAX_BODY_BYTES) {
-      response.message.destroy();
+      message.destroy();
+      finish?.(false);
       return { status };
     }
 
-    const read = await readCapped(response.message);
-    if (!read) return { status };
+    const read = await readCapped(message);
+    if (!read) {
+      finish?.(false);
+      return { status };
+    }
+    // `readCapped` only returns once the stream has ended, so the body is
+    // already fully drained here — nothing left to wait for.
+    finish?.(reusable);
 
     const preview = read.text.slice(0, options.previewBytes ?? DEFAULT_PREVIEW_BYTES);
     const validators = { etag: header('etag'), lastModified: header('last-modified') };
@@ -208,6 +241,31 @@ export async function fetchJsonStatus(
 
 interface Delivered {
   message: IncomingMessage;
+  /**
+   * Present only for a tunnelled connection with a pool to return to
+   * (#116). Decides the socket's fate once the caller is done reading this
+   * response: `true` offers it back, `false` destroys it.
+   */
+  finish?: (reuse: boolean) => void;
+}
+
+/** Resolves once a response body has been fully consumed, or `false` if it closed or errored first. */
+function drained(message: IncomingMessage): Promise<boolean> {
+  if (message.complete) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const done = (ok: boolean) => {
+      message.removeListener('end', onEnd);
+      message.removeListener('close', onClose);
+      message.removeListener('error', onError);
+      resolve(ok);
+    };
+    const onEnd = () => done(true);
+    const onClose = () => done(false);
+    const onError = () => done(false);
+    message.once('end', onEnd);
+    message.once('close', onClose);
+    message.once('error', onError);
+  });
 }
 
 /** One request, following redirects itself because these modules do not. */
@@ -217,14 +275,20 @@ async function send(
   timeout: AbortController,
   route: ((url: string) => ResolvedRoute) | undefined,
   hop: number,
+  pool?: TunnelPool,
 ): Promise<Delivered> {
   const target = new URL(url);
-  const message = await once(target, headers, timeout, route);
+  const delivered = await once(target, headers, timeout, route, pool);
+  const { message, finish } = delivered;
   const status = message.statusCode ?? 0;
   const location = message.headers.location;
 
   if (status >= 300 && status < 400 && location) {
+    // This hop's own connection is not carried forward — the caller never
+    // sees this response, so its fate is decided here rather than deferred.
+    const closeHeader = (message.headers.connection ?? '').toString().toLowerCase();
     message.resume();
+    finish?.(!closeHeader.includes('close') && await drained(message));
     if (hop >= MAX_REDIRECTS) throw new Error('Too many redirects');
     const next = new URL(location, target);
     if (!isFetchableUrl(next.toString())) throw new Error('Redirect to an unsupported address');
@@ -232,9 +296,9 @@ async function send(
     // redirects elsewhere — to a CDN, most often — gets an anonymous request;
     // carrying the header across would hand it to a host nobody authorised.
     const carried = next.origin === target.origin ? headers : withoutAuthorization(headers);
-    return send(next.toString(), carried, timeout, route, hop + 1);
+    return send(next.toString(), carried, timeout, route, hop + 1, pool);
   }
-  return { message };
+  return delivered;
 }
 
 function withoutAuthorization(
@@ -254,16 +318,17 @@ async function once(
   headers: Record<string, string> | undefined,
   timeout: AbortController,
   route: ((url: string) => ResolvedRoute) | undefined,
-): Promise<IncomingMessage> {
+  pool?: TunnelPool,
+): Promise<Delivered> {
   const decision: ResolvedRoute = route?.(target.toString()) ?? { kind: 'unclaimed' };
   // A declared proxy that cannot be executed sends the work to the CLI. Going
   // direct instead would bypass it in silence, which is never acceptable.
   if (decision.kind === 'unsupported') throw new ProxyUnsupportedError(decision.declared);
 
-  const connection = await connectionFor(target, decision, timeout);
+  const connection = await connectionFor(target, decision, timeout, pool);
   const transport = target.protocol === 'https:' ? https : http;
 
-  return new Promise<IncomingMessage>((resolve, reject) => {
+  return new Promise<Delivered>((resolve, reject) => {
     const request = transport.request(
       {
         protocol: target.protocol,
@@ -289,6 +354,11 @@ async function once(
           // resource is served compressed, and unlike the platform's fetch
           // these modules hand over exactly the bytes that arrived.
           'accept-encoding': 'gzip, deflate, br',
+          // With no real Agent behind `createConnection`, Node's own default
+          // is `Connection: close` — harmless everywhere else, but it would
+          // have the *server* close exactly the socket this pools for reuse
+          // (#116), before a second request ever gets a chance to take it.
+          ...(connection?.poolKey !== undefined ? { connection: 'keep-alive' } : {}),
           ...headers,
           // The proxy credential belongs to the hop, not to the feed. On a
           // tunnel it travelled on the CONNECT and must not be repeated inside.
@@ -297,7 +367,17 @@ async function once(
             : {}),
         },
       } as http.RequestOptions,
-      resolve,
+      (message) => {
+        resolve({
+          message,
+          finish: connection?.poolKey !== undefined
+            ? (reuse: boolean) => {
+                if (reuse) pool?.release(connection.poolKey!, connection.socket as tls.TLSSocket);
+                else connection.socket.destroy();
+              }
+            : undefined,
+        });
+      },
     );
     request.on('error', reject);
     request.end();
@@ -309,6 +389,14 @@ interface Connection {
   /** True when the request must name the target by absolute URI. */
   absoluteUri: boolean;
   authorization?: string;
+  /** Present only for a tunnelled connection eligible for the pool once this request is done with it. */
+  poolKey?: string;
+}
+
+/** A short, non-reversible stand-in for a proxy credential, safe to keep in a pool key. */
+function authKey(authorization: string | undefined): string {
+  if (!authorization) return 'anonymous';
+  return crypto.createHash('sha256').update(authorization).digest('hex').slice(0, 16);
 }
 
 /**
@@ -323,6 +411,7 @@ async function connectionFor(
   target: URL,
   route: ResolvedRoute,
   timeout: AbortController,
+  pool?: TunnelPool,
 ): Promise<Connection | undefined> {
   if (route.kind === 'unclaimed') return undefined;
 
@@ -333,6 +422,24 @@ async function connectionFor(
   if (route.kind !== 'proxy') throw new ProxyUnsupportedError(route.declared);
 
   if (target.protocol === 'https:') {
+    // Reused across the requests of one walk (#116): a socket already
+    // tunnelled to this exact proxy-and-target pair, offered back once its
+    // previous response was fully drained, saves a CONNECT and a TLS
+    // handshake — the most expensive possible shape on the slowest possible
+    // network. Keyed on the proxy's own address too: the same target reached
+    // through a different proxy is not the same connection. The credential
+    // the tunnel was raised under is folded in as well, hashed rather than
+    // kept as plain text: two nuget.config chains can name the same proxy
+    // host with different credentials, and a tunnel opened for one must never
+    // be handed to a request meant for the other, or its traffic is
+    // attributed to the wrong user on any policy the proxy applies per user.
+    const poolKey = pool
+      ? `${route.url.origin}=>${target.hostname}:${target.port || 443}#${authKey(route.authorization)}`
+      : undefined;
+    const reused = poolKey ? pool!.acquire(poolKey) : undefined;
+    if (reused) {
+      return { socket: reused, absoluteUri: false, authorization: route.authorization, poolKey };
+    }
     const socket = await tunnelledTlsSocket({
       proxy: route.url,
       host: target.hostname,
@@ -340,7 +447,7 @@ async function connectionFor(
       authorization: route.authorization,
       signal: timeout.signal,
     });
-    return { socket, absoluteUri: false, authorization: route.authorization };
+    return { socket, absoluteUri: false, authorization: route.authorization, poolKey };
   }
 
   // An http target needs no tunnel: the request goes to the proxy naming the

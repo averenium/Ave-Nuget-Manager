@@ -293,6 +293,22 @@ export class WebviewMessageBroker {
   private _vulnAbort: AbortController = new AbortController();
   /** The licence question in flight (#89) — replaced, not queued, as the selection moves. */
   private _licenseAbort: AbortController = new AbortController();
+  /**
+   * The search in flight — replaced, not queued, as the box is typed through
+   * (#116). Superseding a search used to leave the old request running to
+   * completion with nowhere to attach a signal; the webview already drops a
+   * stale answer on arrival (#121), but the request itself kept costing the
+   * feed and the socket until this existed.
+   */
+  private _searchAbort: AbortController = new AbortController();
+  /**
+   * The version-list request in flight (#116) — replaced, not queued, the
+   * same way `_licenseAbort` already covers the licence half of a selection
+   * that moves on before this one answers.
+   */
+  private _versionsAbort: AbortController = new AbortController();
+  /** The metadata request in flight (#116) — replaced, not queued; see `_versionsAbort`. */
+  private _metadataAbort: AbortController = new AbortController();
   /** Field rather than a bare constant so a test can shorten the wait it is about. */
   private _licenseBudgetMs = BATCH_LICENSE_BUDGET_MS;
   /** Bumped on every `_cancelVulnScan()` — belt-and-suspenders against a
@@ -476,6 +492,9 @@ export class WebviewMessageBroker {
     this._cancelEnrich();
     this._cancelVulnScan();
     this._cancelLicenseLookup();
+    this._cancelSearch();
+    this._cancelVersionsLookup();
+    this._cancelMetadataLookup();
     this._batchAbort?.abort();
     this._messageDisposable?.dispose();
     this._messageDisposable = undefined;
@@ -516,6 +535,24 @@ export class WebviewMessageBroker {
   private _cancelLicenseLookup(): void {
     this._licenseAbort.abort();
     this._licenseAbort = new AbortController();
+  }
+
+  /** Stop the search still in flight and issue a fresh token (#116). */
+  private _cancelSearch(): void {
+    this._searchAbort.abort();
+    this._searchAbort = new AbortController();
+  }
+
+  /** Stop the version-list request still in flight and issue a fresh token (#116). */
+  private _cancelVersionsLookup(): void {
+    this._versionsAbort.abort();
+    this._versionsAbort = new AbortController();
+  }
+
+  /** Stop the metadata request still in flight and issue a fresh token (#116). */
+  private _cancelMetadataLookup(): void {
+    this._metadataAbort.abort();
+    this._metadataAbort = new AbortController();
   }
 
   private _postBlockedPackages(): void {
@@ -597,7 +634,7 @@ export class WebviewMessageBroker {
         const signal = this._licenseAbort.signal;
         const [license, dependencies] = await Promise.all([
           this._licenseChangeFor(msg.packageId, msg.version, msg.configFiles, signal),
-          this._dependencyDiffFor(msg.packageId, msg.version, msg.configFiles),
+          this._dependencyDiffFor(msg.packageId, msg.version, msg.configFiles, signal),
         ]);
         if (signal.aborted) break;
         this.provider.postMessage({
@@ -1157,6 +1194,13 @@ export class WebviewMessageBroker {
     enabledSourceNames: string[],
     prerelease: boolean,
   ): Promise<void> {
+    // A keystroke-driven search supersedes the one before it; the previous
+    // request stops instead of running to completion for an answer nobody
+    // reads (#116) — the reducer already drops a stale one on arrival (#121),
+    // but until now nothing stopped it from still costing the feed.
+    this._cancelSearch();
+    const signal = this._searchAbort.signal;
+
     // Resolve config files from current scope — not from webview payload
     const scope = this.provider.getCurrentScope();
     if (!scope) {
@@ -1180,10 +1224,14 @@ export class WebviewMessageBroker {
 
     try {
       const packages = await this.backend.searchPackages(
-        trimmedQuery, configFiles, enabledSourceNames, prerelease,
+        trimmedQuery, configFiles, enabledSourceNames, prerelease, signal,
       );
+      if (signal.aborted) return;
       this.provider.postMessage({ type: 'SEARCH_RESULTS', query, packages });
     } catch (err) {
+      // A search this method itself superseded, not a failure — the newer
+      // one already answered or is still running.
+      if (signal.aborted) return;
       this.provider.postMessage({
         type: 'ERROR',
         message: 'Search failed',
@@ -1206,13 +1254,20 @@ export class WebviewMessageBroker {
     configFiles: string[],
     projectPath: string | undefined,
   ): Promise<void> {
+    // Superseded the moment the reader picks another package or version
+    // before this one answers (#116) — the same shape `_licenseAbort` already
+    // covers for the licence half of the same selection.
+    this._cancelMetadataLookup();
+    const signal = this._metadataAbort.signal;
     try {
       const nuspecMetadata = projectPath && version
         ? await this._tryReadNuspecMetadata(projectPath, packageId, version)
         : undefined;
-      const metadata = nuspecMetadata ?? await this._getSearchMetadata(packageId, version, configFiles);
+      const metadata = nuspecMetadata ?? await this._getSearchMetadata(packageId, version, configFiles, signal);
+      if (signal.aborted) return;
       this.provider.postMessage({ type: 'PACKAGE_METADATA', metadata });
     } catch (err) {
+      if (signal.aborted) return;
       this.provider.postMessage({
         type: 'ERROR',
         message: `Failed to load metadata for ${packageId}`,
@@ -1314,15 +1369,16 @@ export class WebviewMessageBroker {
     packageId: string,
     selectedVersion: string,
     configFiles: string[],
+    signal?: AbortSignal,
   ): Promise<import('./packageVersionDiff').VersionDependencyDiff | undefined> {
     const installedEntry = this._installedEntryFor(packageId);
     if (!installedEntry) return undefined;
     if (versionsEqual(installedEntry.resolvedVersion, selectedVersion)) return undefined;
 
     const [before, after] = await Promise.all([
-      this._getSearchMetadata(packageId, installedEntry.resolvedVersion, configFiles)
+      this._getSearchMetadata(packageId, installedEntry.resolvedVersion, configFiles, signal)
         .then((m) => m.declaredDependencies).catch(() => undefined),
-      this._getSearchMetadata(packageId, selectedVersion, configFiles)
+      this._getSearchMetadata(packageId, selectedVersion, configFiles, signal)
         .then((m) => m.declaredDependencies).catch(() => undefined),
     ]);
 
@@ -1355,7 +1411,7 @@ export class WebviewMessageBroker {
     // here. It cannot state a file licence at all — measured, the registration
     // leaf has no such key — so only then is the package's own nuspec worth a
     // request of its own.
-    const catalogMetadata = await this._getSearchMetadata(packageId, selectedVersion, configFiles)
+    const catalogMetadata = await this._getSearchMetadata(packageId, selectedVersion, configFiles, signal)
       .catch(() => undefined);
     if (signal?.aborted) return undefined;
     const selected = catalogMetadata?.license
@@ -1455,6 +1511,7 @@ export class WebviewMessageBroker {
     packageId: string,
     version: string | undefined,
     configFiles: string[],
+    signal?: AbortSignal,
   ): Promise<import('./types').PackageMetadata> {
     const cached = this._cache.get(packageId.toLowerCase());
     const ttl = getConfig().cacheTtlMs;
@@ -1470,7 +1527,7 @@ export class WebviewMessageBroker {
       ], Date.now() - (cached?.fetchedAt ?? 0));
       return searchedMetadataToPackageMetadata(packageId, wantVersion, cachedEntry);
     }
-    return this.backend.getMetadata(packageId, version ?? '', configFiles);
+    return this.backend.getMetadata(packageId, version ?? '', configFiles, signal);
   }
 
   /**
@@ -1535,6 +1592,12 @@ export class WebviewMessageBroker {
     configFiles: string[],
     prerelease: boolean,
   ): Promise<void> {
+    // Superseded the moment the reader picks another package before this one
+    // answers (#116) — a cache hit above still answers synchronously either
+    // way, so cancelling here only ever stops a request actually in flight.
+    this._cancelVersionsLookup();
+    const signal = this._versionsAbort.signal;
+
     const key = packageId.toLowerCase();
     const cached = this._cache.get(key);
     const ttl = getConfig().cacheTtlMs;
@@ -1560,7 +1623,8 @@ export class WebviewMessageBroker {
     }
     try {
       const prev = cached?.versions ?? [];
-      const { versions, versionFlags } = await this.backend.getAllVersions(packageId, configFiles, prerelease);
+      const { versions, versionFlags } = await this.backend.getAllVersions(packageId, configFiles, prerelease, signal);
+      if (signal.aborted) return;
 
       if (cached) {
         cached.versions = versions;
@@ -1621,6 +1685,9 @@ export class WebviewMessageBroker {
         });
       }
     } catch {
+      // Superseded, not failed — the newer request already answered or is
+      // still running (#116).
+      if (signal.aborted) return;
       // If fetch fails and we already sent cached — that's fine, no error needed
       if (!cached?.versions?.length) {
         this.provider.postMessage({
@@ -3681,7 +3748,7 @@ export class WebviewMessageBroker {
   ): Promise<boolean> {
     try {
       const { latestVersion, sourceName, versions, metadataByVersion } = await this.backend.enrichPackage(
-        id, configFiles, getConfig().includePrerelease,
+        id, configFiles, getConfig().includePrerelease, signal,
       );
       if (signal.aborted) return false;
       if (!latestVersion && !sourceName) return false;

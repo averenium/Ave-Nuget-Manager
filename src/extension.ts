@@ -26,12 +26,14 @@ import { vdbFileStore } from './nugetVdbFileStore';
 import { isHttpPackageUrl } from './vulnerabilityScanPolicy';
 import { expandNuGetConfigValue } from './nugetConfigEnv';
 import { createJsonFetcher, DEFAULT_PREVIEW_BYTES } from './nugetHttpJson';
+import { createTunnelPool } from './nugetProxyPool';
 import { authorizingFetcher, CredentialRegistry } from './nugetHttpAuth';
 import { ProxyRegistry } from './nugetProxyRegistry';
 import { httpLogSink, loggingFetcher } from './nugetHttpLog';
 import { HttpResponseCache } from './nugetHttpCache';
 import { NuspecReader } from './nugetNuspecFetch';
 import { retryingFetcher } from './nugetHttpRetry';
+import { originConcurrencyFetcher } from './nugetHttpConcurrency';
 import { scopeChoiceMemory } from './scopeChoiceMemory';
 
 let logger: Logger | undefined;
@@ -118,19 +120,32 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
   // A proxy declared in nuget.config outranks the editor setting, and the
   // editor cannot execute it for us — so the transport carries it (#27).
   const proxies = new ProxyRegistry();
+  // One pool of tunnelled sockets, reused across the requests of one walk on
+  // the proxied path (#116) — the counterpart to the global agent that
+  // already pools connections on the direct path.
+  const tunnelPool = createTunnelPool();
   const httpTransport = createJsonFetcher(
     () => (trace.isRecording() ? 256 * 1024 : DEFAULT_PREVIEW_BYTES),
     (url) => proxies.routeFor(url),
+    tunnelPool,
   );
   // The cache sits outermost, so a repeat inside the window reaches neither the
   // log nor the network: three consumers want the same metadata document, and
   // two configuration files can enable the same feed.
   const httpCache = new HttpResponseCache({ log: httpLog });
   // Order matters: the cache answers repeats first; credentials are attached
-  // before a request goes out; the retry sits above the log so every attempt is
-  // visible, not just the one that succeeded.
+  // before a request goes out; the retry sits above the origin gate so a
+  // repeat waiting out `Retry-After` queues for a slot again rather than
+  // holding one through a wait that uses no connection; the gate sits above
+  // the log so a logged duration is the request's own, not time spent
+  // queued (#116).
   const httpFetch = httpCache.wrap(
-    authorizingFetcher(retryingFetcher(loggingFetcher(httpTransport, httpLog)), credentials),
+    authorizingFetcher(
+      retryingFetcher(
+        originConcurrencyFetcher(loggingFetcher(httpTransport, httpLog), () => getConfig().httpConcurrencyPerOrigin),
+      ),
+      credentials,
+    ),
   );
   const capabilities = new SourceCapabilityStore(
     httpFetch,
@@ -224,6 +239,10 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
         proxies.clear();
         nuspecs.clear();
         capabilities.forgetAll();
+        // A pooled tunnel is tied to the proxy address it was opened
+        // through; a routing decision this same call just reset must not
+        // leave a socket built under the old one still reachable (#116).
+        tunnelPool.clear();
       },
     },
     {

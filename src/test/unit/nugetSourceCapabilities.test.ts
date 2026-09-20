@@ -167,6 +167,60 @@ describe('SourceCapabilityStore probing', () => {
     await store.ensure({ url: V3 });
     expect(calls).toHaveLength(2);
   });
+
+  it('does not let one caller leaving cancel the probe for another still waiting on it (#116)', async () => {
+    let resolveFetch!: (r: HttpJsonResponse) => void;
+    let sawAbort = false;
+    const fetchJson = (_url: string, signal?: AbortSignal): Promise<HttpJsonResponse> => new Promise((resolve) => {
+      signal?.addEventListener('abort', () => { sawAbort = true; });
+      resolveFetch = resolve;
+    });
+    const store = new SourceCapabilityStore(fetchJson, undefined, Date.now, enabled);
+
+    // The second keystroke of a search cancels the first call's own signal —
+    // the probe both calls joined must not die with it, or the still-wanted
+    // enrich/version/metadata calls that joined the same probe would all come
+    // back "source unknown" for a reason none of them caused.
+    const leavingController = new AbortController();
+    const leaving = store.ensure({ url: V3 }, leavingController.signal);
+    const staying = store.ensure({ url: V3 });
+    leavingController.abort();
+
+    resolveFetch(ok(indexJson('PackageBaseAddress/3.0.0')));
+
+    expect(sawAbort).toBe(false);
+    expect((await staying).index).toBe('ok');
+    expect((await leaving).index).toBe('ok');
+    expect(store.get(V3)?.index).toBe('ok');
+  });
+
+  it('backs a source off for nobody when the last caller waiting on a probe leaves before it answers (#116)', async () => {
+    let calls = 0;
+    const fetchJson = (_url: string, signal?: AbortSignal): Promise<HttpJsonResponse> => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          });
+        });
+      }
+      return Promise.resolve(ok(indexJson('PackageBaseAddress/3.0.0')));
+    };
+    const store = new SourceCapabilityStore(fetchJson, undefined, Date.now, enabled);
+
+    const controller = new AbortController();
+    const abandoned = store.ensure({ url: V3 }, controller.signal);
+    controller.abort();
+
+    expect((await abandoned).index).toBe('unknown');
+
+    // No 30-second backoff for a probe nobody stayed to hear the answer to:
+    // the very next call reaches the network again straight away.
+    const record = await store.ensure({ url: V3 });
+    expect(record.index).toBe('ok');
+    expect(calls).toBe(2);
+  });
 });
 
 describe('SourceCapabilityStore origins', () => {

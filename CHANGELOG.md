@@ -18,6 +18,7 @@
 - **Package details**: versions the project's target framework can't use are collapsed behind a disclosure in the version list, and no longer proposed by the update mark or a **Groups** family target (#107)
 - **Problems** (native, not the panel's own): a package restored with no compile assets for the project's target framework, which `dotnet restore` accepts silently (#107)
 - **Package details**: installing across several projects starts with a project the target version can't use left unchecked, marked with why, rather than writing it there silently (#107)
+- Experimental HTTP catalog: enrich now stops mid-request on a scope switch or a force refresh instead of finishing a discarded answer, and search, the version list and package details each stop the same way when a newer request of their own kind replaces them; a new `httpConcurrencyPerOrigin` setting (default 6) caps parallel requests to one feed, separately from `dotnetConcurrency`; on the proxied path, a tunnelled connection is now reused across requests to the same target instead of opening a fresh one for each (#116)
 
 ### Fixed
 

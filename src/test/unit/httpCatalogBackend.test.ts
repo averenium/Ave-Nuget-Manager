@@ -770,9 +770,9 @@ describe('HttpCatalogBackend delegation', () => {
       'listAllForProject:1',
       'listInstalled:1',
       'listTransitive:1',
-      'searchPackages:4',
-      'getMetadata:3',
-      'enrichPackage:3',
+      'searchPackages:5',
+      'getMetadata:4',
+      'enrichPackage:4',
       'installPackage:5',
       'installPackageNoRestore:5',
       'removePackage:2',
@@ -834,5 +834,100 @@ describe('the scope each caller asks the catalog for', () => {
     const { ladder, queries } = recordingLadder([entry('2.0.0')]);
     await backendWith(ladder).getMetadata('X', '', ['a.config']);
     expect(queries).toEqual([{ version: '', newestOnly: true }]);
+  });
+});
+
+/**
+ * The transport already cancels correctly end to end (#116) — the response
+ * cache joins waiters instead of racing them, the capability store and the
+ * version ladder both take a signal, and the fetcher aborts on it. What was
+ * missing was this interface carrying one at all, so nothing above it could
+ * ever reach that far down. These cases pin the wiring, not the cancellation
+ * mechanics those lower layers already own and already test for themselves.
+ */
+describe('HttpCatalogBackend carries the caller\'s AbortSignal down (#116)', () => {
+  it('reaches the ladder for getAllVersions, getMetadata and enrichPackage', async () => {
+    const controller = new AbortController();
+    const seen: Array<AbortSignal | undefined> = [];
+    const ladder = {
+      catalogFromSource: async (_t: { url: string }, _q: unknown, signal?: AbortSignal) => {
+        seen.push(signal);
+        return [entry('1.0.0')];
+      },
+      versionsFromSource: async () => undefined,
+    } as unknown as VersionLadder;
+    const backend = new HttpCatalogBackend(
+      cliStub({}).backend,
+      ladder,
+      capabilityStub([]),
+      resolverFor({ 'a.config': httpOnly(FEED_A) }),
+      { isEnabled: () => true },
+    );
+
+    await backend.getAllVersions('X', ['a.config'], false, controller.signal);
+    await backend.getMetadata('X', '1.0.0', ['a.config'], controller.signal);
+    await backend.enrichPackage('X', ['a.config'], false, controller.signal);
+
+    expect(seen).toHaveLength(3);
+    expect(seen.every((s) => s === controller.signal)).toBe(true);
+  });
+
+  it('reaches the capability store and the search resource for searchPackages', async () => {
+    const controller = new AbortController();
+    const seenEnsure: Array<AbortSignal | undefined> = [];
+    const seenSearch: Array<AbortSignal | undefined> = [];
+    const capabilities = {
+      ensure: async (_t: { url: string }, signal?: AbortSignal) => {
+        seenEnsure.push(signal);
+        return { source: FEED_A, probedAt: 0, index: 'ok' as const, resources: {} };
+      },
+      resourceUrls: () => [],
+    } as unknown as SourceCapabilityStore;
+    const search = {
+      hasSearch: () => true,
+      searchSource: async (_t: unknown, _r: unknown, signal?: AbortSignal) => {
+        seenSearch.push(signal);
+        return [];
+      },
+    } as unknown as PackageSearch;
+    const backend = new HttpCatalogBackend(
+      cliStub({}).backend,
+      ladderStub({}),
+      capabilities,
+      resolverFor({ 'a.config': httpOnly(FEED_A) }),
+      { isEnabled: () => true, search },
+    );
+
+    await backend.searchPackages('example', ['a.config'], [], false, controller.signal);
+
+    expect(seenEnsure).toEqual([controller.signal]);
+    expect(seenSearch).toEqual([controller.signal]);
+  });
+
+  it('reaches the ladder for the exact-id lookup a search falls back to', async () => {
+    const controller = new AbortController();
+    const seen: Array<AbortSignal | undefined> = [];
+    const ladder = {
+      catalogFromSource: async () => undefined,
+      versionsFromSource: async (_t: { url: string }, _q: unknown, signal?: AbortSignal) => {
+        seen.push(signal);
+        return { sourceUrl: FEED_A, versions: ['1.0.0'], rung: 'content' as const };
+      },
+    } as unknown as VersionLadder;
+    const search = {
+      hasSearch: () => false,
+      searchSource: async () => undefined,
+    } as unknown as PackageSearch;
+    const backend = new HttpCatalogBackend(
+      cliStub({}).backend,
+      ladder,
+      capabilityStub([]),
+      resolverFor({ 'a.config': httpOnly(FEED_A) }),
+      { isEnabled: () => true, search },
+    );
+
+    await backend.searchPackages('Example.Core', ['a.config'], [], false, controller.signal);
+
+    expect(seen).toEqual([controller.signal]);
   });
 });

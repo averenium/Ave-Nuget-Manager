@@ -99,6 +99,13 @@
           "maximum": 16,
           "markdownDescription": "Maximum number of parallel `dotnet` processes (list, search, enrich, install, remove, restore)."
         },
+        "averenium.nugetManager.httpConcurrencyPerOrigin": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 32,
+          "markdownDescription": "**Experimental HTTP catalog only.** Maximum number of parallel requests to one feed (host). Separate from `#averenium.nugetManager.dotnetConcurrency#`, which governs `dotnet` processes and is unaffected by this setting. Lower it if a private feed throttles or rejects requests under load; 1 serialises every request to that host, which is also the easiest setting to read a trace under."
+        },
         "averenium.nugetManager.onFailedUpdate": {
           "type": "string",
           "enum": [

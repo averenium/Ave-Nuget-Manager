@@ -19,11 +19,42 @@ export function getDotnetConcurrency(): number {
   return clampDotnetConcurrency(typeof raw === 'number' && Number.isFinite(raw) ? raw : DEFAULT_DOTNET_CONCURRENCY);
 }
 
+const HTTP_CONCURRENCY_KEY = 'httpConcurrencyPerOrigin';
+/**
+ * The number the web settled on: browsers cap HTTP/1.1 at six connections per
+ * host, and this transport is HTTP/1.1 too (#116).
+ */
+const DEFAULT_HTTP_CONCURRENCY_PER_ORIGIN = 6;
+const MIN_HTTP_CONCURRENCY_PER_ORIGIN = 1;
+const MAX_HTTP_CONCURRENCY_PER_ORIGIN = 32;
+
+function clampHttpConcurrencyPerOrigin(n: number): number {
+  return Math.min(MAX_HTTP_CONCURRENCY_PER_ORIGIN, Math.max(MIN_HTTP_CONCURRENCY_PER_ORIGIN, Math.round(n)));
+}
+
+/**
+ * Max parallel HTTP requests to one origin (#27's catalog: versions, search,
+ * metadata, capability probes). Separate from `dotnetConcurrency`, which
+ * governs `dotnet` process spawns and stays at its own default regardless of
+ * this one — an HTTP request holds no process slot and costs the machine
+ * nothing like what a process does, so the two were never the same limit
+ * wearing two names, only ever sharing one setting because HTTP had none of
+ * its own.
+ */
+export function getHttpConcurrencyPerOrigin(): number {
+  const cfg = vscode.workspace.getConfiguration(SECTION);
+  const raw = cfg.get<number>(HTTP_CONCURRENCY_KEY, DEFAULT_HTTP_CONCURRENCY_PER_ORIGIN);
+  return clampHttpConcurrencyPerOrigin(
+    typeof raw === 'number' && Number.isFinite(raw) ? raw : DEFAULT_HTTP_CONCURRENCY_PER_ORIGIN,
+  );
+}
+
 /** Read current config values from VSCode settings (with defaults). */
 export function getConfig() {
   const cfg = vscode.workspace.getConfiguration(SECTION);
   return {
     dotnetConcurrency: getDotnetConcurrency(),
+    httpConcurrencyPerOrigin: getHttpConcurrencyPerOrigin(),
     cacheTtlMs: 5 * 60 * 1000, // 5 min — not user-configurable yet
     includePrerelease: cfg.get<boolean>('includePrerelease', false),
     /**

@@ -201,9 +201,27 @@ function ttlFor(record: SourceCapabilities): number {
   return NEGATIVE_TTL_MS;
 }
 
+/**
+ * One service-index probe several callers are waiting on.
+ *
+ * The probe runs on a controller of its own rather than on any caller's
+ * signal. Otherwise the first caller to cancel would poison the source for
+ * everyone else who joined the same probe: a search cancelled by its next
+ * keystroke would abort the request an enrich task, a version lookup and a
+ * metadata fetch had all joined, and the resulting failure would back the
+ * source off for `TRANSIENT_BACKOFF_MS` even though nothing about the feed
+ * was ever learned. Mirrors `nugetHttpCache.ts`'s `SharedRequest`, which
+ * exists for the identical reason on the response cache's side.
+ */
+interface SharedProbe {
+  promise: Promise<SourceCapabilities>;
+  controller: AbortController;
+  waiters: number;
+}
+
 export class SourceCapabilityStore {
   private readonly _memory = new Map<string, SourceCapabilities>();
-  private readonly _inFlight = new Map<string, Promise<SourceCapabilities>>();
+  private readonly _inFlight = new Map<string, SharedProbe>();
   private readonly _backoffUntil = new Map<string, number>();
   private _loaded = false;
 
@@ -249,11 +267,41 @@ export class SourceCapabilityStore {
     if (this._now() < backoff) return unknownRecord(key, this._now());
 
     const existing = this._inFlight.get(key);
-    if (existing) return existing;
+    if (existing) return this._join(existing, signal);
 
-    const running = this._probe(key, target, signal).finally(() => this._inFlight.delete(key));
-    this._inFlight.set(key, running);
-    return running;
+    const controller = new AbortController();
+    const shared: SharedProbe = {
+      controller,
+      waiters: 0,
+      promise: this._probe(key, target, controller.signal).finally(() => this._inFlight.delete(key)),
+    };
+    this._inFlight.set(key, shared);
+    return this._join(shared, signal);
+  }
+
+  /**
+   * Waits for a shared probe on behalf of one caller. A caller leaving early —
+   * its own signal firing — only stops it from counting as still wanting the
+   * probe; the probe itself is told to stop only once every caller waiting on
+   * it has left. Never rejects: `_probe` always resolves to a verdict, even
+   * when that verdict is "unknown" because nobody was left to hear the answer.
+   */
+  private _join(shared: SharedProbe, signal: AbortSignal | undefined): Promise<SourceCapabilities> {
+    shared.waiters += 1;
+    let left = false;
+    const leave = () => {
+      if (left) return;
+      left = true;
+      signal?.removeEventListener('abort', onAbort);
+      shared.waiters -= 1;
+      if (shared.waiters === 0) shared.controller.abort();
+    };
+    const onAbort = () => leave();
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
+    return shared.promise.finally(leave);
   }
 
   /** Candidate addresses for one resource, best first; empty when unusable. */
@@ -353,6 +401,13 @@ export class SourceCapabilityStore {
       if ((error as Error)?.name === 'ProxyUnsupportedError') {
         return this._store({ source: key, probedAt: this._now(), index: 'unavailable', resources: {} });
       }
+      // `signal` here is this probe's own controller, aborted only by `_join`
+      // once every caller waiting on it has left (never by an individual
+      // caller's own cancellation reaching this far). That is silence about
+      // whether the feed works, not a verdict on it — backing the source off
+      // for a request nobody was left to want would punish it for a reader
+      // who moved on, not for anything the feed did.
+      if (signal?.aborted) return unknownRecord(key, this._now());
       this._backoffUntil.set(key, this._now() + TRANSIENT_BACKOFF_MS);
       return unknownRecord(key, this._now());
     }

@@ -1,7 +1,11 @@
 import * as http from 'http';
+import * as net from 'net';
 import * as zlib from 'zlib';
 import type { AddressInfo } from 'net';
+import type { TLSSocket } from 'tls';
 import { fetchJsonStatus, isFetchableUrl } from '../../nugetHttpJson';
+import { createTunnelPool } from '../../nugetProxyPool';
+import * as proxyConnect from '../../nugetProxyConnect';
 
 /**
  * A real server on a real socket.
@@ -258,5 +262,140 @@ describe('fetchJsonStatus', () => {
 
     await expect(fetchJsonStatus(`${origin}/v3/index.json`, undefined, undefined, { timeoutMs: 30 }))
       .rejects.toBeDefined();
+  });
+});
+
+/**
+ * Reusing a tunnelled connection across the requests of one walk (#116).
+ *
+ * `tunnelledTlsSocket` itself — the real CONNECT and TLS handshake — is
+ * proven elsewhere (`httpProxy.integration.test.ts`, `tlsTrustReachesUs.test.ts`)
+ * against a real proxy. What these cases pin is this module's own job: decide
+ * when to reuse a socket instead of building one, and carry two real,
+ * sequential HTTP/1.1 exchanges over the one it kept without either
+ * corrupting the other — the exact risk manual connection reuse carries
+ * that a mocked transport could paper over. `tunnelledTlsSocket` is
+ * therefore stubbed here to hand back a socket connected to this file's own
+ * real HTTP server rather than a real tunnel — the "TLS" label only ever
+ * decided which transport module issued the request; the bytes crossing the
+ * wire are real either way, which is what the pooling logic actually reads.
+ */
+describe('fetchJsonStatus reusing a tunnelled connection (#116)', () => {
+  const route = () => ({ kind: 'proxy' as const, url: new URL('http://proxy.invalid:8080') });
+  const httpsOrigin = () => origin.replace('http://', 'https://');
+
+  function stubTunnel() {
+    let built = 0;
+    const spy = jest.spyOn(proxyConnect, 'tunnelledTlsSocket').mockImplementation(async () => {
+      built++;
+      const target = new URL(origin);
+      return new Promise((resolve, reject) => {
+        const socket = net.connect(Number(target.port), target.hostname, () => resolve(socket as unknown as TLSSocket));
+        socket.on('error', reject);
+      });
+    });
+    return { spy, built: () => built };
+  }
+
+  it('opens one tunnel and reuses it for a second request to the same target', async () => {
+    let count = 0;
+    handler = (_req, res) => { count++; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ count })); };
+    const pool = createTunnelPool();
+    const tunnel = stubTunnel();
+
+    try {
+      const first = await fetchJsonStatus(`${httpsOrigin()}/a`, undefined, undefined, { route, pool });
+      const second = await fetchJsonStatus(`${httpsOrigin()}/b`, undefined, undefined, { route, pool });
+
+      expect(first.json).toEqual({ count: 1 });
+      expect(second.json).toEqual({ count: 2 });
+      expect(tunnel.built()).toBe(1);
+    } finally {
+      tunnel.spy.mockRestore();
+    }
+  });
+
+  it('opens a fresh tunnel for each request when no pool is given', async () => {
+    handler = json({ ok: true });
+    const tunnel = stubTunnel();
+
+    try {
+      await fetchJsonStatus(`${httpsOrigin()}/a`, undefined, undefined, { route });
+      await fetchJsonStatus(`${httpsOrigin()}/b`, undefined, undefined, { route });
+
+      expect(tunnel.built()).toBe(2);
+    } finally {
+      tunnel.spy.mockRestore();
+    }
+  });
+
+  it('does not reuse a connection the server asked to close', async () => {
+    handler = json({ ok: true }, { connection: 'close' });
+    const pool = createTunnelPool();
+    const tunnel = stubTunnel();
+
+    try {
+      await fetchJsonStatus(`${httpsOrigin()}/a`, undefined, undefined, { route, pool });
+      await fetchJsonStatus(`${httpsOrigin()}/b`, undefined, undefined, { route, pool });
+
+      expect(tunnel.built()).toBe(2);
+    } finally {
+      tunnel.spy.mockRestore();
+    }
+  });
+
+  it('does not reuse a connection whose body the caller aborted mid-stream', async () => {
+    handler = (_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"partial":');
+      // Never closes on its own within the test's timeout — the abort is
+      // what has to end it.
+    };
+    const pool = createTunnelPool();
+    const tunnel = stubTunnel();
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 30);
+
+    try {
+      // The status already arrived, so this resolves rather than rejects —
+      // an abort mid-body is "no body was read", the same as any other
+      // stream error `readCapped` catches. What matters here is that the
+      // half-read socket is not the one the next request is handed.
+      const first = await fetchJsonStatus(`${httpsOrigin()}/a`, controller.signal, undefined, { route, pool });
+      expect(first).toEqual({ status: 200 });
+      handler = json({ ok: true });
+      await fetchJsonStatus(`${httpsOrigin()}/b`, undefined, undefined, { route, pool });
+
+      expect(tunnel.built()).toBe(2);
+    } finally {
+      tunnel.spy.mockRestore();
+    }
+  });
+
+  it('does not hand a tunnel raised under one proxy credential to a request meant for another', async () => {
+    handler = json({ ok: true });
+    const pool = createTunnelPool();
+    const tunnel = stubTunnel();
+    const routeAs = (authorization: string) => (): { kind: 'proxy'; url: URL; authorization: string } => (
+      { kind: 'proxy', url: new URL('http://proxy.invalid:8080'), authorization }
+    );
+
+    try {
+      await fetchJsonStatus(`${httpsOrigin()}/a`, undefined, undefined, {
+        route: routeAs('Basic dXNlcjE6cGFzczE='),
+        pool,
+      });
+      await fetchJsonStatus(`${httpsOrigin()}/b`, undefined, undefined, {
+        route: routeAs('Basic dXNlcjI6cGFzczI='),
+        pool,
+      });
+
+      // Same proxy, same target, different credential behind each hop — two
+      // tunnels, not a shared one, or the second user's traffic would run
+      // under the first user's proxy session (#116).
+      expect(tunnel.built()).toBe(2);
+    } finally {
+      tunnel.spy.mockRestore();
+    }
   });
 });

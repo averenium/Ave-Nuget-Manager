@@ -216,6 +216,10 @@ export class CliBackend implements INuGetBackend {
     configFiles: string[],
     enabledSourceNames: string[],
     prerelease = false,
+    // Not honoured here (#116): a `dotnet` process is not usefully
+    // interruptible mid-search the way an HTTP request is, and this is the
+    // path `HttpCatalogBackend` already falls back to when it cannot answer.
+    _signal?: AbortSignal,
   ): Promise<AvailablePackage[]> {
     const enabledSet = new Set(enabledSourceNames.map((n) => n.toLowerCase()));
 
@@ -247,6 +251,8 @@ export class CliBackend implements INuGetBackend {
     packageId: string,
     configFiles: string[],
     prerelease = false,
+    // Not honoured here (#116) — see `searchPackages`.
+    _signal?: AbortSignal,
   ): Promise<{ versions: string[]; versionFlags: Record<string, SearchedVersionMetadata> }> {
     const perFile = await Promise.all(
       configFiles.map((cf) => this._fetchVersionsFromConfigFile(packageId, cf, prerelease)),
@@ -372,6 +378,8 @@ export class CliBackend implements INuGetBackend {
     packageId: string,
     version: string,
     configFiles: string[],
+    // Not honoured here (#116) — see `searchPackages`.
+    _signal?: AbortSignal,
   ): Promise<PackageMetadata> {
     const fallback: PackageMetadata = {
       id: packageId,
@@ -407,6 +415,8 @@ export class CliBackend implements INuGetBackend {
     packageId: string,
     configFiles: string[],
     prerelease = false,
+    // Not honoured here (#116) — see `searchPackages`.
+    _signal?: AbortSignal,
   ): Promise<EnrichedPackageInfo> {
     // `dotnet package search` has no TFM: latest is feed-highest, not
     // "restores on this project". `dotnet list --outdated` would be

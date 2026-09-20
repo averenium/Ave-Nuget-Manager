@@ -752,6 +752,43 @@ describe('WebviewMessageBroker', () => {
     expect(info?.latestVersion).toBe('9.1.0');
   });
 
+  it('passes an AbortSignal to enrichPackage, so a superseded wave actually stops the request (#116)', async () => {
+    // Before this, `signal.aborted` was only checked between tasks — a
+    // request already in flight ran to completion regardless, on every scope
+    // switch and every force refresh.
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [{
+        id: 'Example.Extensions.OpenApi', requestedVersion: '8.0.11', resolvedVersion: '8.0.11', projectPath: '/p/App.csproj',
+      }],
+      implicit: [],
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '9.1.0', sourceName: 'nuget.org', versions: ['9.1.0'],
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{
+        name: 'nuget.org',
+        url: 'https://api.nuget.org',
+        enabled: true,
+        configFilePath: '/p/nuget.config',
+      }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(backend.enrichPackage).toHaveBeenCalled();
+    const signal = backend.enrichPackage.mock.calls[0][3];
+    expect(signal).toBeInstanceOf(AbortSignal);
+  });
+
   it('answers the update mark per project when the same id spans projects on different frameworks (#107)', async () => {
     // Example.Extensions.Http referenced from A (net9.0) and B (net10.0), both
     // at 8.0.11. 10.0.12 ships net10.0 only; 9.1.0 ships net8.0 (so both
@@ -1493,6 +1530,41 @@ describe('WebviewMessageBroker', () => {
       expect(answer).toMatchObject({ packageId: 'Example.Imaging', version: '4.1.2' });
     });
 
+    it('passes an AbortSignal to every getMetadata call GET_VERSION_DIFF makes (#116)', async () => {
+      // Scrolling the version list asks about every version it passes, and
+      // each may cost a request to the feed — the dependency-diff half of
+      // this answer must stop with the rest when a newer request supersedes
+      // it, not just the licence half `_licenseAbort` already covered.
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [makeInstalledPkg('Example.Imaging', '/p/App.csproj')],
+        implicit: [],
+      });
+      const forVersion = jest.fn().mockResolvedValue(undefined);
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined, { forVersion },
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_VERSION_DIFF',
+        packageId: 'Example.Imaging',
+        version: '4.1.2',
+        configFiles: ['a.config'],
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(backend.getMetadata).toHaveBeenCalled();
+      for (const call of backend.getMetadata.mock.calls) {
+        expect(call[3]).toBeInstanceOf(AbortSignal);
+      }
+    });
+
     /**
      * A solution resolves a package per project, and those versions differ —
      * exactly the case #115 is about. The panel names the highest of them and
@@ -1725,6 +1797,7 @@ describe('WebviewMessageBroker', () => {
       it('never has more lookups in flight than the configured concurrency', async () => {
         const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
           dotnetConcurrency: 2,
+          httpConcurrencyPerOrigin: 6,
           cacheTtlMs: 1000,
           includePrerelease: false,
           onFailedUpdate: 'keep',
@@ -1993,6 +2066,59 @@ describe('WebviewMessageBroker', () => {
     expect(backend.searchPackages.mock.calls[0][0]).toBe('Microsoft.Extensions.Http');
   });
 
+  it('passes an AbortSignal to searchPackages (#116)', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.searchPackages.mockResolvedValue([]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'SEARCH_PACKAGES', query: 'New', configFiles: ['/a/nuget.config'], enabledSourceNames: ['nuget.org'] });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const signal = backend.searchPackages.mock.calls[0][4];
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect((signal as AbortSignal).aborted).toBe(false);
+  });
+
+  it('cancels a search still in flight when a newer one supersedes it, and reports no error for it (#116)', async () => {
+    // The request is discarded today, not stopped: the socket stays open, a
+    // corporate proxy still sees the load, and a feed that rate-limits still
+    // counts it. Superseding must actually abort the earlier signal, and the
+    // earlier call settling afterward — the way an aborted fetch would,
+    // by rejecting — must not surface as a failure banner for a query the
+    // reader has already moved on from.
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    let firstReject!: (err: Error) => void;
+    backend.searchPackages
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { firstReject = reject; }))
+      .mockResolvedValueOnce([makeAvailablePkg('Newtonsoft.Json')]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'SEARCH_PACKAGES', query: 'Old', configFiles: ['/a/nuget.config'], enabledSourceNames: ['nuget.org'] });
+    await new Promise((r) => setTimeout(r, 10));
+    const firstSignal = backend.searchPackages.mock.calls[0][4] as AbortSignal;
+    expect(firstSignal.aborted).toBe(false);
+
+    simulateMessage({ type: 'SEARCH_PACKAGES', query: 'New', configFiles: ['/a/nuget.config'], enabledSourceNames: ['nuget.org'] });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(firstSignal.aborted).toBe(true);
+
+    const abortErr = new Error('The operation was aborted');
+    abortErr.name = 'AbortError';
+    firstReject(abortErr);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(posted.some((m) => m.type === 'ERROR')).toBe(false);
+    const result = posted.find((m) => m.type === 'SEARCH_RESULTS') as any;
+    expect(result?.query).toBe('New');
+  });
+
   it('GET_ALL_VERSIONS uses enrich cache without a second search', async () => {
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();
@@ -2051,9 +2177,36 @@ describe('WebviewMessageBroker', () => {
     });
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(backend.getAllVersions).toHaveBeenCalledWith('Pkg', ['/p/nuget.config'], false);
+    expect(backend.getAllVersions).toHaveBeenCalledWith('Pkg', ['/p/nuget.config'], false, expect.any(AbortSignal));
     const msg = posted.find((m) => m.type === 'ALL_VERSIONS') as { versions?: string[] } | undefined;
     expect(msg?.versions).toEqual(['2.0.0', '1.0.0']);
+  });
+
+  it('cancels a version-list request still in flight when a newer one supersedes it (#116)', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    let firstReject!: (err: Error) => void;
+    backend.getAllVersions
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { firstReject = reject; }))
+      .mockResolvedValueOnce({ versions: ['2.0.0'], versionFlags: {} });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'GET_ALL_VERSIONS', packageId: 'Old', configFiles: ['/p/nuget.config'], prerelease: false });
+    await new Promise((r) => setTimeout(r, 10));
+    const firstSignal = backend.getAllVersions.mock.calls[0][3] as AbortSignal;
+    expect(firstSignal.aborted).toBe(false);
+
+    simulateMessage({ type: 'GET_ALL_VERSIONS', packageId: 'New', configFiles: ['/p/nuget.config'], prerelease: false });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(firstSignal.aborted).toBe(true);
+
+    const abortErr = new Error('The operation was aborted');
+    abortErr.name = 'AbortError';
+    firstReject(abortErr);
+    await new Promise((r) => setTimeout(r, 10));
   });
 
   it('ALL_VERSIONS carries feed vulnerable/deprecated marks so the dropdown can warn before a version is chosen (#86)', async () => {
@@ -2281,9 +2434,40 @@ describe('WebviewMessageBroker', () => {
     });
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(backend.getMetadata).toHaveBeenCalledWith('Dapper', '2.0.123', ['/p/nuget.config']);
+    expect(backend.getMetadata).toHaveBeenCalledWith('Dapper', '2.0.123', ['/p/nuget.config'], expect.any(AbortSignal));
     const msg = posted.find((m) => m.type === 'PACKAGE_METADATA') as { metadata?: PackageMetadata } | undefined;
     expect(msg?.metadata?.id).toBe('Dapper');
+  });
+
+  it('cancels a metadata request still in flight when a newer one supersedes it (#116)', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    let firstReject!: (err: Error) => void;
+    backend.getMetadata
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { firstReject = reject; }))
+      .mockResolvedValueOnce(makeMetadata('New'));
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({
+      type: 'GET_PACKAGE_METADATA', packageId: 'Old', version: '1.0.0', configFiles: ['/p/nuget.config'],
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    const firstSignal = backend.getMetadata.mock.calls[0][3] as AbortSignal;
+    expect(firstSignal.aborted).toBe(false);
+
+    simulateMessage({
+      type: 'GET_PACKAGE_METADATA', packageId: 'New', version: '1.0.0', configFiles: ['/p/nuget.config'],
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(firstSignal.aborted).toBe(true);
+
+    const abortErr = new Error('The operation was aborted');
+    abortErr.name = 'AbortError';
+    firstReject(abortErr);
+    await new Promise((r) => setTimeout(r, 10));
   });
 
   it('GET_PACKAGE_METADATA without a projectPath never touches the nuspec path', async () => {
@@ -2304,7 +2488,7 @@ describe('WebviewMessageBroker', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(foldersSpy).not.toHaveBeenCalled();
-    expect(backend.getMetadata).toHaveBeenCalledWith('Pkg', '2.0.0', ['/p/nuget.config']);
+    expect(backend.getMetadata).toHaveBeenCalledWith('Pkg', '2.0.0', ['/p/nuget.config'], expect.any(AbortSignal));
     expect(posted.some((m) => m.type === 'PACKAGE_METADATA')).toBe(true);
   });
 
@@ -2520,6 +2704,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
   it('patches installed version and offers rollback when onFailedUpdate is keep', async () => {
     const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
       dotnetConcurrency: 4,
+      httpConcurrencyPerOrigin: 6,
       cacheTtlMs: 1000,
       includePrerelease: true,
       onFailedUpdate: 'keep',
@@ -3347,6 +3532,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
   it('INSTALL_PACKAGE_MULTI never runs more than dotnetConcurrency installs at once', async () => {
     const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
       dotnetConcurrency: 2,
+      httpConcurrencyPerOrigin: 6,
       cacheTtlMs: 1000,
       includePrerelease: false,
       onFailedUpdate: 'rollback',
@@ -3393,6 +3579,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
   it('REMOVE_PACKAGE_MULTI never runs more than dotnetConcurrency removes at once', async () => {
     const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
       dotnetConcurrency: 2,
+      httpConcurrencyPerOrigin: 6,
       cacheTtlMs: 1000,
       includePrerelease: false,
       onFailedUpdate: 'rollback',
@@ -4271,6 +4458,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     it('keeps the shared restore failure and offers Rollback (onFailedUpdate: keep)', async () => {
       jest.spyOn(config, 'getConfig').mockReturnValue({
         dotnetConcurrency: 4,
+        httpConcurrencyPerOrigin: 6,
         cacheTtlMs: 1000,
         includePrerelease: false,
         onFailedUpdate: 'keep',
@@ -4543,6 +4731,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
   it('Stop restores in-flight files and does not offer Rollback even when onFailedUpdate is keep', async () => {
     const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
       dotnetConcurrency: 4,
+      httpConcurrencyPerOrigin: 6,
       cacheTtlMs: 1000,
       includePrerelease: true,
       onFailedUpdate: 'keep',

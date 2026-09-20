@@ -60,6 +60,7 @@ export interface INuGetBackend {
     configFiles: string[],
     enabledSourceNames: string[],
     prerelease?: boolean,
+    signal?: AbortSignal,
   ): Promise<AvailablePackage[]>;
 
   /**
@@ -74,6 +75,7 @@ export interface INuGetBackend {
     packageId: string,
     configFiles: string[],
     prerelease?: boolean,
+    signal?: AbortSignal,
   ): Promise<{ versions: string[]; versionFlags: Record<string, SearchedVersionMetadata> }>;
 
   /**
@@ -91,6 +93,7 @@ export interface INuGetBackend {
     packageId: string,
     version: string,
     configFiles: string[],
+    signal?: AbortSignal,
   ): Promise<PackageMetadata>;
 
   /**
@@ -105,6 +108,7 @@ export interface INuGetBackend {
     packageId: string,
     configFiles: string[],
     prerelease?: boolean,
+    signal?: AbortSignal,
   ): Promise<EnrichedPackageInfo>;
 
   /**

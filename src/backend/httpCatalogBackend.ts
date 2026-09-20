@@ -155,8 +155,9 @@ export class HttpCatalogBackend implements INuGetBackend {
     packageId: string,
     configFiles: string[],
     prerelease = false,
+    signal?: AbortSignal,
   ): Promise<VersionAnswer> {
-    if (!this._isEnabled()) return this._inner.getAllVersions(packageId, configFiles, prerelease);
+    if (!this._isEnabled()) return this._inner.getAllVersions(packageId, configFiles, prerelease, signal);
 
     const answers: VersionAnswer[] = [];
     const stillNeedCli: string[] = [];
@@ -166,13 +167,13 @@ export class HttpCatalogBackend implements INuGetBackend {
     const asked = new Set<string>();
 
     for (const configFile of configFiles) {
-      const answer = await this._fromHttp(packageId, configFile, prerelease, asked);
+      const answer = await this._fromHttp(packageId, configFile, prerelease, asked, signal);
       if (answer) answers.push(answer);
       else stillNeedCli.push(configFile);
     }
 
     if (stillNeedCli.length > 0) {
-      answers.push(await this._inner.getAllVersions(packageId, stillNeedCli, prerelease));
+      answers.push(await this._inner.getAllVersions(packageId, stillNeedCli, prerelease, signal));
     }
     return merge(answers);
   }
@@ -187,6 +188,7 @@ export class HttpCatalogBackend implements INuGetBackend {
     configFile: string,
     prerelease: boolean,
     asked: Set<string>,
+    signal?: AbortSignal,
   ): Promise<VersionAnswer | undefined> {
     let resolved: ResolvedConfigSources;
     try {
@@ -211,7 +213,7 @@ export class HttpCatalogBackend implements INuGetBackend {
       return true;
     });
 
-    const answers = await Promise.all(fresh.map((target) => this._versionsFrom(target, query)));
+    const answers = await Promise.all(fresh.map((target) => this._versionsFrom(target, query, signal)));
 
     const versions = new Set<string>();
     const versionFlags: Record<string, SearchedVersionMetadata> = {};
@@ -227,8 +229,9 @@ export class HttpCatalogBackend implements INuGetBackend {
   private async _versionsFrom(
     target: ProbeTarget,
     query: { packageId: string; includePrerelease: boolean },
+    signal?: AbortSignal,
   ): Promise<VersionAnswer | undefined> {
-    const catalog = await this._ladder.catalogFromSource(target, query);
+    const catalog = await this._ladder.catalogFromSource(target, query, signal);
     if (catalog) {
       const versions: string[] = [];
       const versionFlags: Record<string, SearchedVersionMetadata> = {};
@@ -261,7 +264,7 @@ export class HttpCatalogBackend implements INuGetBackend {
     // marks the picker shows today.
     if (this._capabilities.resourceUrls(target.url, 'RegistrationsBaseUrl').length > 0) return undefined;
 
-    const listing = await this._ladder.versionsFromSource(target, query);
+    const listing = await this._ladder.versionsFromSource(target, query, signal);
     return listing ? { versions: listing.versions, versionFlags: {} } : undefined;
   }
 
@@ -300,9 +303,10 @@ export class HttpCatalogBackend implements INuGetBackend {
     configFiles: string[],
     enabledSourceNames: string[],
     prerelease = false,
+    signal?: AbortSignal,
   ): Promise<AvailablePackage[]> {
     if (!this._isEnabled() || !this._search) {
-      return this._inner.searchPackages(query, configFiles, enabledSourceNames, prerelease);
+      return this._inner.searchPackages(query, configFiles, enabledSourceNames, prerelease, signal);
     }
 
     const enabled = new Set(enabledSourceNames.map((n) => n.toLowerCase()));
@@ -336,10 +340,10 @@ export class HttpCatalogBackend implements INuGetBackend {
       });
 
       const searched = await Promise.all(fresh.map(async (target) => {
-        await this._capabilities.ensure(target);
+        await this._capabilities.ensure(target, signal);
         // No search resource at all: nothing to fall back to, and nothing lost.
         if (!this._search?.hasSearch(target)) return { target, found: undefined, searchable: false };
-        const found = await this._search.searchSource(target, { query, prerelease });
+        const found = await this._search.searchSource(target, { query, prerelease }, signal);
         return { target, found, searchable: true };
       }));
 
@@ -372,7 +376,7 @@ export class HttpCatalogBackend implements INuGetBackend {
         // depends on what the sources before it already produced.
         const coveredBySearch = found?.some((hit) => hit.id.toLowerCase().includes(wanted));
         if (!coveredBySearch && !hits.some((hit) => hit.id.toLowerCase() === wanted)) {
-          const exact = await this._exactHit(target, query, prerelease, sourceName);
+          const exact = await this._exactHit(target, query, prerelease, sourceName, signal);
           if (exact) hits.push(exact);
         }
       }
@@ -380,7 +384,7 @@ export class HttpCatalogBackend implements INuGetBackend {
     }
 
     if (stillNeedCli.length > 0) {
-      hits.push(...await this._inner.searchPackages(query, stillNeedCli, enabledSourceNames, prerelease));
+      hits.push(...await this._inner.searchPackages(query, stillNeedCli, enabledSourceNames, prerelease, signal));
     }
 
     // First source wins on a duplicate id, exactly as the CLI path merges.
@@ -405,12 +409,13 @@ export class HttpCatalogBackend implements INuGetBackend {
     query: string,
     prerelease: boolean,
     sourceName: string,
+    signal?: AbortSignal,
   ): Promise<AvailablePackage | undefined> {
     if (!looksLikePackageId(query)) return undefined;
     const listing = await this._ladder.versionsFromSource(target, {
       packageId: query.trim(),
       includePrerelease: prerelease,
-    });
+    }, signal);
     const latestVersion = listing?.versions[0];
     if (!latestVersion) return undefined;
     // The id is echoed as the user typed it: the cheap rung answers with
@@ -431,8 +436,9 @@ export class HttpCatalogBackend implements INuGetBackend {
     packageId: string,
     version: string,
     configFiles: string[],
+    signal?: AbortSignal,
   ): Promise<PackageMetadata> {
-    if (!this._isEnabled()) return this._inner.getMetadata(packageId, version, configFiles);
+    if (!this._isEnabled()) return this._inner.getMetadata(packageId, version, configFiles, signal);
 
     const found = await this._firstCatalog(
       packageId,
@@ -446,8 +452,9 @@ export class HttpCatalogBackend implements INuGetBackend {
       // is known, and never derived inside the walk, which serves callers that
       // do need every page.
       { version, newestOnly: !version },
+      signal,
     );
-    if (!found) return this._inner.getMetadata(packageId, version, configFiles);
+    if (!found) return this._inner.getMetadata(packageId, version, configFiles, signal);
 
     const sorted = [...found.entries].sort((a, b) => compareSemVer(b.version, a.version));
     // The requested version came from the project or the restore graph and the
@@ -472,7 +479,7 @@ export class HttpCatalogBackend implements INuGetBackend {
     const entry = version
       ? sorted.find((e) => versionsEqual(e.version, version))
       : sorted.find((e) => !isPrerelease(e.version)) ?? sorted[0];
-    if (!entry) return this._inner.getMetadata(packageId, version, configFiles);
+    if (!entry) return this._inner.getMetadata(packageId, version, configFiles, signal);
     return toPackageMetadata(packageId, entry, found.sourceName);
   }
 
@@ -486,11 +493,12 @@ export class HttpCatalogBackend implements INuGetBackend {
     packageId: string,
     configFiles: string[],
     prerelease = false,
+    signal?: AbortSignal,
   ): Promise<EnrichedPackageInfo> {
-    if (!this._isEnabled()) return this._inner.enrichPackage(packageId, configFiles, prerelease);
+    if (!this._isEnabled()) return this._inner.enrichPackage(packageId, configFiles, prerelease, signal);
 
-    const found = await this._firstCatalog(packageId, configFiles, prerelease);
-    if (!found) return this._inner.enrichPackage(packageId, configFiles, prerelease);
+    const found = await this._firstCatalog(packageId, configFiles, prerelease, undefined, undefined, signal);
+    if (!found) return this._inner.enrichPackage(packageId, configFiles, prerelease, signal);
 
     const listed = found.entries.filter((e) => e.listed !== false);
     const versions = [...new Set(listed.map((e) => e.version))].sort((a, b) => compareSemVer(b, a));
@@ -534,6 +542,7 @@ export class HttpCatalogBackend implements INuGetBackend {
      * require; only a caller that answers about one version narrows it.
      */
     scope: { version?: string; newestOnly?: boolean } = {},
+    signal?: AbortSignal,
   ): Promise<{ entries: CatalogVersionEntry[]; sourceName: string } | undefined> {
     const query = { packageId, includePrerelease: prerelease, ...scope };
     const asked = new Set<string>();
@@ -551,7 +560,7 @@ export class HttpCatalogBackend implements INuGetBackend {
         if (asked.has(key)) continue;
         asked.add(key);
 
-        const entries = await this._ladder.catalogFromSource(target, query);
+        const entries = await this._ladder.catalogFromSource(target, query, signal);
         if (!entries) return undefined;
         if (entries.length === 0 || !accept(entries)) continue;
         return { entries, sourceName: target.name ?? target.url };

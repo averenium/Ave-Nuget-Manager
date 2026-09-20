@@ -1561,7 +1561,7 @@ describe('WebviewMessageBroker', () => {
 
       expect(backend.getMetadata).toHaveBeenCalled();
       for (const call of backend.getMetadata.mock.calls) {
-        expect(call[3]).toBeInstanceOf(AbortSignal);
+        expect(call[4]).toBeInstanceOf(AbortSignal);
       }
     });
 
@@ -2304,6 +2304,7 @@ describe('WebviewMessageBroker', () => {
       packageId: 'Elasticsearch.Net',
       version: '7.17.5',
       configFiles: ['/p/nuget.config'],
+      prerelease: false,
     });
     await new Promise((r) => setTimeout(r, 20));
 
@@ -2349,6 +2350,7 @@ describe('WebviewMessageBroker', () => {
       version: '2.0.123',
       configFiles: ['/p/nuget.config'],
       projectPath: '/p/App.csproj',
+      prerelease: false,
     });
     await new Promise((r) => setTimeout(r, 20));
 
@@ -2396,6 +2398,7 @@ describe('WebviewMessageBroker', () => {
       version: '2.0.123',
       configFiles: ['/p/nuget.config'],
       projectPath: '/p/App.csproj',
+      prerelease: false,
     });
     await new Promise((r) => setTimeout(r, 20));
 
@@ -2431,10 +2434,11 @@ describe('WebviewMessageBroker', () => {
       version: '2.0.123',
       configFiles: ['/p/nuget.config'],
       projectPath: '/p/App.csproj',
+      prerelease: false,
     });
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(backend.getMetadata).toHaveBeenCalledWith('Dapper', '2.0.123', ['/p/nuget.config'], expect.any(AbortSignal));
+    expect(backend.getMetadata).toHaveBeenCalledWith('Dapper', '2.0.123', ['/p/nuget.config'], false, expect.any(AbortSignal));
     const msg = posted.find((m) => m.type === 'PACKAGE_METADATA') as { metadata?: PackageMetadata } | undefined;
     expect(msg?.metadata?.id).toBe('Dapper');
   });
@@ -2451,14 +2455,14 @@ describe('WebviewMessageBroker', () => {
     broker.attach();
 
     simulateMessage({
-      type: 'GET_PACKAGE_METADATA', packageId: 'Old', version: '1.0.0', configFiles: ['/p/nuget.config'],
+      type: 'GET_PACKAGE_METADATA', packageId: 'Old', version: '1.0.0', configFiles: ['/p/nuget.config'], prerelease: false,
     });
     await new Promise((r) => setTimeout(r, 10));
-    const firstSignal = backend.getMetadata.mock.calls[0][3] as AbortSignal;
+    const firstSignal = backend.getMetadata.mock.calls[0][4] as AbortSignal;
     expect(firstSignal.aborted).toBe(false);
 
     simulateMessage({
-      type: 'GET_PACKAGE_METADATA', packageId: 'New', version: '1.0.0', configFiles: ['/p/nuget.config'],
+      type: 'GET_PACKAGE_METADATA', packageId: 'New', version: '1.0.0', configFiles: ['/p/nuget.config'], prerelease: false,
     });
     await new Promise((r) => setTimeout(r, 10));
 
@@ -2484,12 +2488,57 @@ describe('WebviewMessageBroker', () => {
       packageId: 'Pkg',
       version: '2.0.0',
       configFiles: ['/p/nuget.config'],
+      prerelease: false,
     });
     await new Promise((r) => setTimeout(r, 20));
 
     expect(foldersSpy).not.toHaveBeenCalled();
-    expect(backend.getMetadata).toHaveBeenCalledWith('Pkg', '2.0.0', ['/p/nuget.config'], expect.any(AbortSignal));
+    expect(backend.getMetadata).toHaveBeenCalledWith('Pkg', '2.0.0', ['/p/nuget.config'], false, expect.any(AbortSignal));
     expect(posted.some((m) => m.type === 'PACKAGE_METADATA')).toBe(true);
+  });
+
+  it('GET_PACKAGE_METADATA with no version carries the caller\'s own prerelease flag, not the settings store\'s (#128)', async () => {
+    // A never-enriched package's first click asks with no version at all —
+    // exactly the request `getMetadata` uses to pick its own default when
+    // none is named. `VersionSelector` sends this in the same effect, keyed
+    // on the same local value, as `GET_ALL_VERSIONS` — reading the host's own
+    // setting here instead would reopen the race #128 was reopened for: the
+    // webview's own state flips synchronously on the toggle, but the write to
+    // the settings store is asynchronous, so a request sent right after could
+    // still read the old value. Carrying the flag in the message itself,
+    // exactly as `GET_ALL_VERSIONS` already does, closes that window —
+    // proven here by a settings store that disagrees with the message and
+    // loses.
+    const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
+      dotnetConcurrency: 4,
+      httpConcurrencyPerOrigin: 6,
+      cacheTtlMs: 1000,
+      includePrerelease: false,
+      onFailedUpdate: 'rollback',
+      experimentalHttpCatalog: false,
+      vulnerabilityScript: '',
+      blockedPackages: [],
+    } as any);
+    try {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.getMetadata.mockResolvedValue(makeMetadata('Pkg'));
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'GET_PACKAGE_METADATA',
+        packageId: 'Pkg',
+        configFiles: ['/p/nuget.config'],
+        prerelease: true,
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(backend.getMetadata).toHaveBeenCalledWith('Pkg', '', ['/p/nuget.config'], true, expect.any(AbortSignal));
+    } finally {
+      cfgSpy.mockRestore();
+    }
   });
 
   it('GET_PACKAGE_METADATA reuses the enrich cache instead of a second search call', async () => {
@@ -2524,6 +2573,7 @@ describe('WebviewMessageBroker', () => {
       packageId: 'Newtonsoft.Json',
       version: '13.0.3',
       configFiles: ['/p/nuget.config'],
+      prerelease: false,
     });
     await new Promise((r) => setTimeout(r, 20));
 

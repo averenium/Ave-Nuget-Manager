@@ -236,6 +236,7 @@ export function VersionSelector({
       configFiles,
       version: restoredVersion || undefined,
       projectPath: projectPathFor(restoredVersion),
+      prerelease,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [packageId, prerelease, configFiles.join(','), restoredVersion, restoredProjectPath]);
@@ -249,7 +250,9 @@ export function VersionSelector({
       projectTfms={projectTfms}
       onChange={(v) => {
         onChange(v);
-        send({ type: 'GET_PACKAGE_METADATA', packageId, version: v, configFiles, projectPath: projectPathFor(v) });
+        send({
+          type: 'GET_PACKAGE_METADATA', packageId, version: v, configFiles, projectPath: projectPathFor(v), prerelease,
+        });
       }}
     />
   );

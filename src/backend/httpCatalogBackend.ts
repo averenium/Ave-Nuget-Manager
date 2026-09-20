@@ -436,9 +436,10 @@ export class HttpCatalogBackend implements INuGetBackend {
     packageId: string,
     version: string,
     configFiles: string[],
+    prerelease = false,
     signal?: AbortSignal,
   ): Promise<PackageMetadata> {
-    if (!this._isEnabled()) return this._inner.getMetadata(packageId, version, configFiles, signal);
+    if (!this._isEnabled()) return this._inner.getMetadata(packageId, version, configFiles, prerelease, signal);
 
     const found = await this._firstCatalog(
       packageId,
@@ -454,7 +455,7 @@ export class HttpCatalogBackend implements INuGetBackend {
       { version, newestOnly: !version },
       signal,
     );
-    if (!found) return this._inner.getMetadata(packageId, version, configFiles, signal);
+    if (!found) return this._inner.getMetadata(packageId, version, configFiles, prerelease, signal);
 
     const sorted = [...found.entries].sort((a, b) => compareSemVer(b.version, a.version));
     // The requested version came from the project or the restore graph and the
@@ -465,21 +466,23 @@ export class HttpCatalogBackend implements INuGetBackend {
     // No version named: the walk above is asked with `includePrerelease: true`
     // regardless, so a version this call was told to find by name — installed,
     // or already on screen — is always reachable even if it is itself a
-    // prerelease. But "no version named" means the caller has no opinion at
-    // all yet, and `sorted[0]` alone would hand it whichever is numerically
-    // newest without asking whether it opted into prereleases — measured on
+    // prerelease. But "no version named" means the caller has no opinion of
+    // its own, and it borrows the caller's actual prerelease setting instead —
+    // off, the newest *stable* entry is the honest default (measured on
     // `Microsoft.AspNetCore.OpenApi`, whose `11.0.0-rc.1` outranks the actual
-    // latest stable `10.0.12`. The newest *stable* entry is the honest default;
-    // only a package with no stable release at all falls through to `sorted[0]`.
-    // This only scans the page `newestOnly` already fetched above, so a
-    // package with many trailing prereleases spanning more than one page could
-    // still miss an older stable release — narrow enough not to be worth a
-    // wider walk for what this call only ever wanted one version's worth of
-    // detail from.
+    // latest stable `10.0.12`); on, `sorted[0]` is correct, because that is
+    // exactly what `getAllVersions` already lists first for the same package
+    // under the same setting, and disagreeing with it once more is the same
+    // bug the other way round (#128). A package with no stable release at all
+    // falls through to `sorted[0]` either way. This only scans the page
+    // `newestOnly` already fetched above, so a package with many trailing
+    // prereleases spanning more than one page could still miss an older
+    // stable release — narrow enough not to be worth a wider walk for what
+    // this call only ever wanted one version's worth of detail from.
     const entry = version
       ? sorted.find((e) => versionsEqual(e.version, version))
-      : sorted.find((e) => !isPrerelease(e.version)) ?? sorted[0];
-    if (!entry) return this._inner.getMetadata(packageId, version, configFiles, signal);
+      : (prerelease ? sorted[0] : sorted.find((e) => !isPrerelease(e.version)) ?? sorted[0]);
+    if (!entry) return this._inner.getMetadata(packageId, version, configFiles, prerelease, signal);
     return toPackageMetadata(packageId, entry, found.sourceName);
   }
 

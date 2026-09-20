@@ -413,6 +413,24 @@ describe('HttpCatalogBackend filling the details panel', () => {
     expect((await backend.getMetadata('X', '', ['a.config'])).description).toBe('Newer preview.');
   });
 
+  it('describes the newest entry overall, prerelease included, when the reader has opted into prereleases (#128)', async () => {
+    // With the toggle on, `getAllVersions` already lists the prerelease
+    // first — the version selector's own default follows that list. If
+    // `getMetadata` kept preferring stable regardless, the panel would name
+    // the prerelease in the version box while every section fed by metadata
+    // (Declared Dependencies, publish date, ...) described the stable
+    // release underneath it — the same mismatch #128 fixed, the other way
+    // round.
+    const backend = panelBackend({
+      [FEED_A]: [
+        entry('11.0.0-rc.1', { description: 'Preview.' }),
+        entry('10.0.12', { description: 'Stable.' }),
+      ],
+    });
+
+    expect((await backend.getMetadata('X', '', ['a.config'], true)).description).toBe('Preview.');
+  });
+
   it('still finds a version asked for by name even when it is itself a prerelease', async () => {
     const backend = panelBackend({
       [FEED_A]: [entry('11.0.0-rc.1', { description: 'Preview.' }), entry('10.0.12', { description: 'Stable.' })],
@@ -771,7 +789,7 @@ describe('HttpCatalogBackend delegation', () => {
       'listInstalled:1',
       'listTransitive:1',
       'searchPackages:5',
-      'getMetadata:4',
+      'getMetadata:5',
       'enrichPackage:4',
       'installPackage:5',
       'installPackageNoRestore:5',
@@ -865,7 +883,7 @@ describe('HttpCatalogBackend carries the caller\'s AbortSignal down (#116)', () 
     );
 
     await backend.getAllVersions('X', ['a.config'], false, controller.signal);
-    await backend.getMetadata('X', '1.0.0', ['a.config'], controller.signal);
+    await backend.getMetadata('X', '1.0.0', ['a.config'], false, controller.signal);
     await backend.enrichPackage('X', ['a.config'], false, controller.signal);
 
     expect(seen).toHaveLength(3);

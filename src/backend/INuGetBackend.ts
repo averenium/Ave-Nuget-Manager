@@ -88,11 +88,20 @@ export interface INuGetBackend {
    * complete Info panel for an *installed* package at its current resolved
    * version should prefer its local `.nuspec` (see `nuspecParser.ts` /
    * `nuspecLocator.ts`) and fall back to this only when that's unavailable.
+   *
+   * `prerelease` decides only the *default* when `version` is empty: the
+   * search underneath always includes prereleases regardless, so a version
+   * named explicitly is reachable either way (#128). With no version named,
+   * the newest stable entry is preferred with the setting off and the newest
+   * entry overall — prerelease or not — with it on, which is what
+   * `getAllVersions` already returns as the version list's own default; the
+   * two disagreeing is what #128 was reopened for once prerelease was on.
    */
   getMetadata(
     packageId: string,
     version: string,
     configFiles: string[],
+    prerelease?: boolean,
     signal?: AbortSignal,
   ): Promise<PackageMetadata>;
 

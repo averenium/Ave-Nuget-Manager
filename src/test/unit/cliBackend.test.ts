@@ -110,6 +110,30 @@ describe('CliBackend.getMetadata', () => {
     expect(meta.description).toBe('Preview.');
   });
 
+  it('picks the newest entry overall, prerelease included, when the reader has opted into prereleases (#128)', async () => {
+    // With the toggle on, `getAllVersions` already lists the prerelease
+    // first — the version selector's own default follows that list. If
+    // `getMetadata` kept preferring stable regardless, the panel would name
+    // the prerelease in the version box while every section fed by metadata
+    // described the stable release underneath it — the same mismatch #128
+    // fixed, the other way round.
+    const json = JSON.stringify({
+      version: 1,
+      searchResult: [{
+        sourceName: 'nuget.org',
+        packages: [
+          { id: 'Example.Extensions.OpenApi', version: '10.0.12', description: 'Stable.' },
+          { id: 'Example.Extensions.OpenApi', version: '11.0.0-rc.1', description: 'Preview.' },
+        ],
+      }],
+    });
+    const runner = fakeRunner(() => ok(json));
+    const backend = new CliBackend(runner);
+    const meta = await backend.getMetadata('Example.Extensions.OpenApi', '', ['/p/nuget.config'], true);
+    expect(meta.version).toBe('11.0.0-rc.1');
+    expect(meta.description).toBe('Preview.');
+  });
+
   it('passes --verbosity detailed so description/projectUrl come back at all', async () => {
     const runner = fakeRunner(() => ok(SEARCH_JSON));
     const backend = new CliBackend(runner);

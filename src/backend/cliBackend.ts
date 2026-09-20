@@ -378,6 +378,7 @@ export class CliBackend implements INuGetBackend {
     packageId: string,
     version: string,
     configFiles: string[],
+    prerelease = false,
     // Not honoured here (#116) — see `searchPackages`.
     _signal?: AbortSignal,
   ): Promise<PackageMetadata> {
@@ -398,13 +399,17 @@ export class CliBackend implements INuGetBackend {
     // itself always includes prereleases regardless of the caller's own
     // setting (so a version asked for by name, installed or already on
     // screen, is always reachable even if it is itself a prerelease) — but
-    // with no name given, the newest *stable* entry is the honest default;
-    // only a package with no stable release at all falls through to the
-    // newest entry overall.
+    // with no name given, this borrows the caller's actual prerelease setting
+    // instead: off, the newest *stable* entry is the honest default; on,
+    // the newest entry overall, because that is exactly what `getAllVersions`
+    // already lists first for the same package under the same setting, and
+    // disagreeing with it once more is the same bug the other way round
+    // (#128). A package with no stable release at all falls through to the
+    // newest entry overall either way.
     const sorted = [...result.entries].sort((a, b) => compareSemVerDesc(a.version, b.version));
     const entry = version
       ? sorted.find((e) => versionsEqual(e.version, version)) ?? sorted[0]
-      : sorted.find((e) => !isPrerelease(e.version)) ?? sorted[0];
+      : (prerelease ? sorted[0] : sorted.find((e) => !isPrerelease(e.version)) ?? sorted[0]);
 
     return searchedMetadataToPackageMetadata(packageId, entry.version, entry);
   }

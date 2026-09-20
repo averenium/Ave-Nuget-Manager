@@ -657,7 +657,7 @@ export class WebviewMessageBroker {
         break;
 
       case 'GET_PACKAGE_METADATA':
-        await this._handleGetMetadata(msg.packageId, msg.version, msg.configFiles, msg.projectPath);
+        await this._handleGetMetadata(msg.packageId, msg.version, msg.configFiles, msg.projectPath, msg.prerelease);
         break;
 
       case 'GET_VERSION_DIFF': {
@@ -1297,6 +1297,7 @@ export class WebviewMessageBroker {
     version: string | undefined,
     configFiles: string[],
     projectPath: string | undefined,
+    prerelease: boolean,
   ): Promise<void> {
     // Superseded the moment the reader picks another package or version
     // before this one answers (#116) — the same shape `_licenseAbort` already
@@ -1307,7 +1308,8 @@ export class WebviewMessageBroker {
       const nuspecMetadata = projectPath && version
         ? await this._tryReadNuspecMetadata(projectPath, packageId, version)
         : undefined;
-      const metadata = nuspecMetadata ?? await this._getSearchMetadata(packageId, version, configFiles, signal);
+      const metadata = nuspecMetadata
+        ?? await this._getSearchMetadata(packageId, version, configFiles, prerelease, signal);
       if (signal.aborted) return;
       this.provider.postMessage({ type: 'PACKAGE_METADATA', metadata });
     } catch (err) {
@@ -1419,10 +1421,14 @@ export class WebviewMessageBroker {
     if (!installedEntry) return undefined;
     if (versionsEqual(installedEntry.resolvedVersion, selectedVersion)) return undefined;
 
+    // Both versions here are named explicitly, never empty, so `prerelease`
+    // cannot change which entry either call resolves to — passed along
+    // anyway only to satisfy `_getSearchMetadata`'s signature.
+    const prerelease = getConfig().includePrerelease;
     const [before, after] = await Promise.all([
-      this._getSearchMetadata(packageId, installedEntry.resolvedVersion, configFiles, signal)
+      this._getSearchMetadata(packageId, installedEntry.resolvedVersion, configFiles, prerelease, signal)
         .then((m) => m.declaredDependencies).catch(() => undefined),
-      this._getSearchMetadata(packageId, selectedVersion, configFiles, signal)
+      this._getSearchMetadata(packageId, selectedVersion, configFiles, prerelease, signal)
         .then((m) => m.declaredDependencies).catch(() => undefined),
     ]);
 
@@ -1455,8 +1461,11 @@ export class WebviewMessageBroker {
     // here. It cannot state a file licence at all — measured, the registration
     // leaf has no such key — so only then is the package's own nuspec worth a
     // request of its own.
-    const catalogMetadata = await this._getSearchMetadata(packageId, selectedVersion, configFiles, signal)
-      .catch(() => undefined);
+    // `selectedVersion` is always named here (guarded above), so `prerelease`
+    // cannot change which entry this resolves to.
+    const catalogMetadata = await this._getSearchMetadata(
+      packageId, selectedVersion, configFiles, getConfig().includePrerelease, signal,
+    ).catch(() => undefined);
     if (signal?.aborted) return undefined;
     const selected = catalogMetadata?.license
       ?? await this.licenseLookup?.forVersion(packageId, selectedVersion, configFiles, signal)
@@ -1550,11 +1559,18 @@ export class WebviewMessageBroker {
     }
   }
 
-  /** A fresh enrich-detailed-search cache hit for `version`, else a new CLI call. */
+  /**
+   * A fresh enrich-detailed-search cache hit for `version`, else a new CLI
+   * call. `prerelease` is the caller's own — supplied explicitly rather than
+   * read from `getConfig()` here, so a caller racing the settings write can
+   * pass the value it actually means (#128; see `GET_PACKAGE_METADATA`'s own
+   * doc comment in `messages.ts`).
+   */
   private async _getSearchMetadata(
     packageId: string,
     version: string | undefined,
     configFiles: string[],
+    prerelease: boolean,
     signal?: AbortSignal,
   ): Promise<import('./types').PackageMetadata> {
     const cached = this._cache.get(packageId.toLowerCase());
@@ -1571,7 +1587,7 @@ export class WebviewMessageBroker {
       ], Date.now() - (cached?.fetchedAt ?? 0));
       return searchedMetadataToPackageMetadata(packageId, wantVersion, cachedEntry);
     }
-    return this.backend.getMetadata(packageId, version ?? '', configFiles, signal);
+    return this.backend.getMetadata(packageId, version ?? '', configFiles, prerelease, signal);
   }
 
   /**

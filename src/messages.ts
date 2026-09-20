@@ -33,7 +33,16 @@ export type WebviewMessage =
   // `projectPath` is sent only when `version` is exactly the version already
   // installed there — it lets the host prefer that project's local .nuspec
   // (offline, complete) over the search response for the Info panel (#86).
-  | { type: 'GET_PACKAGE_METADATA'; packageId: string; version?: string; configFiles: string[]; projectPath?: string }
+  /**
+   * `prerelease` travels with the request rather than being read on the host
+   * from the settings store, the same way `GET_ALL_VERSIONS` already carries
+   * it (#128). The picker and this request are asked from the same effect,
+   * keyed on the same local value; reading the host's own setting instead
+   * would open a window right after the toggle changes — the webview's state
+   * flips synchronously, but the write to the settings store is asynchronous
+   * — in which this request could still read the old value for one send.
+   */
+  | { type: 'GET_PACKAGE_METADATA'; packageId: string; version?: string; configFiles: string[]; projectPath?: string; prerelease: boolean }
   | { type: 'GET_ALL_VERSIONS'; packageId: string; configFiles: string[]; prerelease: boolean }
   /**
    * An implicit row for this id scrolled into view (#118). The feed is only

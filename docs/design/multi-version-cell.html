@@ -213,7 +213,8 @@
   </div>
 
   <div class="cell">
-    <h3>D &mdash; today, tidied</h3>
+    <h3>D &mdash; today, tidied <span style="color:#7ec699; font-weight:600; text-transform:uppercase; letter-spacing:.04em; font-size:10px; border:1px solid #2f5c42; background:rgba(78,201,148,.12); border-radius:3px; padding:1px 6px; margin-left:6px;">Chosen, with a caveat</span></h3>
+    <p class="cap" style="margin:-2px 0 6px;">Added retroactively after <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/115">#115</a> found this page never said which variant shipped &mdash; unlike <code>multi-version-colour.html</code>'s explicit &ldquo;Decided&rdquo; heading, and the gap let an implementation ship that is not quite D: it took D's separator and stepped-back styling, but capped like A &mdash; primary plus <strong>one</strong> stepped-back version, not up to two. The five-project row below shows what actually ships today: <code>versionCellFor</code>'s <code>MAX_VERSIONS_INLINE</code> is 2, so the five-project row reads <code>3.4.0 &middot; 3.1.0 +1</code>, not the <code>3.4.0 &middot; 3.1.0 &middot; 2.8.1</code> drawn below it &mdash; matching <code>multi-version-colour.html</code>'s own rows (<code>3.1.0 &middot; 3.0.4 +1</code>, <code>9.0.0 &middot; 6.0.0 +2</code>) rather than this document's own examples.</p>
     <div class="pane">
       <div class="scn">two projects, two versions</div>
       <div class="r">

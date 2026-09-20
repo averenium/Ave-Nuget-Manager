@@ -109,6 +109,18 @@
   .note { color: #6a6a6a; font-size: 11px; margin-top: 10px; max-width: 80ch; }
   code { font-family: Consolas, monospace; font-size: 11px; color: #b4b4b4; }
   .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
+
+  /* ── #115: the crosses-major case with nothing folded away ────────────────── */
+  /* The exact light-theme deepening K3+L4 settled on above (55%, not L3's
+     withdrawn 62% --warn-soft) — reused as-is rather than re-derived. */
+  .pane { --warn-settled: var(--warn); }
+  .pane.light { --warn-settled: color-mix(in srgb, var(--warn) 55%, var(--fg)); }
+  /* Chosen: multi-version-cell.html's variant C, revived for this one case. */
+  .axis-major {
+    font-size: 10px; color: var(--warn-settled);
+    background: color-mix(in srgb, var(--warn) 16%, transparent);
+    border-radius: 3px; padding: 0 5px; white-space: nowrap;
+  }
 </style>
 </head>
 <body>
@@ -523,6 +535,54 @@ body.vscode-light .pkg-row__more--major {
 <div class="note">
   <b>Settled: K3 + L4</b>, written out at the top of this page. L3 was withdrawn &mdash; it darkens light, which was wanted, but washes out the dark gold, which was not. O and M stay on the page as the alternatives that were weighed: O for keeping the tint in the ink, M for dropping it from the cell entirely.
 </div>
+
+<h2>The case neither this page nor <code>multi-version-cell.html</code> drew &mdash; <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/115">#115</a></h2>
+<p class="cap">K3's own rule is &ldquo;the count carries the mark, and only when the spread crosses a major.&rdquo; <code>versionCellFor</code> computes <code>crossesMajor</code> from the whole spread, correctly &mdash; but the count (<code>.pkg-row__more</code>) only exists at all when something is actually folded away (<code>moreCount &gt; 0</code>). Two versions, one major apart, both short enough to print inline: <code>9.0.0 &middot; 6.0.0</code>, <code>crossesMajor</code> true, nothing folded, no count, nowhere for K3's mark to sit. Every row decided above has at least one version folded into <code>+N</code>; this one never was. Settled below, after weighing three ways to close it.</p>
+
+<div class="opt">
+  <div>
+    <p class="skin">DARK &mdash; TODAY</p>
+    <div class="pane">
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span>6.0.0</span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT &mdash; TODAY</p>
+    <div class="pane light">
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span>6.0.0</span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>What actually ships</b>
+    <code>moreCount</code> is 0, so <code>{cell!.moreCount &gt; 0 &amp;&amp; (&hellip;)}</code> in <code>PackageRow.tsx</code> never renders <code>.pkg-row__more</code> at all &mdash; not even plain, not even without the wash. <code>crossesMajor</code> is <code>true</code> and nothing on screen says so. Identical to how row 4 of K0 read before K3 existed, except this time no later variant already fixed it.
+  </div>
+</div>
+
+<div class="opt">
+  <div>
+    <p class="skin">DARK</p>
+    <div class="pane">
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span>6.0.0 <span class="axis-major">2 projects</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div>
+    <p class="skin">LIGHT</p>
+    <div class="pane light">
+      <div class="r"><div class="r1"><span class="nm">Example.Extensions.Logging<span class="mark">&#8593;</span></span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">9.0.0<span class="sep">&middot;</span>6.0.0 <span class="axis-major">2 projects</span></span><span class="v right">10.0.0</span></div></div>
+    </div>
+  </div>
+  <div class="opt__why">
+    <b>Chosen: the axis badge <code>multi-version-cell.html</code> set aside, revived for just this case &mdash; why</b>
+    That document's variant C named the axis on every row and lost to D for being the widest of four, always. Here there is no D-style enumeration competing for the space &mdash; nothing is folded, so the badge is the only thing in the slot &mdash; and it says more than a colour would: not just <em>that</em> this crosses a major, but <em>along what</em> (<code>2 projects</code> vs. <code>2 TFM</code>, the same distinction <code>withinOneProject</code> already draws for the tooltip). Recolouring the separator was the plainer alternative, but it puts the mark in the middle of the cell instead of at the end, where the reader already looks for it on a three-or-more row; rendering the count's slot with no number was rejected for asking one shape to mean two things, a count only when it has a digit in it.
+    <span class="cost">Cost: the only one of the three that needed a string, not just a colour &mdash; and the widest, worth checking against the narrow-pane fallback <a href="#narrow">already decided</a> for the enumeration itself.</span>
+  </div>
+</div>
+
+<p class="note">The badge reuses <code>--color-warning</code> exactly the way K3+L4 already do &mdash; <code>color-mix(... var(--color-warning) 16%, transparent)</code> for the wash, <code>body.vscode-light</code> deepening the ink to <code>color-mix(... var(--color-warning) 55%, var(--color-fg))</code> for its text. No new token, and no new light-theme rule beyond the one <a href="https://github.com/averenium/Ave-Nuget-Manager/pull/110">#108</a> already added.</p>
 
 </body>
 </html>

@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The dependents that have to move with a bump — design for #109</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px;
+    background: #181818; color: #cccccc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #e6e6e6; margin: 0 0 6px; }
+  .lede { color: #8a8a8a; font-size: 12px; margin: 0 0 22px; max-width: 84ch; }
+  h2 { font-size: 14px; font-weight: 600; color: #e6e6e6; margin: 34px 0 4px; }
+  h2 .num { color: #6a6a6a; font-weight: 400; }
+  h3 { font-size: 12px; font-weight: 600; color: #cccccc; margin: 0 0 6px; }
+  .cap { color: #8a8a8a; font-size: 12px; margin: 0 0 14px; max-width: 84ch; }
+  .row { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 16px; }
+  .panel {
+    background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 6px;
+    padding: 12px 14px; font-size: 13px;
+  }
+  a { color: #4daafc; text-decoration: none; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: 11.5px; color: #d4d4d4; background: #262626; border-radius: 3px; padding: 0 3px; }
+  .facts { border-left: 2px solid #3c3c3c; padding: 2px 0 2px 12px; margin: 0 0 10px; max-width: 84ch; }
+  .facts p { margin: 0 0 7px; font-size: 12px; color: #b4b4b4; }
+  .facts p:last-child { margin-bottom: 0; }
+  .note { color: #6a6a6a; font-size: 11px; margin-top: 9px; max-width: 84ch; }
+  .why { font-size: 11px; color: #7a7a7a; margin-top: 8px; max-width: 47ch; }
+  .cost { color: #cc8888; }
+  .legend { margin-top: 6px; font-size: 11px; color: #8a8a8a; line-height: 1.7; max-width: 84ch; }
+  .legend b { color: #b4b4b4; }
+
+  /* ── the popup itself, matching .popup/.popup__* in global.css ────────────── */
+  .popup { background: #181818; border: 1px solid #3c3c3c; border-radius: 3px; padding: 12px; width: 400px; display: flex; flex-direction: column; gap: 8px; }
+  .popup__title { font-weight: 600; font-size: 14px; color: #e6e6e6; }
+  .popup__body { font-size: 12px; display: flex; flex-direction: column; gap: 8px; color: #cccccc; }
+  .popup__body strong { font-weight: 600; }
+  .popup__list-plain { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  .popup__actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .btn { border-radius: 3px; padding: 4px 12px; font-size: 12px; cursor: pointer; border: none; }
+  .btn--secondary { background: #3a3d41; color: #d4d4d4; }
+  .btn--primary { background: #0e639c; color: #fff; }
+  .popup__meta { font-size: 11px; color: #8a8a8a; }
+  .gtree__children--scroll { max-height: 168px; overflow-y: auto; padding-right: 8px; margin-top: 8px; }
+
+  /* ── the nested-tree confirmation: a root box, indented children ──────────── */
+  .gnode { background: #262626; border: 1px solid #3c3c3c; border-radius: 4px; padding: 6px 10px; }
+  .gnode__name { font-weight: 600; color: #e6e6e6; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gnode__ver { font-family: Consolas, monospace; font-size: 11px; margin-top: 2px; color: #8a8a8a; }
+  .gnode__ver.up { color: #4ec994; }
+  .gtree__children { border-left: 1px solid #3c3c3c; margin-left: 19px; padding-left: 14px; margin-top: 6px; display: flex; flex-direction: column; gap: 5px; }
+  .gtree__row { font-size: 12px; position: relative; }
+  .gtree__row::before { content: ''; position: absolute; left: -14px; top: 8px; width: 10px; height: 1px; background: #3c3c3c; }
+  .gtree__row-line { display: flex; justify-content: space-between; gap: 8px; }
+  .gtree__why { color: #6a6a6a; font-size: 10.5px; margin-top: 1px; }
+  .gtree__row > .gtree__children { margin-top: 5px; }
+
+  /* ── package-row + context-menu chrome, approximating PkgListRow / pkg-ctx-menu ─ */
+  .pane { background: #1f1f1f; border: 0.5px solid #2f2f2f; border-radius: 4px; overflow: hidden; width: 300px; }
+  .r { padding: 5px 9px; }
+  .r1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .nm { font-weight: 500; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6e6e6; }
+  .src { font-size: 10px; color: #6e6e6e; flex: 0 0 auto; }
+  .r2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); column-gap: 8px; min-height: 15px; align-items: baseline; }
+  .v { font-size: 12px; color: #c8c8c8; font-variant-numeric: tabular-nums; }
+  .v.right { justify-self: end; text-align: right; }
+  .v.up { color: #4ec994; }
+  .ctx-menu { background: #1f1f1f; border: 1px solid #454545; border-radius: 3px; box-shadow: 0 2px 8px rgba(0,0,0,.36); padding: 4px 0; width: 220px; }
+  .ctx-menu__item { padding: 4px 12px; font-size: 12px; color: #cccccc; }
+  .ctx-menu__item.hi { background: #04395e; }
+  .ctx-menu__sep { border-top: 1px solid #333; margin: 4px 0; }
+</style>
+</head>
+<body>
+
+<h1>The dependents that have to move with a bump</h1>
+<p class="lede">Design for <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/109">#109</a>. The issue is mostly a backend proposal — walking <code>project.assets.json</code>'s reverse graph, a registration lookup for the admitting version — and it settles almost everything about the confirmation UI by pointing at precedent already in the codebase. It leaves one question explicitly open (§3); a second — how the confirmation should render once a bump forces more than one dependent — came up while drawing it (§2). Both are settled below, over two rounds of this file.</p>
+
+<div class="facts">
+  <p><strong>The worked case, real, from the issue</strong> — <code>Example.Shop.Infrastructure</code> (the repo's own <code>demo/</code> project) references <code>RabbitMQ.Client</code> 6.8.1 and <code>EasyNetQ</code> 7.8.0, which declares only <code>"6.8.1"</code> as its floor. Bumping the client to 7.2.2 restores clean — the range is satisfied — and breaks at runtime, because 7.x replaced the API 7.8.0 was built against. The registration answer is exact: <code>EasyNetQ</code> 8.1.1 is the first version whose own dependency range admits a 7.x client. The panels below rename the two packages to <code>Example.Messaging.Transport</code> / <code>Example.Messaging.Bus</code> per house convention; the version numbers are the issue's own.</p>
+  <p><strong>Decided in the issue, drawn as given:</strong> Central Package Management gets no special case — one popup, one file behind it. Case 3 (a bare-minimum range crossed by a major — the case above) is never proposed automatically; the user asks for it on that row. Cases 1 and 2 (an actual <code>NU1608</code>/<code>NU1605</code>) are conditions NuGet already reports, so those can interrupt the way <code>CrossLinePopup</code> and <code>RoslynCapPopup</code> already do — no new entry point to draw there. Depth is capped at 10 as a safety valve; the cap that matters for the UI is breadth, the count of packages a proposal is allowed to list.</p>
+  <p><strong>§3 was the issue's own open question</strong> — how the proposal reads once the closure is larger than that breadth cap — and it is settled: a count, and the full list scrolls. <strong>§2 raised a different one</strong>, not asked by the issue: how the list itself should read once a bump forces more than one dependent. Settled the same way, and for the same reason once a mixed depth-and-breadth case was drawn: one nested view (<code>.gtree__children</code>) rather than a flat list or a separate chain diagram, because a flat list has no room for <em>why</em> a package is on it and a dedicated chain diagram has no way to show a fan-out at all.</p>
+  <p><strong>Precedent this reuses:</strong> <code>BatchLicensePopup</code> for a popup listing several packages' version pairs in one place; <code>ProjectSelectionPopup</code>'s <code>popup__item--incompatible</code> for dimming an entry that cannot take the change rather than removing it (#107, the same "dim, don't remove" rule this file leans on again in §3); <code>CrossLinePopup</code>/<code>SplitReferencePopup</code> for a plain, non-checkable list stating a consequence and one decisive action — the shape §2 follows, because a cascade's members are not independent the way a licence batch's are: leaving one out defeats the point of taking the rest.</p>
+</div>
+
+<h2><span class="num">1 ·</span> Where this starts</h2>
+<p class="cap">Two different triggers, already decided, drawn once each rather than as a choice.</p>
+<div class="row">
+  <div class="panel">
+    <h3>Cases 1–2 — interrupts the apply, like today's other popups</h3>
+    <p class="why" style="max-width:52ch;">Picking a version that trips <code>NU1608</code> or downgrades below another package's floor already fails or warns on restore. The cascade check sits beside the existing <code>needsRoslynUpgradeConfirm</code> / cross-line checks in <code>requestApply</code> — no new row control, no new visual here, just one more condition that can open §2's popup instead of writing straight through.</p>
+  </div>
+  <div class="panel">
+    <h3>Case 3 — asked for on the row, via the existing right-click menu</h3>
+    <div class="pane">
+      <div class="r"><div class="r1"><span class="nm">Example.Messaging.Transport</span><span class="src">nuget.org</span></div>
+        <div class="r2"><span class="v">6.8.1</span><span class="v right up">7.2.2</span></div></div>
+    </div>
+    <div class="ctx-menu" style="margin-top:8px;">
+      <div class="ctx-menu__item hi">Check what else has to move</div>
+      <div class="ctx-menu__sep"></div>
+      <div class="ctx-menu__item">Block updates</div>
+    </div>
+    <p class="why">One line added to <code>BlockedPackageMenu</code>'s existing right-click menu rather than a new icon on an already-minimal row. A bare-minimum range crossed by a major is a heuristic (measured at ~2% of declarations even carrying an explicit range), so it stays something the reader reaches for, not something pushed at them.</p>
+  </div>
+</div>
+
+<h2><span class="num">2 ·</span> The confirmation</h2>
+<p class="cap">Not checkable rows: a cascade's members are causally linked, so a plain list and one decision — the shape <code>CrossLinePopup</code> already uses — rather than <code>BatchLicensePopup</code>'s per-row opt-out. How that list is rendered was open for two rounds; both are settled below.</p>
+<div class="row">
+  <div class="panel">
+    <h3>Chosen: one nested view, for every shape — why</h3>
+    <div class="popup">
+      <div class="popup__title">Example.Messaging.Transport</div>
+      <div class="popup__body">
+        <p><strong>7.2.2</strong> is outside what <code>Example.Messaging.Bus</code> 7.8.0 was built against. One version of it admits the new client:</p>
+        <div class="gnode">
+          <div class="gnode__name">Example.Messaging.Transport</div>
+          <div class="gnode__ver up">6.8.1 → 7.2.2</div>
+        </div>
+        <div class="gtree__children">
+          <div class="gtree__row">
+            <div class="gtree__row-line">Example.Messaging.Bus <span class="gnode__ver up">7.8.0 → 8.1.1</span></div>
+            <div class="gtree__why">requires ≥7.2.0</div>
+          </div>
+        </div>
+        <p>Restore stays green either way — this is caught by range, not by the compatibility NuGet itself checks. Taking both is the smallest change that keeps them working together.</p>
+      </div>
+      <div class="popup__actions">
+        <button type="button" class="btn btn--secondary">Cancel</button>
+        <button type="button" class="btn btn--primary">Take both</button>
+      </div>
+    </div>
+    <p class="why">Wording still mirrors <code>CrossLinePopup</code>: state the fact, one decisive action, no checkboxes — a cascade's members are not independent, so leaving one out defeats the point. What changed across two rounds of this file is only the list itself: a flat <code>popup__list-plain</code> lost to <code>.gtree__children</code>, the same indentation <a href="https://github.com/averenium/Ave-Nuget-Manager/issues/107">§3</a>'s fan-out already needed, because the flat version had nowhere to put <em>why</em> <code>Bus</code> is here — the registration range, <code>requires ≥7.2.0</code>, straight from <code>catalogEntry.dependencyGroups[].dependencies[].range</code> — without a third line per row. One mechanism, not two: the same nesting reads as this for one dependent, a list for many unrelated ones (§3), a staircase for a real chain, and both at once when the walk returns both. <code>Example.Shop.Infrastructure</code> stays out of the popup itself, implied by the row it was opened from.</p>
+  </div>
+
+  <div class="panel">
+    <h3>Three hops — the same nesting, one step deeper each time</h3>
+    <div class="popup">
+      <div class="popup__title">Example.Messaging.Transport</div>
+      <div class="popup__body">
+        <p><strong>7.2.2</strong> forces two other packages to move in turn.</p>
+        <div class="gnode">
+          <div class="gnode__name">Example.Messaging.Transport</div>
+          <div class="gnode__ver up">6.8.1 → 7.2.2</div>
+        </div>
+        <div class="gtree__children">
+          <div class="gtree__row">
+            <div class="gtree__row-line">Example.Messaging.Bus <span class="gnode__ver up">7.8.0 → 8.1.1</span></div>
+            <div class="gtree__why">requires ≥7.2.0</div>
+            <div class="gtree__children">
+              <div class="gtree__row">
+                <div class="gtree__row-line">Example.Messaging.Outbox <span class="gnode__ver up">3.1.0 → 3.4.0</span></div>
+                <div class="gtree__why">requires ≥8.1.0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="popup__actions">
+        <button type="button" class="btn btn--secondary">Cancel</button>
+        <button type="button" class="btn btn--primary">Take all 3</button>
+      </div>
+    </div>
+    <p class="why">Corrected from the last round, which called this "a single column" — it is not. Indentation shows it is <code>Transport → Bus → Outbox</code>, not three packages independently tied to <code>Transport</code>, but each hop also marches the row another ~33px to the right, and <code>Outbox</code>'s row here is already giving up close to a fifth of the popup's width to do it.
+    <span class="cost">Cost, honestly open: this file has not drawn a chain past two hops, and #109's own depth cap is 10. Nothing here says the staircase still reads at hop 5 rather than needing a cap of its own, or a different treatment — a flatter one, an id that starts eliding — once a real deep case exists to check it against.</span></p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="panel">
+    <h3>Twenty-three siblings — the same view, flush</h3>
+    <div class="popup" style="width:340px;">
+      <div class="popup__title">Example.Extensions.Abstractions</div>
+      <div class="popup__body">
+        <div class="gnode">
+          <div class="gnode__name">Example.Extensions.Abstractions</div>
+          <div class="gnode__ver up">8.1.0 → 9.0.0</div>
+        </div>
+        <div class="gtree__children">
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Http <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Logging <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Options <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row" style="color:#6a6a6a;"><div class="gtree__row-line">+ 20 more, all direct children — none depend on each other</div></div>
+        </div>
+      </div>
+    </div>
+    <p class="why">All 23 sit at depth 1, siblings under one root, none depending on each other — there is no chain to show, so the same <code>.gtree__children</code> the panels above use for a hop renders these flush with no indentation to spend. This and the three-hop panel above are the two clean extremes; the reverse-graph walk is under no obligation to hand back either one on its own, which is exactly what the next panel draws.</p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="panel" style="flex: 1 1 100%;">
+    <h3>Proof it generalises — deep in one branch, wide in the rest</h3>
+    <p class="why" style="margin-top:0; max-width:none;">The case an arbitrary reverse-graph walk actually produces: not a pure chain, not a pure fan-out, but both at once. <code>Example.Extensions.Http</code> is one of three direct dependents here exactly as in the fan-out panel, but taking it to 9.0.0 in turn forces <code>Example.WebFramework.Client</code>, which has no reason to move otherwise — the same shape as the three-hop panel, one branch over.</p>
+    <div class="popup" style="width:360px;">
+      <div class="popup__title">Example.Extensions.Abstractions</div>
+      <div class="popup__body">
+        <p><strong>9.0.0</strong> needs 4 other packages to move with it.</p>
+        <div class="gnode">
+          <div class="gnode__name">Example.Extensions.Abstractions</div>
+          <div class="gnode__ver up">8.1.0 → 9.0.0</div>
+        </div>
+        <div class="gtree__children">
+          <div class="gtree__row">
+            <div class="gtree__row-line">Example.Extensions.Http <span class="gnode__ver up">8.1.0 → 9.0.0</span></div>
+            <div class="gtree__children">
+              <div class="gtree__row">
+                <div class="gtree__row-line">Example.WebFramework.Client <span class="gnode__ver up">3.1.0 → 3.4.0</span></div>
+                <div class="gtree__why">requires Http ≥9.0.0</div>
+              </div>
+            </div>
+          </div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Logging <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Caching <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+        </div>
+      </div>
+      <div class="popup__actions">
+        <button type="button" class="btn btn--secondary">Cancel</button>
+        <button type="button" class="btn btn--primary">Take all 4</button>
+      </div>
+    </div>
+    <p class="why" style="max-width:none; margin-top:10px;">The same <code>.gtree__children</code> indentation every other panel in §2 and §3 uses, nested one level further for the one branch that needs it — not a third diagram type, and no code that has to decide "is this a chain or a fan-out" before it can render. <code>Example.Extensions.Logging</code> and <code>Example.Extensions.Caching</code> stay flush with <code>Http</code> because they do not have children of their own — the indentation is only ever as deep as the graph actually is, which is the whole reason one mechanism covers the plain list, the staircase, and this at once.
+    <span class="cost">Cost: real tree-rendering code — recursive, not a fixed two- or three-row template — and the CSS guide line has to keep lining up correctly at every depth and popup width the walk can produce, which the fixed-depth panels above never had to prove.</span></p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="panel">
+    <h3>Dead end — no version admits the target</h3>
+    <div class="popup">
+      <div class="popup__title">Example.Messaging.Transport</div>
+      <div class="popup__body">
+        <p>No version of <code>Example.Messaging.Bus</code> declares a range wide enough for <strong>7.2.2</strong> — every release stops at <code>[6.0.0, 7.0.0)</code>. Taking this version breaks <code>Example.Messaging.Bus</code> at runtime with nothing that would bring it back in line.</p>
+        <p>This bump isn't safe yet. Blocking it keeps it off every batch update until that changes.</p>
+      </div>
+      <div class="popup__actions">
+        <button type="button" class="btn btn--secondary">Cancel</button>
+        <button type="button" class="btn btn--primary">Block this update</button>
+      </div>
+    </div>
+    <p class="why">The issue calls this a first-class outcome, not an error: <em>“Block updates exists for exactly this.”</em> Same popup shape, one row instead of a list, and the primary action is <code>SET_PACKAGE_BLOCKED</code> — the exact call <code>BlockedPackageMenu</code> already sends — rather than a dead end with only Cancel.</p>
+  </div>
+</div>
+
+<h2><span class="num">3 ·</span> When the closure is larger than the breadth cap</h2>
+<p class="cap">Scenario: bumping a widely-depended-on package (<code>Example.Extensions.Abstractions</code>, mirroring how <code>Microsoft.Extensions.*</code> fans out in the demo solution) surfaces 23 dependents needing a move. This was the one thing #109 itself left open, and it is settled below: it stays a plain, flush list, for the same reason §2 gives — 23 siblings with no edges between them have no depth for the nesting to spend.</p>
+
+<div class="row">
+  <div class="panel">
+    <h3>Chosen: the count, and the full list scrolls — why</h3>
+    <div class="popup">
+      <div class="popup__title">Example.Extensions.Abstractions</div>
+      <div class="popup__body">
+        <p><strong>9.0.0</strong> needs 23 other packages to move with it. Restore stays green without them; several would break at runtime.</p>
+        <div class="gnode">
+          <div class="gnode__name">Example.Extensions.Abstractions</div>
+          <div class="gnode__ver up">8.1.0 → 9.0.0</div>
+        </div>
+        <div class="gtree__children gtree__children--scroll">
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Http <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Logging <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Options <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Caching <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Configuration <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.DependencyInjection <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row"><div class="gtree__row-line">Example.Extensions.Hosting <span class="gnode__ver up">8.1.0 → 9.0.0</span></div></div>
+          <div class="gtree__row" style="color:#6a6a6a;"><div class="gtree__row-line">… 16 more, same line</div></div>
+        </div>
+      </div>
+      <div class="popup__actions">
+        <button type="button" class="btn btn--secondary">Cancel</button>
+        <button type="button" class="btn btn--primary">Take all 23</button>
+      </div>
+    </div>
+    <p class="why">Nothing new: <code>.popup__list</code> already scrolls at this width for <code>ProjectSelectionPopup</code>. The breadth cap stops the <em>computation</em> from chasing a pathological graph; once it has an answer, showing all of it costs nothing extra — cheaper than a second disclosure to learn (the alternative considered: a short list plus "20 more" behind a click, §107-style) and more honest than refusing to propose past the cap at all, which would turn the common "yes, take the lockstep family" case into a manual per-package chore for no reason beyond the row count.</p>
+  </div>
+</div>
+
+<h2><span class="num">·</span> What this leaves for whoever implements it</h2>
+<div class="legend">
+  <div>How many hops before the indentation staircase (§2) needs a cap or a different treatment of its own — flagged, not answered, since this file never drew a chain past two hops.</div>
+  <div>The exact breadth cap number — the mockups use 20/23 to make the point; the issue does not fix a value, and a cap on package count needs a paired thought about how deep a single branch may recurse before the same pathological-graph concern applies to depth instead of breadth.</div>
+  <div>The nested-tree rendering is proven here on one branch, one level deep. A real closure could nest several branches at once — not yet measured against a real graph from the walk, only reasoned about from how the CSS generalises.</div>
+  <div>Nothing here designs the reverse-graph walk, the registration paging (inlined vs. multi-page), or the fixpoint/cap algorithm itself — the issue already covers that ground and none of it has a visible surface.</div>
+</div>
+
+<div class="note">No new colour token is introduced anywhere on this page: every version pair, nested or flat, reuses the same green/gold pairing <code>popup__ver--up</code>/<code>--down</code> already carries, and the dead-end state reuses plain body text. That is why this file is dark-only.</div>
+
+</body>
+</html>

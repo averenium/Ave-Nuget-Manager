@@ -19,12 +19,13 @@ HTML-етюди інтерфейсу. Кожен — самостійний фа
 
 | Макет | Issue | Про що | Статус |
 |---|---|---|---|
+| [dependent-cascade-popup.html](dependent-cascade-popup.html) | #109 | Попап «взяти обидва», коли бамп версії тягне за собою залежні пакети | Очікує реалізації |
 | [tfm-compatible-versions.html](tfm-compatible-versions.html) | #107 | Версії, не сумісні з target framework проєкту, — у списку версій, кнопці ↑ і Groups | Реалізовано, ще не випущено |
 | [folder-scope-chooser.html](folder-scope-chooser.html) | #113 | Вибір solution або проєкту як робочої області | Реалізовано, ще не випущено |
 | [multi-tfm-update-targets.html](multi-tfm-update-targets.html) | #82 | Ціль оновлення окремо для кожного target framework | Реалізовано (0.8.0) |
 | [split-badge-options.html](split-badge-options.html) | #82 | Кнопка, що дає одному TFM власну версію | Реалізовано (0.8.0) |
-| [multi-version-cell.html](multi-version-cell.html) | #82 | Кілька версій в одному рядку — варіанти комірки | Реалізовано (0.8.0) |
-| [multi-version-colour.html](multi-version-colour.html) | #82, #108 | Колір для кількох версій у рядку | Реалізовано (0.8.0) |
+| [multi-version-cell.html](multi-version-cell.html) | #82, #115 | Кілька версій в одному рядку — варіанти комірки; #115 позначив обраний варіант | Реалізовано (0.8.0); #115 — реалізовано, ще не випущено |
+| [multi-version-colour.html](multi-version-colour.html) | #82, #108, #115 | Колір для кількох версій у рядку; #115 — випадок, коли колір нема куди приліпити (нічого не згорнулось) | Реалізовано (0.8.0); #115 — реалізовано, ще не випущено |
 | [package-details-panel.html](package-details-panel.html) | #86 | Панель деталей пакета | Реалізовано (0.7.x) |
 | [package-details-http.html](package-details-http.html) | #27, #114 | Що додає в деталях каталог по HTTP | Реалізовано, ще не випущено |
 | [package-list-left.html](package-list-left.html) | — | Ліва панель Packages: скільки рядків влазить у низьку панель | Етюд |

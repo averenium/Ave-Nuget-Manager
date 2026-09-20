@@ -484,8 +484,16 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   font-family: var(--font-mono);
   min-width: 0; min-height: 15px; line-height: 15px;
   justify-self: start;
-  overflow-wrap: anywhere; white-space: normal;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* The one version this row is actually described by, at full contrast against
+   the older/other ones stepped back in the parent's dimmer colour (#115) —
+   the details panel names it the same way via `resolveVersionSpread`. */
+.pkg-row__version-primary { color: var(--color-fg); }
+/* One step dimmer than the older versions themselves — the same three-level
+   read the mockup builds from `--fg`/`--dim`/`--dimmer` (#115), reusing the
+   opacity trick `.badge--dimmer` already uses for its own middle step. */
+.pkg-row__version-sep { opacity: 0.8; }
 .pkg-row__implicit { color: var(--color-tab-inactive); font-size: 11px; margin-left: var(--spacing-xs); cursor: help; }
 .pkg-row__latest {
   font-size: 11px; color: var(--color-tab-inactive);
@@ -496,7 +504,52 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
 }
 .pkg-row__latest--update { color: var(--color-success); }
 .pkg-row__latest--fail { color: var(--color-error); font-weight: 600; }
-.pkg-row__version--multi { color: var(--color-warning); }
+/* The versions this cell could not show. Plain until the spread crosses a
+   major line — a patch apart between projects is housekeeping, a major apart
+   is a difference in behaviour (the same rule `frameworkPins` uses for #82). */
+.pkg-row__more { font-size: 11px; color: var(--color-tab-inactive); }
+
+/* The hue goes into the background rather than into the ink: as text on a
+   pale row a saturated warning colour vibrates instead of contrasting, and
+   the wash leaves the dark theme's gold exactly as it was. The stroke is
+   transparent in every theme but High Contrast, where it is what keeps the
+   chip a shape rather than a colour (#44) — an inset shadow rather than an
+   `outline`, because `.pkg-row__version` clips overflow (#115) and an
+   `outline` paints outside the border box, so it tore at the row's right
+   edge whenever the chip landed exactly at that boundary.  */
+.pkg-row__more--major {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  border-radius: var(--radius);
+  padding: 0 4px;
+  box-shadow: inset 0 0 0 1px var(--color-contrast-border);
+}
+
+/* Light themes tune `editorWarning.foreground` to be seen as a squiggle under
+   code; on an off-white list row it glares. Deepened for this element only,
+   and derived from whatever gold the theme actually gave us — never a literal
+   standing in for a theme's own value, which is what produced #108. */
+body.vscode-light .pkg-row__more--major {
+  color: color-mix(in srgb, var(--color-warning) 55%, var(--color-fg));
+}
+
+/* The axis badge ("5 projects", "2 TFM") for the crosses-major spread that
+   folds nothing into a count (#115) — a separate class from `.pkg-row__more`
+   rather than a reuse of it: the mockup gives it its own metrics
+   (`.axis-major` in multi-version-colour.html), and unlike a bare `+2` it
+   always carries its own descriptive text, so it needs no High-Contrast
+   stroke to keep it a shape. */
+.pkg-row__axis {
+  font-size: 10px;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  border-radius: var(--radius);
+  padding: 0 5px;
+  white-space: nowrap;
+}
+body.vscode-light .pkg-row__axis {
+  color: color-mix(in srgb, var(--color-warning) 55%, var(--color-fg));
+}
 .pkg-row__meta--pair {
   display: flex;
   flex-wrap: wrap;

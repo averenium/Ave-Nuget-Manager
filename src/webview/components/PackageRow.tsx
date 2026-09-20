@@ -3,13 +3,9 @@ import { compareSemVer } from '../utils/search';
 import type { InstalledPackage, ImplicitPackage, AvailablePackage, VulnerabilityFinding, PackageSourceMapping, VersionFlag } from '../../types';
 import { findingsAffectingPackage } from '../../vulnerabilities';
 import { packageMatchesAnyMapping } from '../../packageSourceMapping';
+import { resolveVersionSpread } from '../../packageResolvedVersions';
+import { versionCellFor, versionSpreadTooltip } from '../utils/versionSpreadDisplay';
 import { PkgListRow } from './PkgListRow';
-
-/** Extract project name from absolute path without using Node's path module */
-function projectName(absolutePath: string): string {
-  const withoutExt = absolutePath.replace(/\.[^.]+$/, '');
-  return withoutExt.split(/[\\/]/).pop() ?? absolutePath;
-}
 
 interface Props {
   pkg: InstalledPackage | ImplicitPackage | AvailablePackage;
@@ -17,7 +13,7 @@ interface Props {
   selected?: boolean;
   implicitVersions?: string[];
   /** All project entries for this package id — used to show version conflicts */
-  allProjectEntries?: Array<{ projectPath: string; resolvedVersion: string }>;
+  allProjectEntries?: Array<{ projectPath: string; resolvedVersion: string; framework?: string }>;
   findings?: VulnerabilityFinding[];
   blocked?: boolean;
   /** Active `<packageSourceMapping>` — installed rows only; see #40 follow-up. */
@@ -31,8 +27,6 @@ interface Props {
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
 }
-
-const MAX_VERSIONS_INLINE = 3;
 
 function formatFindingLine(finding: VulnerabilityFinding, viaPackage?: string): string {
   const sev = finding.severity.toUpperCase();
@@ -57,35 +51,28 @@ export function PackageRow({
     ? implicitVersions.reduce((max, v) => (v > max ? v : max))
     : undefined;
 
-  // ── Multi-version display (solution scope) ─────────────────────────────────
-  // Collect unique versions across projects
-  const projectVersionMap: Array<{ projectName: string; version: string }> = [];
-  if (allProjectEntries && allProjectEntries.length > 1) {
-    for (const entry of allProjectEntries) {
-      const pName = projectName(entry.projectPath);
-      projectVersionMap.push({ projectName: pName, version: entry.resolvedVersion });
-    }
-  }
-
-  const uniqueVersions = [...new Set(projectVersionMap.map((e) => e.version))];
-  const hasMultipleVersions = uniqueVersions.length > 1;
-  // Version label: single version OR "v1 / v2 / v3 ..."
-  let versionLabel: string;
-  if (hasMultipleVersions) {
-    const shown = uniqueVersions.slice(0, MAX_VERSIONS_INLINE);
-    versionLabel = shown.join(' / ') + (uniqueVersions.length > MAX_VERSIONS_INLINE ? ' …' : '');
-  } else {
-    versionLabel =
-      installed?.resolvedVersion ??
-      implicit?.resolvedVersion ??
-      available?.latestVersion ??
-      '';
-  }
-
-  // Hover tooltip: "ProjectA: 1.0.0\nProjectB: 2.0.0"
-  const versionTooltip = projectVersionMap.length > 1
-    ? projectVersionMap.map((e) => `${e.projectName}: ${e.version}`).join('\n')
+  // ── Several resolved versions in one row (#90, #115) ────────────────────────
+  // `allProjectEntries` is homogeneous per caller — every direct entry for an
+  // installed row, every transitive one for an implicit row — so it slots
+  // straight into whichever side `resolveVersionSpread` expects. Which version
+  // is primary, and whether the spread is between projects or between one
+  // project's frameworks, comes from there rather than from a rule of this
+  // row's own, so the list and the details panel can never describe the same
+  // package differently.
+  const directEntries = kind === 'installed' ? (allProjectEntries ?? []) : [];
+  const transitiveEntries = kind === 'implicit' ? (allProjectEntries ?? []) : [];
+  const spread = allProjectEntries?.length
+    ? resolveVersionSpread(directEntries, transitiveEntries)
     : undefined;
+  const hasMultipleVersions = !!spread && spread.others.length > 0;
+  const cell = hasMultipleVersions ? versionCellFor(spread!, allProjectEntries!) : undefined;
+  const versionTooltip = hasMultipleVersions
+    ? versionSpreadTooltip(allProjectEntries!, spread!.withinOneProject)
+    : undefined;
+
+  const versionLabel = hasMultipleVersions
+    ? cell!.primary
+    : (installed?.resolvedVersion ?? implicit?.resolvedVersion ?? available?.latestVersion ?? '');
 
   const deps = installed?.dependencies ?? implicit?.dependencies;
   // Only pin findings to this row's own version when it unambiguously has one —
@@ -131,11 +118,31 @@ export function PackageRow({
       ) : null}
     >
       <div className="pkg-row__meta">
-        <span
-          className={hasMultipleVersions ? 'pkg-row__version pkg-row__version--multi' : 'pkg-row__version'}
-          title={versionTooltip}
-        >
-          {kind !== 'available' ? versionLabel : ''}
+        <span className="pkg-row__version" title={versionTooltip}>
+          {kind === 'available' ? '' : hasMultipleVersions ? (
+            <>
+              <span className="pkg-row__version-primary">{cell!.primary}</span>
+              {cell!.rest.map((v) => (
+                <React.Fragment key={v}>
+                  <span className="pkg-row__version-sep"> · </span>
+                  {v}
+                </React.Fragment>
+              ))}
+              {cell!.moreCount > 0 ? (
+                <>
+                  {' '}
+                  <span className={cell!.crossesMajor ? 'pkg-row__more pkg-row__more--major' : 'pkg-row__more'}>
+                    {`+${cell!.moreCount}`}
+                  </span>
+                </>
+              ) : cell!.axis ? (
+                <>
+                  {' '}
+                  <span className="pkg-row__axis">{cell!.axis}</span>
+                </>
+              ) : null}
+            </>
+          ) : versionLabel}
           {highestImplicit && (
             <span className="pkg-row__implicit" title={implicitVersions?.join(', ')}>
               ({highestImplicit})

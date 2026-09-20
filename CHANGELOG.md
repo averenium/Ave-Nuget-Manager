@@ -31,6 +31,7 @@
 - The corner scope control now opens the chooser from any tab, not only **Packages** (#129)
 - Installing or removing a package an SDK (or `Directory.Build.props`) declares for the project, such as F#'s implicit `FSharp.Core`, no longer fails after `dotnet add`/`dotnet remove` refuse to edit the imported reference (#124)
 - **Package details**: **Problems** now groups rows under **Installed** / **Selected** headings, so a scan finding about the installed version no longer reads as one about whatever version the selector has since moved to, and says when the selected version clears an installed vulnerability (#122)
+- **Packages**: a row resolved at several versions across projects or frameworks now shows the newest one with a count of the rest instead of every version run together, marked only when the spread crosses a major version (#115)
 
 ## 0.8.0
 

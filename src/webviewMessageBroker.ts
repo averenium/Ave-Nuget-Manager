@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { runWithConcurrency } from './concurrency';
+import { createConcurrencyGate, runWithConcurrency, type ConcurrencyGate } from './concurrency';
 import { getConfig, setIncludePrerelease, getBlockedPackages, setPackageBlocked } from './config';
 import type { NugetManagerViewProvider } from './nugetManagerViewProvider';
 import type { INuGetBackend } from './backend/INuGetBackend';
@@ -309,6 +309,32 @@ export class WebviewMessageBroker {
   private _versionsAbort: AbortController = new AbortController();
   /** The metadata request in flight (#116) — replaced, not queued; see `_versionsAbort`. */
   private _metadataAbort: AbortController = new AbortController();
+  /**
+   * Implicit rows currently asking the feed about their own id, keyed
+   * lowercase (#118). Unlike the single-slot tokens above, several of these
+   * run at once — one per visible row — so a newer one never supersedes an
+   * older one for a *different* id; each is only ever cancelled by its own
+   * row leaving view, or dropped wholesale on a scope switch or a refresh.
+   */
+  private readonly _implicitWatches = new Map<string, AbortController>();
+  /**
+   * Bounds how many implicit-row watches run at once, to `dotnetConcurrency`
+   * (#118) — the same number the enrich wave itself is capped to, and for the
+   * same reason: on the CLI backend, every `enrichPackage` call is its own
+   * `dotnet` process. Without this, a panel with twenty-five implicit rows on
+   * screen started twenty-five processes at once — the exact fan-out
+   * `dotnetConcurrency` exists to prevent, and worse than the wave it was
+   * meant to be cheaper than.
+   */
+  private readonly _implicitWatchGate: ConcurrencyGate = createConcurrencyGate(() => getConfig().dotnetConcurrency);
+  /**
+   * The config chain last resolved for an implicit-row watch, kept until the
+   * chain might actually differ (#118). `NuGetConfigChainResolver.resolve`
+   * walks the directory tree and reparses every file on each call — cheap
+   * once, not forty times over one scroll through the Implicit list, when
+   * nothing on disk changed between one row and the next.
+   */
+  private _implicitConfigFiles?: { startDir: string; files: string[] };
   /** Field rather than a bare constant so a test can shorten the wait it is about. */
   private _licenseBudgetMs = BATCH_LICENSE_BUDGET_MS;
   /** Bumped on every `_cancelVulnScan()` — belt-and-suspenders against a
@@ -495,6 +521,7 @@ export class WebviewMessageBroker {
     this._cancelSearch();
     this._cancelVersionsLookup();
     this._cancelMetadataLookup();
+    this._cancelImplicitWatches();
     this._batchAbort?.abort();
     this._messageDisposable?.dispose();
     this._messageDisposable = undefined;
@@ -513,6 +540,7 @@ export class WebviewMessageBroker {
   async activateScope(scope: WorkspaceScope): Promise<void> {
     this._cancelEnrich();
     this._cancelVulnScan();
+    this._cancelImplicitWatches();
     this.provider.setScope(scope);
     if (this.provider.isClientReady) {
       await this._initForScope(scope);
@@ -553,6 +581,13 @@ export class WebviewMessageBroker {
   private _cancelMetadataLookup(): void {
     this._metadataAbort.abort();
     this._metadataAbort = new AbortController();
+  }
+
+  /** Stops every implicit-row watch in flight — the ids they asked about belong to a scope or a package list that is going away (#118). */
+  private _cancelImplicitWatches(): void {
+    for (const controller of this._implicitWatches.values()) controller.abort();
+    this._implicitWatches.clear();
+    this._implicitConfigFiles = undefined;
   }
 
   private _postBlockedPackages(): void {
@@ -659,6 +694,14 @@ export class WebviewMessageBroker {
         await this._handleGetAllVersions(msg.packageId, msg.configFiles, msg.prerelease);
         break;
 
+      case 'WATCH_IMPLICIT_PACKAGE':
+        await this._handleWatchImplicitPackage(msg.packageId);
+        break;
+
+      case 'UNWATCH_IMPLICIT_PACKAGE':
+        this._handleUnwatchImplicitPackage(msg.packageId);
+        break;
+
       case 'INSTALL_PACKAGE':
         await this._handleInstallSingle(
           msg.projectPath, msg.packageId, msg.version, msg.framework, msg.acrossLines,
@@ -715,6 +758,7 @@ export class WebviewMessageBroker {
       case 'SET_PRERELEASE_SETTING':
         this._cancelEnrich();
         this._cancelVulnScan();
+        this._cancelImplicitWatches();
         await setIncludePrerelease(msg.prerelease);
         // Prerelease flag affects which versions are returned — invalidate cache
         this._cache.clear();
@@ -3045,6 +3089,7 @@ export class WebviewMessageBroker {
   private async _refreshWithRestore(clearCache: boolean): Promise<void> {
     this._cancelEnrich();
     this._cancelVulnScan();
+    this._cancelImplicitWatches();
     if (clearCache) this._cache.clear();
     this.provider.postMessage({
       type: 'REFRESH_STARTED',
@@ -3771,6 +3816,84 @@ export class WebviewMessageBroker {
   }
 
   /**
+   * Asks the feed about one transitive id, the moment its row is actually on
+   * screen (#118). The enrich wave never reaches an implicit package — it
+   * walks `installed` alone — so without this a deprecation notice for a
+   * transitive id stayed invisible in the list even though the feed would
+   * have answered it, same as any other id, if only something had asked.
+   * Goes through the same `_tryEnrichPackage` the wave uses, so the answer
+   * lands in `_cache` under the same TTL and a package that later becomes
+   * directly installed does not get asked twice.
+   */
+  private async _handleWatchImplicitPackage(packageId: string): Promise<void> {
+    const key = packageId.toLowerCase();
+    // The webview's own filter never asks about a directly installed id —
+    // the enrich wave already covers it — but that rule lives in `ImplicitList`,
+    // not here, so a request that reaches the host answering for it anyway is
+    // enforced again at the one place this broker can actually guarantee it.
+    if (this._installedIds.has(key)) return;
+    if (this._implicitWatches.has(key)) return;
+
+    const cached = this._cache.get(key);
+    if (cached && Date.now() - cached.fetchedAt < getConfig().cacheTtlMs) {
+      this.provider.postMessage({
+        type: 'PACKAGE_INFO_UPDATE',
+        packageId,
+        latestVersion: this._compatibleLatestForTfms(cached, [], []),
+        latestVersionByProject: this._latestVersionByProject(packageId, cached),
+        sourceName: cached.sourceName,
+        versions: cached.versions,
+        versionFlags: this._versionFlagsFor(cached),
+      });
+      return;
+    }
+
+    const scope = this.provider.getCurrentScope();
+    if (!scope) return;
+    const configFiles = await this._configFilesForImplicitWatch(scope);
+    if (configFiles.length === 0) return;
+
+    const controller = new AbortController();
+    this._implicitWatches.set(key, controller);
+    try {
+      await this._implicitWatchGate.run(async () => {
+        // Queued behind other watches long enough for its own row to have
+        // left in the meantime — the gate has no idea, so this is the one
+        // place left to ask before spending a `dotnet` process on an answer
+        // nobody is waiting for any more.
+        if (controller.signal.aborted) return;
+        await this._tryEnrichPackage(packageId, configFiles, controller.signal, [], []);
+      });
+    } finally {
+      // Only drop this row's own slot — a newer watch for the same id, taken
+      // out and re-inserted while this one was still resolving, must survive.
+      if (this._implicitWatches.get(key) === controller) this._implicitWatches.delete(key);
+    }
+  }
+
+  /**
+   * The config chain for an implicit-row watch, resolved once per `startDir`
+   * and reused until the chain might actually differ (#118) — scrolling
+   * through forty implicit rows must not mean forty directory walks and
+   * forty re-parses of the same files the first row's watch already read.
+   */
+  private async _configFilesForImplicitWatch(scope: WorkspaceScope): Promise<string[]> {
+    const startDir = this._scopeStartDir(scope) ?? '';
+    if (this._implicitConfigFiles?.startDir === startDir) return this._implicitConfigFiles.files;
+    const configChain = await this.configResolver.resolve(startDir);
+    const files = searchableConfigFiles(configChain);
+    this._implicitConfigFiles = { startDir, files };
+    return files;
+  }
+
+  /** The row `_handleWatchImplicitPackage` was asking about scrolled back out before it answered (#118). */
+  private _handleUnwatchImplicitPackage(packageId: string): void {
+    const key = packageId.toLowerCase();
+    this._implicitWatches.get(key)?.abort();
+    this._implicitWatches.delete(key);
+  }
+
+  /**
    * `sanitizeCtx()` alone has no `aliases`, so it can only redact the
    * workspace root / home / hostname — project file names inside a relative
    * path (`<workspace>/Foo.Data/Foo.Data.csproj`) pass through unchanged.
@@ -3951,6 +4074,9 @@ export class WebviewMessageBroker {
   }
 
   private async _pushConfigChainUpdate(force: boolean): Promise<void> {
+    // Whatever changed on disk to bring this call about, the config chain an
+    // implicit-row watch would reuse might no longer be it (#118).
+    this._implicitConfigFiles = undefined;
     const scope = this.provider.getCurrentScope();
     const startDir = this._scopeStartDir(scope);
     if (!scope || !startDir) return;

@@ -36,6 +36,16 @@ export type WebviewMessage =
   | { type: 'GET_PACKAGE_METADATA'; packageId: string; version?: string; configFiles: string[]; projectPath?: string }
   | { type: 'GET_ALL_VERSIONS'; packageId: string; configFiles: string[]; prerelease: boolean }
   /**
+   * An implicit row for this id scrolled into view (#118). The feed is only
+   * ever asked about a package somebody references directly — the enrich wave
+   * never reaches a transitive id — so this is what asks on its behalf,
+   * lazily, the moment its row is actually looked at rather than for every
+   * transitive id a solution resolves.
+   */
+  | { type: 'WATCH_IMPLICIT_PACKAGE'; packageId: string }
+  /** The row from `WATCH_IMPLICIT_PACKAGE` scrolled back out before it answered — cancel it (#118). */
+  | { type: 'UNWATCH_IMPLICIT_PACKAGE'; packageId: string }
+  /**
    * Everything that would change by taking this version, asked once (#114).
    *
    * Its own message rather than a field on the metadata answer, because the two

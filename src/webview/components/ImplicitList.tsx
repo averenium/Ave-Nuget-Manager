@@ -2,6 +2,7 @@ import React from 'react';
 import { useNugetManager } from '../context/NugetManagerContext';
 import { PackageRow } from './PackageRow';
 import { matchesQuery, normalizeQuery, sortByRelevance } from '../utils/search';
+import { useLazyDeprecationWatch } from '../utils/useLazyDeprecationWatch';
 import type { ImplicitPackage } from '../../types';
 import { findingsAffectingPackage, vulnerabilityAffectRank } from '../../vulnerabilities';
 
@@ -21,7 +22,7 @@ function withUnionedDeps(entries: ImplicitPackage[]): ImplicitPackage {
 }
 
 export function ImplicitList() {
-  const { state, dispatch } = useNugetManager();
+  const { state, dispatch, send } = useNugetManager();
   const { implicit, installed, searchQuery, isLoadingPackages, vulnerabilities } = state.packages;
   const flagsByPackageId = state.updates.flagsByPackageId;
 
@@ -50,6 +51,8 @@ export function ImplicitList() {
     return direct.length + via.length > 0;
   }).length;
 
+  const setRowRef = useLazyDeprecationWatch(displayed.map((pkg) => pkg.id), flagsByPackageId, send);
+
   return (
     <section className="pkg-section" aria-label="Implicit packages">
       <div className="pkg-section__header">
@@ -68,16 +71,17 @@ export function ImplicitList() {
           {displayed.map((pkg) => {
             const allEntries = grouped.get(pkg.id.toLowerCase())!;
             return (
-              <PackageRow
-                key={pkg.id}
-                pkg={pkg}
-                kind="implicit"
-                selected={state.detail.selectedPackageId === pkg.id}
-                allProjectEntries={allEntries}
-                findings={vulnerabilities}
-                versionFlags={flagsByPackageId[pkg.id.toLowerCase()]}
-                onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
-              />
+              <div key={pkg.id} ref={(el) => setRowRef(pkg.id, el)} data-package-id={pkg.id}>
+                <PackageRow
+                  pkg={pkg}
+                  kind="implicit"
+                  selected={state.detail.selectedPackageId === pkg.id}
+                  allProjectEntries={allEntries}
+                  findings={vulnerabilities}
+                  versionFlags={flagsByPackageId[pkg.id.toLowerCase()]}
+                  onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
+                />
+              </div>
             );
           })}
         </div>

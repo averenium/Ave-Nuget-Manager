@@ -6186,4 +6186,239 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     });
   });
 
+  /**
+   * The enrich wave only ever walks `installed`, so a transitive package's
+   * deprecation notice could never reach `flagsByPackageId` no matter how
+   * long the panel sat open — nothing ever asked the feed about it. This asks
+   * lazily instead, the moment an implicit row is actually on screen (#118).
+   */
+  describe('WATCH_IMPLICIT_PACKAGE asks the feed about a transitive id lazily (#118)', () => {
+    function withConfig() {
+      const resolver = makeConfigResolver();
+      resolver.resolve.mockResolvedValue([{
+        filePath: '/p/nuget.config',
+        sources: [{
+          name: 'nuget.org',
+          url: 'https://api.nuget.org',
+          enabled: true,
+          configFilePath: '/p/nuget.config',
+        }],
+      }]);
+      return resolver;
+    }
+
+    it('asks once when a transitive row becomes visible, and marks it', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.enrichPackage.mockResolvedValue({
+        latestVersion: '2.0.0',
+        sourceName: 'nuget.org',
+        versions: ['2.0.0', '1.0.0'],
+        metadataByVersion: { '1.0.0': { deprecation: 'Legacy' } },
+      });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), withConfig(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.Transitive' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+      expect(backend.enrichPackage.mock.calls[0][0]).toBe('Example.Transitive');
+      const info = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as
+        { packageId?: string; versionFlags?: Record<string, { deprecation?: string }> } | undefined;
+      expect(info?.packageId).toBe('Example.Transitive');
+      expect(info?.versionFlags?.['1.0.0']?.deprecation).toBe('Legacy');
+    });
+
+    it('asks nothing a second time once the id is already in the cache', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.enrichPackage.mockResolvedValue({
+        latestVersion: '2.0.0', sourceName: 'nuget.org', versions: ['2.0.0'],
+      });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), withConfig(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.Transitive' });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+
+      // The row scrolled out and back into view — an id already answered is
+      // free, not re-asked, which is also what keeps scrolling back over it
+      // from reading as a flicker.
+      posted.length = 0;
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.Transitive' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+      expect(posted.some((m) => m.type === 'PACKAGE_INFO_UPDATE')).toBe(true);
+    });
+
+    it('does not start a second request for the same id while the first is still in flight', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.enrichPackage.mockImplementation(() => new Promise(() => { /* never settles in this test */ }));
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), withConfig(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.Transitive' });
+      await new Promise((r) => setTimeout(r, 10));
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.Transitive' });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels the request when the row scrolls away before it answers (UNWATCH_IMPLICIT_PACKAGE)', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      let sawAbort = false;
+      backend.enrichPackage.mockImplementation(
+        (_id: string, _cf: string[], _pre: boolean | undefined, signal?: AbortSignal) => new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            sawAbort = true;
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        }),
+      );
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), withConfig(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.Transitive' });
+      await new Promise((r) => setTimeout(r, 10));
+
+      simulateMessage({ type: 'UNWATCH_IMPLICIT_PACKAGE', packageId: 'Example.Transitive' });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(sawAbort).toBe(true);
+      expect(posted.some((m) => m.type === 'PACKAGE_INFO_UPDATE')).toBe(false);
+    });
+
+    it('cancels every implicit watch still in flight on a scope switch', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      let capturedSignal: AbortSignal | undefined;
+      backend.enrichPackage.mockImplementation(
+        (_id: string, _cf: string[], _pre: boolean | undefined, signal?: AbortSignal) => {
+          capturedSignal = signal;
+          return new Promise(() => { /* never settles in this test */ });
+        },
+      );
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), withConfig(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.Transitive' });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(capturedSignal?.aborted).toBe(false);
+
+      await broker.activateScope({ kind: 'project', projectPath: '/p/Other.csproj' });
+
+      expect(capturedSignal?.aborted).toBe(true);
+    });
+
+    it('never runs more than dotnetConcurrency implicit-row watches at once (#118)', async () => {
+      // On the CLI backend every `enrichPackage` call is its own `dotnet`
+      // process. A panel with several implicit rows on screen at once used to
+      // start one process per row with nothing bounding how many ran
+      // together — exactly the fan-out `dotnetConcurrency` exists to prevent.
+      const cfgSpy = jest.spyOn(config, 'getConfig').mockReturnValue({
+        dotnetConcurrency: 2,
+        httpConcurrencyPerOrigin: 6,
+        cacheTtlMs: 1000,
+        includePrerelease: false,
+        onFailedUpdate: 'rollback',
+        experimentalHttpCatalog: false,
+        vulnerabilityScript: '',
+        blockedPackages: [],
+      } as any);
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      let inFlight = 0;
+      let maxInFlight = 0;
+      backend.enrichPackage.mockImplementation(async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 30));
+        inFlight--;
+        return { latestVersion: '', sourceName: '', versions: [] };
+      });
+
+      try {
+        const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), withConfig(), logger);
+        broker.attach();
+
+        const ids = ['Example.One', 'Example.Two', 'Example.Three', 'Example.Four', 'Example.Five'];
+        for (const packageId of ids) simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId });
+
+        for (let i = 0; i < 30; i++) {
+          if (backend.enrichPackage.mock.calls.length === ids.length && inFlight === 0) break;
+          await new Promise((r) => setTimeout(r, 20));
+        }
+
+        expect(maxInFlight).toBeGreaterThan(0);
+        expect(maxInFlight).toBeLessThanOrEqual(2);
+        expect(backend.enrichPackage).toHaveBeenCalledTimes(ids.length);
+      } finally {
+        cfgSpy.mockRestore();
+      }
+    });
+
+    it('resolves the config chain once for several implicit-row watches in the same scope (#118)', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.enrichPackage.mockResolvedValue({ latestVersion: '', sourceName: '', versions: [] });
+      const resolver = withConfig();
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.One' });
+      await new Promise((r) => setTimeout(r, 20));
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.Two' });
+      await new Promise((r) => setTimeout(r, 20));
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.Three' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(3);
+      expect(resolver.resolve).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores a watch for an id that is already directly installed', async () => {
+      // `ImplicitList` never asks about an id also shown in Installed — the
+      // enrich wave already covers it — but that filter lives in the webview.
+      // A request that reaches the host regardless (a future caller, a bug in
+      // that filter) must not be answered by spending a second fetch on data
+      // the wave already provides.
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [makeInstalledPkg('Example.AlsoInstalled', '/p/App.csproj')],
+        implicit: [],
+      });
+      backend.enrichPackage.mockResolvedValue({
+        latestVersion: '2.0.0', sourceName: 'nuget.org', versions: ['2.0.0'],
+      });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), withConfig(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(backend.enrichPackage).toHaveBeenCalledTimes(1);
+
+      backend.enrichPackage.mockClear();
+      simulateMessage({ type: 'WATCH_IMPLICIT_PACKAGE', packageId: 'Example.AlsoInstalled' });
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(backend.enrichPackage).not.toHaveBeenCalled();
+    });
+  });
+
 });

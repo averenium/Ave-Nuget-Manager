@@ -1862,6 +1862,218 @@ describe('WebviewMessageBroker', () => {
     });
   });
 
+  describe('the "What changes" band links release notes and the shipped changelog (#125)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    function installedAt(version: string, projectPath: string): InstalledPackage {
+      return { id: 'Example.Imaging', requestedVersion: version, resolvedVersion: version, projectPath };
+    }
+
+    it('links release notes the package names in its own nuspec', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [installedAt('2.1.9', '/p/App.csproj')],
+        implicit: [],
+      });
+      // No local nuspec, no repository or license from the catalog either — the
+      // only source left for either field is the fetched nuspec.
+      const licenseForVersion = jest.fn().mockResolvedValue(undefined);
+      const releaseNotesForVersion = jest.fn().mockResolvedValue({ releaseNotes: 'https://example.com/imaging/releases/4.1.2' });
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined,
+        { forVersion: licenseForVersion }, undefined, undefined, { forVersion: releaseNotesForVersion },
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_VERSION_DIFF', packageId: 'Example.Imaging', version: '4.1.2', configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
+
+      const answer = posted.find((m) => m.type === 'VERSION_DIFF') as Extract<
+        ExtensionMessage, { type: 'VERSION_DIFF' }
+      >;
+      expect(answer.releaseNotesLink).toEqual({
+        label: 'Release notes', url: 'https://example.com/imaging/releases/4.1.2',
+      });
+      expect(releaseNotesForVersion).toHaveBeenCalledWith(
+        'Example.Imaging', '4.1.2', ['a.config'], expect.any(AbortSignal),
+      );
+    });
+
+    it('falls back to the repository\'s releases page, labelled Releases, when the nuspec names no notes URL', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [installedAt('2.1.9', '/p/App.csproj')],
+        implicit: [],
+      });
+      const releaseNotesForVersion = jest.fn()
+        .mockResolvedValue({ repository: { url: 'https://github.com/example/imaging' } });
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined,
+        undefined, undefined, undefined, { forVersion: releaseNotesForVersion },
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_VERSION_DIFF', packageId: 'Example.Imaging', version: '4.1.2', configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
+
+      const answer = posted.find((m) => m.type === 'VERSION_DIFF') as Extract<
+        ExtensionMessage, { type: 'VERSION_DIFF' }
+      >;
+      expect(answer.releaseNotesLink).toEqual({
+        label: 'Releases', url: 'https://github.com/example/imaging/releases',
+      });
+    });
+
+    /**
+     * The measured, reported case: Dapper states `Apache-2.0` through the
+     * registration resource (the HTTP catalog) and also names a bare release
+     * notes URL in its own nuspec — two different fields, not one the other
+     * could stand in for. Gating the nuspec fetch on "the catalog states no
+     * licence" silenced this on exactly the packages most likely to publish
+     * real release notes: a well-maintained package almost always does state
+     * a licence, and the registration resource never states release notes at
+     * all, licensed or not.
+     */
+    it('still links release notes when the catalog states a licence, since neither states the other', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [installedAt('2.1.9', '/p/App.csproj')],
+        implicit: [],
+      });
+      backend.getMetadata.mockResolvedValue({
+        id: 'Example.Imaging', version: '4.1.2', authors: '', description: '', tags: [],
+        license: { type: 'expression', value: 'MIT' },
+      });
+      const releaseNotesForVersion = jest.fn().mockResolvedValue({ releaseNotes: 'https://example.com/notes' });
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined,
+        undefined, undefined, undefined, { forVersion: releaseNotesForVersion },
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_VERSION_DIFF', packageId: 'Example.Imaging', version: '4.1.2', configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
+
+      expect(releaseNotesForVersion).toHaveBeenCalledWith(
+        'Example.Imaging', '4.1.2', ['a.config'], expect.any(AbortSignal),
+      );
+      const answer = posted.find((m) => m.type === 'VERSION_DIFF') as Extract<
+        ExtensionMessage, { type: 'VERSION_DIFF' }
+      >;
+      expect(answer.releaseNotesLink).toEqual({ label: 'Release notes', url: 'https://example.com/notes' });
+    });
+
+    it('names the changelog with the installed version, asked about regardless of which version is being considered', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [installedAt('2.1.9', '/p/App.csproj')],
+        implicit: [],
+      });
+      jest.spyOn(projectAssets, 'readPackageFolders').mockResolvedValue(['/cache']);
+      const findChangelog = jest.spyOn(nuspecLocator, 'findChangelogFile')
+        .mockResolvedValue('/cache/example.imaging/2.1.9/CHANGELOG.md');
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_VERSION_DIFF', packageId: 'Example.Imaging', version: '4.1.2', configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
+
+      const answer = posted.find((m) => m.type === 'VERSION_DIFF') as Extract<
+        ExtensionMessage, { type: 'VERSION_DIFF' }
+      >;
+      expect(answer.changelogPath).toBe('/cache/example.imaging/2.1.9/CHANGELOG.md');
+      // The installed (2.1.9), not the version being considered (4.1.2).
+      expect(findChangelog).toHaveBeenCalledWith(['/cache'], 'Example.Imaging', '2.1.9');
+    });
+
+    it('says nothing when the installed version ships none of the conventional changelog names', async () => {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({
+        installed: [installedAt('2.1.9', '/p/App.csproj')],
+        implicit: [],
+      });
+      jest.spyOn(projectAssets, 'readPackageFolders').mockResolvedValue(['/cache']);
+      jest.spyOn(nuspecLocator, 'findChangelogFile').mockResolvedValue(undefined);
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_VERSION_DIFF', packageId: 'Example.Imaging', version: '4.1.2', configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
+
+      const answer = posted.find((m) => m.type === 'VERSION_DIFF') as Extract<
+        ExtensionMessage, { type: 'VERSION_DIFF' }
+      >;
+      expect(answer.changelogPath).toBeUndefined();
+    });
+  });
+
+  describe('OPEN_CHANGELOG_FILE opens the file read-only, same as OPEN_LICENSE_FILE (#125)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('opens the changelog path the host found, never one the webview composed', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const openTextDocument = jest.spyOn(vscode.workspace, 'openTextDocument').mockResolvedValue({} as any);
+      const showTextDocument = jest.spyOn(vscode.window, 'showTextDocument').mockResolvedValue(undefined as any);
+
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'OPEN_CHANGELOG_FILE', filePath: '/cache/example.imaging/2.1.9/CHANGELOG.md' });
+      await waitFor(() => openTextDocument.mock.calls.length > 0);
+
+      expect(openTextDocument).toHaveBeenCalledWith('/cache/example.imaging/2.1.9/CHANGELOG.md');
+      expect(showTextDocument).toHaveBeenCalledWith({}, { preview: true });
+    });
+
+    it('logs rather than throwing when the file cannot be opened', async () => {
+      const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      jest.spyOn(vscode.workspace, 'openTextDocument').mockRejectedValue(new Error('gone'));
+
+      const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({ type: 'OPEN_CHANGELOG_FILE', filePath: '/cache/gone.md' });
+      await waitFor(() => logger.getEntries().some((e) => e.command.includes('Could not open the changelog')));
+    });
+  });
+
 
   /**
    * The log knew everything the extension did and nothing about what was asked

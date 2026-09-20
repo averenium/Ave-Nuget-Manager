@@ -1096,6 +1096,16 @@ a.badge:hover { text-decoration: underline; }
 /* ── Dependencies section (#86) — declared range vs. resolved version, from project.assets.json ── */
 .dep-section__header { display: flex; justify-content: space-between; align-items: baseline; gap: var(--spacing-sm); }
 .dep-section__context { font-size: 11px; color: var(--color-tab-inactive); }
+/* The header's right side (#125): the from → to context plus, when the
+   package names them, a link to its release notes/releases page and a
+   button opening the changelog the installed version shipped — grouped so
+   `.dep-section__header`'s own space-between still sees two children. */
+.dep-section__aside { display: flex; align-items: baseline; gap: var(--spacing-sm); flex-wrap: wrap; }
+.dep-section__link {
+  font: inherit; font-size: 11px; color: var(--color-link); text-decoration: none;
+  background: none; border: none; padding: 0; cursor: pointer; white-space: nowrap;
+}
+.dep-section__link:hover { text-decoration: underline; }
 /* Qualifies the rows above it rather than reporting anything, so it is quieter
    than they are — same weight as `.pkg-info__elsewhere` (#114). */
 .dep-section__note {

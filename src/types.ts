@@ -284,6 +284,13 @@ export interface PackageMetadata {
   declaredDependencies?: DeclaredDependencyGroup[];
   /** The feed that answered for this version (#114) — a fact about where the rest of this came from. */
   sourceName?: string;
+  /**
+   * `<releaseNotes>`, at the publisher's choice free text or a URL (#125).
+   * Neither the registration resource nor `dotnet package search` states
+   * this at all, so it is only ever set from a nuspec — the local one for an
+   * installed version, or a fetched one for a version nobody has installed.
+   */
+  releaseNotes?: string;
 }
 
 /** One `<group targetFramework>` as the feed declares it (#114). */

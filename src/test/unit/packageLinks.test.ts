@@ -3,6 +3,8 @@ import {
   isRedirectorUrl,
   normalizeRepositoryUrl,
   isGitHost,
+  releasesUrlFor,
+  releaseNotesLinkFor,
   resolvePackageLinks,
   sameRepository,
   shortCommit,
@@ -167,5 +169,70 @@ describe('resolvePackageLinks', () => {
   it('carries the commit through on the Source link', () => {
     const links = resolvePackageLinks(undefined, { url: 'https://github.com/owner/repo', commit: 'abc123' });
     expect(links.source?.commit).toBe('abc123');
+  });
+});
+
+describe('releasesUrlFor', () => {
+  it('composes GitHub\'s /releases path', () => {
+    const link = normalizeRepositoryUrl('https://github.com/owner/repo')!;
+    expect(releasesUrlFor(link)).toBe('https://github.com/owner/repo/releases');
+  });
+
+  it('composes GitLab\'s own /-/releases path', () => {
+    const link = normalizeRepositoryUrl('https://gitlab.com/owner/repo')!;
+    expect(releasesUrlFor(link)).toBe('https://gitlab.com/owner/repo/-/releases');
+  });
+
+  it('falls back to GitHub\'s shape for an unrecognized git-labelled forge', () => {
+    const link = normalizeRepositoryUrl('https://git.example.com/owner/repo')!;
+    expect(releasesUrlFor(link)).toBe('https://git.example.com/owner/repo/releases');
+  });
+
+  it('gives nothing for Bitbucket, which has no releases list — unlike commitUrlFor, which has a real path to give', () => {
+    const link = normalizeRepositoryUrl('https://bitbucket.org/owner/repo')!;
+    expect(releasesUrlFor(link)).toBeUndefined();
+  });
+});
+
+describe('releaseNotesLinkFor (#125)', () => {
+  it('links a bare URL in the release notes, labelled Release notes', () => {
+    expect(releaseNotesLinkFor('https://example.com/imaging/releases/3.1.5', undefined)).toEqual({
+      label: 'Release notes', url: 'https://example.com/imaging/releases/3.1.5',
+    });
+  });
+
+  it('renders nothing when the release notes are prose, even prose containing a URL', () => {
+    const prose = 'See https://example.com/imaging/releases/3.1.5 for details. Also fixed a crash on startup.';
+    expect(releaseNotesLinkFor(prose, { url: 'https://github.com/example/imaging' }))
+      .toEqual({ label: 'Releases', url: 'https://github.com/example/imaging/releases' });
+  });
+
+  it('falls back to the repository\'s releases page, labelled Releases, when there is no notes URL', () => {
+    expect(releaseNotesLinkFor(undefined, { url: 'https://github.com/example/imaging' })).toEqual({
+      label: 'Releases', url: 'https://github.com/example/imaging/releases',
+    });
+  });
+
+  it('renders nothing when neither a notes URL nor a recognised repository exists', () => {
+    expect(releaseNotesLinkFor(undefined, undefined)).toBeUndefined();
+    expect(releaseNotesLinkFor('Fixed a crash on startup.', undefined)).toBeUndefined();
+    expect(releaseNotesLinkFor(undefined, { url: 'not a url at all' })).toBeUndefined();
+  });
+
+  it('prefers the notes URL over the repository fallback when both exist', () => {
+    expect(releaseNotesLinkFor('https://example.com/notes', { url: 'https://github.com/example/imaging' }))
+      .toEqual({ label: 'Release notes', url: 'https://example.com/notes' });
+  });
+
+  it('gives nothing for Bitbucket rather than a releases page it does not have', () => {
+    expect(releaseNotesLinkFor(undefined, { url: 'https://bitbucket.org/owner/repo' })).toBeUndefined();
+  });
+
+  it('never guesses at a host normalizeRepositoryUrl merely parsed into two segments, not a real git forge', () => {
+    // dev.azure.com/org/project/_git/repo normalizes into org/project — not
+    // the repository at all — and a naive fallback would still append
+    // /releases to that wrong address (#125).
+    expect(releaseNotesLinkFor(undefined, { url: 'https://dev.azure.com/org/project/_git/repo' }))
+      .toBeUndefined();
   });
 });

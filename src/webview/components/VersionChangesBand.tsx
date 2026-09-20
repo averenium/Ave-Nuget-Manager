@@ -1,11 +1,17 @@
 import React from 'react';
 import type { VersionDependencyDiff } from '../../packageVersionDiff';
+import type { ReleaseNotesLink } from '../../packageLinks';
 
 interface Props {
   diff: VersionDependencyDiff;
   /** The version installed now, and the one the selector is offering. */
   from: string;
   to: string;
+  /** The band's own link (#125) — release notes when the package names a bare address for them, the project's releases page otherwise. Absent when neither exists. */
+  releaseNotesLink?: ReleaseNotesLink;
+  /** A changelog the *installed* (`from`) version ships, absolute path — absent when it ships none of the conventional names (#125). */
+  changelogPath?: string;
+  onOpenChangelog?: (filePath: string) => void;
 }
 
 /**
@@ -28,13 +34,44 @@ interface Props {
  * two designs for one thing, and Problems is the one also reachable from a row
  * the reader has not opened. It travels in the same answer as this — one
  * question about the same two versions — and is rendered there.
+ *
+ * The header's right side also carries two links the rows above cannot say
+ * (#125): what the release itself claims to have changed, when the publisher
+ * names an address for it or failing that a repository whose releases list is
+ * reachable; and, separately, the changelog the *installed* version shipped —
+ * always stamped with that version, never the one being considered, since the
+ * file on disk cannot describe a step it has not taken.
  */
-export function VersionChangesBand({ diff, from, to }: Props) {
+export function VersionChangesBand({
+  diff, from, to, releaseNotesLink, changelogPath, onOpenChangelog,
+}: Props) {
   return (
     <div className="detail-section">
       <div className="dep-section__header">
         <span className="detail-section__title">What changes</span>
-        <span className="dep-section__context">{from} → {to}</span>
+        <span className="dep-section__aside">
+          <span className="dep-section__context">{from} → {to}</span>
+          {releaseNotesLink && (
+            <a
+              className="dep-section__link"
+              href={releaseNotesLink.url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {releaseNotesLink.label}
+            </a>
+          )}
+          {changelogPath && (
+            <button
+              type="button"
+              className="dep-section__link"
+              onClick={() => onOpenChangelog?.(changelogPath)}
+              title={`Open the changelog ${from} shipped`}
+            >
+              Changelog ({from})
+            </button>
+          )}
+        </span>
       </div>
       <div className="dep-list">
         {diff.added.map((change) => (

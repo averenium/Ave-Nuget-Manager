@@ -159,6 +159,13 @@ export type WebviewMessage =
    * webview composed.
    */
   | { type: 'OPEN_LICENSE_FILE'; filePath: string }
+  /**
+   * Open the changelog the installed package shipped (#125). Same read-only
+   * contract as `OPEN_LICENSE_FILE`, and the same reason for a message of its
+   * own rather than reusing that one: the path is one the extension host
+   * found, never one the webview composed.
+   */
+  | { type: 'OPEN_CHANGELOG_FILE'; filePath: string }
   | { type: 'COPY_TEXT'; text: string }
   | { type: 'OPEN_URL'; url: string }
   | { type: 'SET_SOURCE_ENABLED'; name: string; configFilePath: string; enabled: boolean; kind?: 'package' | 'audit'; url?: string }
@@ -358,6 +365,10 @@ export type ExtensionMessage =
       license?: import('./packageLicense').LicenseChange;
       /** Absent when nothing about the dependencies would move, or neither side was described. */
       dependencies?: import('./packageVersionDiff').VersionDependencyDiff;
+      /** The "What changes" band's own link (#125) — absent when the package names neither its release notes nor a recognised repository. */
+      releaseNotesLink?: import('./packageLinks').ReleaseNotesLink;
+      /** A changelog the *installed* version shipped, absolute path (#125) — absent when it ships none of the conventional names. */
+      changelogPath?: string;
     }
   | {
       type: 'BATCH_LICENSE_CHANGES';

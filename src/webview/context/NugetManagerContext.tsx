@@ -182,6 +182,10 @@ export interface AppState {
       /** Null while the answer is outstanding, and when nothing changes. */
       license: import('../../packageLicense').LicenseChange | null;
       dependencies: import('../../packageVersionDiff').VersionDependencyDiff | null;
+      /** Null while outstanding, and when the package names neither its release notes nor a recognised repository (#125). */
+      releaseNotesLink: import('../../packageLinks').ReleaseNotesLink | null;
+      /** Null while outstanding, and when the installed version ships none of the conventional changelog names (#125). */
+      changelogPath: string | null;
     } | null;
     isLoading: boolean;
     error: string | null;
@@ -377,7 +381,9 @@ function reduceAppState(state: AppState, action: Action): AppState {
         ...state,
         detail: {
           ...state.detail,
-          versionDiff: { version: action.version, license: null, dependencies: null },
+          versionDiff: {
+            version: action.version, license: null, dependencies: null, releaseNotesLink: null, changelogPath: null,
+          },
         },
       };
 
@@ -679,6 +685,8 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
             version: msg.version,
             license: msg.license ?? null,
             dependencies: msg.dependencies ?? null,
+            releaseNotesLink: msg.releaseNotesLink ?? null,
+            changelogPath: msg.changelogPath ?? null,
           },
         },
       };

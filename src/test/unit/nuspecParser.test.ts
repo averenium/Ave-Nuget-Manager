@@ -90,12 +90,27 @@ describe('parseNuspec', () => {
       url: 'https://github.com/DapperLib/Dapper',
       commit: '2a837ad7d036671ac9a75c9945bb970aa41b7de9',
     });
+    expect(meta?.releaseNotes).toBe('https://dapperlib.github.io/Dapper/');
   });
 
   it('parses EasyNetQ: license type="file" has a value but is not a URL, distinct from an expression', () => {
     const meta = parseNuspec(EASYNETQ_NUSPEC);
     expect(meta?.license).toEqual({ type: 'file', value: 'licence.txt' });
     expect(meta?.licenseUrl).toBe('https://aka.ms/deprecateLicenseUrl');
+    // No <releaseNotes> element at all — undefined, not an empty string,
+    // same rule every other optional nuspec field follows.
+    expect(meta?.releaseNotes).toBeUndefined();
+  });
+
+  it('carries release notes verbatim, prose or not — deciding whether it is a bare URL is not this parser\'s job (#125)', () => {
+    const prose = `<?xml version="1.0"?>
+<package><metadata>
+  <id>Example.Imaging</id><version>3.1.5</version>
+  <releaseNotes>Fixed a crash on startup. See https://example.com/changelog for details.</releaseNotes>
+  <description>d</description>
+</metadata></package>`;
+    expect(parseNuspec(prose)?.releaseNotes)
+      .toBe('Fixed a crash on startup. See https://example.com/changelog for details.');
   });
 
   it('parses Humanizer.Core.uk: comma-separated authors with existing internal spacing preserved', () => {

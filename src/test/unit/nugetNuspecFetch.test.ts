@@ -98,3 +98,37 @@ describe('NuspecReader', () => {
     expect(await reader.license(target, 'Example.Imaging', '3.1.5')).toBeUndefined();
   });
 });
+
+describe('NuspecReader.metadata', () => {
+  /** The measured shape for #125: release notes and a repository, no licence. */
+  const NOTES_NUSPEC = `<?xml version="1.0"?>
+<package><metadata>
+  <id>Example.Imaging</id><version>3.1.5</version>
+  <releaseNotes>https://example.com/example.imaging/releases/3.1.5</releaseNotes>
+  <repository type="git" url="https://github.com/example/imaging" />
+  <description>d</description>
+</metadata></package>`;
+
+  it('reads release notes and the repository from the same nuspec the licence comes from', async () => {
+    const { reader } = readerOver({
+      [SOURCE]: INDEX,
+      [NUSPEC]: { status: 200, text: NOTES_NUSPEC },
+    });
+
+    const metadata = await reader.metadata(target, 'Example.Imaging', '3.1.5');
+    expect(metadata?.releaseNotes).toBe('https://example.com/example.imaging/releases/3.1.5');
+    expect(metadata?.repository).toEqual({ url: 'https://github.com/example/imaging' });
+  });
+
+  it('shares one fetch between a licence lookup and a metadata lookup for the same version (#125)', async () => {
+    const { reader, calls } = readerOver({
+      [SOURCE]: INDEX,
+      [NUSPEC]: { status: 200, text: FILE_LICENCE_NUSPEC },
+    });
+
+    await reader.license(target, 'Example.Imaging', '3.1.5');
+    await reader.metadata(target, 'Example.Imaging', '3.1.5');
+
+    expect(calls.filter((u) => u === NUSPEC)).toHaveLength(1);
+  });
+});

@@ -2,23 +2,25 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 
 /**
- * Path to the `.nuspec` NuGet extracted for `packageId`@`version` into one
- * of `packageFolders`, or undefined if not found in any of them (a pruned
- * cache, or a package resolved only from a fallback folder that has since
- * gone — the caller should fall back to search-derived metadata then, per #86).
+ * The version directory's own entries for `packageId`@`version`, and which of
+ * `packageFolders` held it — or undefined if not found in any of them (a
+ * pruned cache, or a package resolved only from a fallback folder that has
+ * since gone). Shared by `findNuspecFile` and `findChangelogFile` so the two
+ * walk the same folders the same way from one place: naming the `.nuspec` and
+ * naming a changelog are both "does this directory listing contain a file
+ * matching X", and duplicating the walk itself would let the two silently
+ * diverge on how a version folder is matched (#125).
  *
- * Layout is `<folder>/<id lowercased>/<version>/<id>.nuspec`, but filename
- * casing varies between packages, so this globs for a `*.nuspec` file
- * inside the version folder rather than composing the exact name. The
- * version folder itself is matched case-insensitively too, defensively —
- * NuGet writes it lowercased in practice, but nothing guarantees the
- * `resolvedVersion` string passed in here matches that casing exactly.
+ * Layout is `<folder>/<id lowercased>/<version>/...`, but the version folder
+ * is matched case-insensitively, defensively — NuGet writes it lowercased in
+ * practice, but nothing guarantees the `version` string passed in here
+ * matches that casing exactly.
  */
-export async function findNuspecFile(
+async function versionDirEntries(
   packageFolders: string[],
   packageId: string,
   version: string,
-): Promise<string | undefined> {
+): Promise<{ versionDir: string; entries: string[] } | undefined> {
   const idLower = packageId.toLowerCase();
   const versionLower = version.toLowerCase();
 
@@ -40,10 +42,28 @@ export async function findNuspecFile(
     } catch {
       continue;
     }
-    const nuspecName = entries.find((e) => e.toLowerCase().endsWith('.nuspec'));
-    if (nuspecName) return path.join(versionDir, nuspecName);
+    return { versionDir, entries };
   }
   return undefined;
+}
+
+/**
+ * Path to the `.nuspec` NuGet extracted for `packageId`@`version`, or
+ * undefined if not found — the caller should fall back to search-derived
+ * metadata then, per #86.
+ *
+ * Filename casing varies between packages, so this globs for a `*.nuspec`
+ * file inside the version folder rather than composing the exact name.
+ */
+export async function findNuspecFile(
+  packageFolders: string[],
+  packageId: string,
+  version: string,
+): Promise<string | undefined> {
+  const found = await versionDirEntries(packageFolders, packageId, version);
+  if (!found) return undefined;
+  const nuspecName = found.entries.find((e) => e.toLowerCase().endsWith('.nuspec'));
+  return nuspecName ? path.join(found.versionDir, nuspecName) : undefined;
 }
 
 /**
@@ -74,6 +94,32 @@ export async function findLicenseFile(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Conventional changelog file names this extension recognises, matched
+ * case-insensitively at the package root only — no recursion, and no attempt
+ * at anything a publisher might have named differently (#125).
+ */
+const CHANGELOG_NAMES = new Set(['changelog.md', 'changelog.txt', 'releasenotes.md', 'release-notes.md']);
+
+/**
+ * A changelog the installed version shipped beside its `.nuspec`, or
+ * undefined when none of the conventional names is there (#125).
+ *
+ * Describes the *installed* version's own history up to itself — never the
+ * version an update would move to, which this extracted folder cannot
+ * contain and nothing here pretends to fetch for.
+ */
+export async function findChangelogFile(
+  packageFolders: string[],
+  packageId: string,
+  version: string,
+): Promise<string | undefined> {
+  const found = await versionDirEntries(packageFolders, packageId, version);
+  if (!found) return undefined;
+  const changelogName = found.entries.find((e) => CHANGELOG_NAMES.has(e.toLowerCase()));
+  return changelogName ? path.join(found.versionDir, changelogName) : undefined;
 }
 
 /**

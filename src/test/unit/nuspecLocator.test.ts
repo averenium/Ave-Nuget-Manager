@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { findNuspecFile, findLicenseFile, listRuntimeIdentifiers } from '../../nuspecLocator';
+import { findNuspecFile, findLicenseFile, listRuntimeIdentifiers, findChangelogFile } from '../../nuspecLocator';
 
 describe('findNuspecFile', () => {
   let dir: string;
@@ -88,6 +88,49 @@ describe('listRuntimeIdentifiers', () => {
     await fs.writeFile(path.join(dir, 'runtimes', 'README.txt'), 'x', 'utf8');
     await fs.mkdir(path.join(dir, 'runtimes', 'win-x64'), { recursive: true });
     expect(await listRuntimeIdentifiers(nuspecPath)).toEqual(['win-x64']);
+  });
+});
+
+describe('findChangelogFile', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nuspec-locator-changelog-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  async function writeAt(idFolder: string, versionFolder: string, fileName: string, text = 'x'): Promise<void> {
+    const versionDir = path.join(dir, idFolder, versionFolder);
+    await fs.mkdir(versionDir, { recursive: true });
+    await fs.writeFile(path.join(versionDir, fileName), text, 'utf8');
+  }
+
+  it.each(['CHANGELOG.md', 'changelog.txt', 'ReleaseNotes.md', 'release-notes.md'])(
+    'recognises %s at the package root',
+    async (fileName) => {
+      await writeAt('example.imaging', '3.1.5', fileName);
+      expect(await findChangelogFile([dir], 'Example.Imaging', '3.1.5'))
+        .toBe(path.join(dir, 'example.imaging', '3.1.5', fileName));
+    },
+  );
+
+  it('returns undefined for a name outside the conventional set', async () => {
+    await writeAt('example.imaging', '3.1.5', 'HISTORY.md');
+    expect(await findChangelogFile([dir], 'Example.Imaging', '3.1.5')).toBeUndefined();
+  });
+
+  it('does not recurse into subdirectories', async () => {
+    const nestedDir = path.join(dir, 'example.imaging', '3.1.5', 'docs');
+    await fs.mkdir(nestedDir, { recursive: true });
+    await fs.writeFile(path.join(nestedDir, 'CHANGELOG.md'), 'nested', 'utf8');
+    expect(await findChangelogFile([dir], 'Example.Imaging', '3.1.5')).toBeUndefined();
+  });
+
+  it('returns undefined when the version is not cached in any folder', async () => {
+    expect(await findChangelogFile([dir], 'DoesNotExist', '1.0.0')).toBeUndefined();
   });
 });
 

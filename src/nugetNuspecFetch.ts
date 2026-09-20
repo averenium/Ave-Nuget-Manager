@@ -22,7 +22,7 @@
  * of that feed.
  */
 
-import { parseNuspec } from './nuspecParser';
+import { parseNuspec, type NuspecMetadata } from './nuspecParser';
 import type {
   HttpFetcher,
   ProbeTarget,
@@ -47,8 +47,13 @@ function joinUrl(base: string, path: string): string {
 }
 
 export class NuspecReader {
-  /** One answer per address for the session: a published version never changes. */
-  private readonly _held = new Map<string, PackageLicense | undefined>();
+  /**
+   * One answer per address for the session: a published version never
+   * changes. Holds the whole parsed nuspec rather than only the licence, so a
+   * release-notes lookup and a licence lookup for the same version (#125)
+   * share the one fetch instead of each paying for their own.
+   */
+  private readonly _held = new Map<string, NuspecMetadata | undefined>();
 
   constructor(
     private readonly _capabilities: SourceCapabilityStore,
@@ -56,19 +61,15 @@ export class NuspecReader {
   ) {}
 
   /**
-   * The `<license>` element of one version, or `undefined` when it cannot be
-   * read — no content resource, no such package, a body that is not a nuspec.
-   *
-   * `undefined` is deliberately indistinguishable from "declares no licence":
-   * both mean this layer has nothing to state, and the comparison above treats
-   * an unknown licence as a reason to stay quiet rather than to guess.
+   * The parsed nuspec of one version, or `undefined` when it cannot be read —
+   * no content resource, no such package, a body that is not a nuspec.
    */
-  async license(
+  async metadata(
     target: ProbeTarget,
     packageId: string,
     version: string,
     signal?: AbortSignal,
-  ): Promise<PackageLicense | undefined> {
+  ): Promise<NuspecMetadata | undefined> {
     if (!packageId.trim() || !version.trim()) return undefined;
     await this._capabilities.ensure(target, signal);
 
@@ -86,11 +87,27 @@ export class NuspecReader {
       }
       if (response.status !== 200 || !response.text) continue;
 
-      const license = parseNuspec(response.text)?.license;
-      this._held.set(url, license);
-      return license;
+      const parsed = parseNuspec(response.text);
+      this._held.set(url, parsed);
+      return parsed;
     }
     return undefined;
+  }
+
+  /**
+   * The `<license>` element of one version (#89).
+   *
+   * `undefined` is deliberately indistinguishable from "declares no licence":
+   * both mean this layer has nothing to state, and the comparison above treats
+   * an unknown licence as a reason to stay quiet rather than to guess.
+   */
+  async license(
+    target: ProbeTarget,
+    packageId: string,
+    version: string,
+    signal?: AbortSignal,
+  ): Promise<PackageLicense | undefined> {
+    return (await this.metadata(target, packageId, version, signal))?.license;
   }
 
   /** Drops what is held — used when the configuration changes under us. */

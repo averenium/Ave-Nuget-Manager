@@ -241,6 +241,16 @@ export function PackageDetailPanel() {
     ? state.detail.versionDiff.dependencies ?? undefined
     : undefined;
 
+  // Same "about the version on screen, or nothing" rule as versionChanges (#125).
+  const releaseNotesLink = state.detail.versionDiff?.version
+    && versionsEqual(state.detail.versionDiff.version, effectiveVersion)
+    ? state.detail.versionDiff.releaseNotesLink ?? undefined
+    : undefined;
+  const changelogPath = state.detail.versionDiff?.version
+    && versionsEqual(state.detail.versionDiff.version, effectiveVersion)
+    ? state.detail.versionDiff.changelogPath ?? undefined
+    : undefined;
+
   const nearestClean = nearestUnaffectedVersion(
     allVersions, state.detail.versionFlags, effectiveVersion,
   );
@@ -667,7 +677,14 @@ export function PackageDetailPanel() {
       {/* Describes the picked version, so it sits above the resolved tree, which
           still describes what is installed now (#114). */}
       {versionChanges && isInstalled && installedFrom && (
-        <VersionChangesBand diff={versionChanges} from={installedFrom} to={effectiveVersion} />
+        <VersionChangesBand
+          diff={versionChanges}
+          from={installedFrom}
+          to={effectiveVersion}
+          releaseNotesLink={releaseNotesLink}
+          changelogPath={changelogPath}
+          onOpenChangelog={(filePath) => send({ type: 'OPEN_CHANGELOG_FILE', filePath })}
+        />
       )}
 
       {/* The resolved tree when there is a restore graph to read one from, and

@@ -261,6 +261,23 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
     },
     scopeChoiceMemory(context.workspaceState),
     compileAssetDiagnostics,
+    {
+      // Same targets, same order as the licence lookup above — and the same
+      // `nuspecs` reader, whose per-address cache is what keeps the two from
+      // ever costing two requests for the one nuspec they might both want.
+      forVersion: async (packageId, version, configFiles, signal) => {
+        for (const configFile of configFiles) {
+          const { targets } = await resolveSources(configFile);
+          for (const target of targets) {
+            const metadata = await nuspecs.metadata(target, packageId, version, signal);
+            if (metadata?.releaseNotes || metadata?.repository) {
+              return { releaseNotes: metadata.releaseNotes, repository: metadata.repository };
+            }
+          }
+        }
+        return undefined;
+      },
+    },
   );
   broker.attach();
   log.info('broker attached');

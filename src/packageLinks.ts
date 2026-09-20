@@ -14,6 +14,8 @@ export interface NormalizedRepoLink {
   repo: string;
 }
 
+import type { PackageRepository } from './types';
+
 /**
  * Rewrites `git://`, `git+https://`, `ssh://git@host/owner/repo` and
  * `git@host:owner/repo` into a clickable `https://host/owner/repo`, and
@@ -85,6 +87,71 @@ export function commitUrlFor(link: NormalizedRepoLink, commit: string): string {
 
 export function shortCommit(commit: string): string {
   return commit.slice(0, 7);
+}
+
+/**
+ * The project's releases *list* — GitLab's own path, GitHub's for anything
+ * else `isGitHost` recognises, undefined for Bitbucket, which has no such
+ * page: it groups artifacts under "Downloads" instead, tied to nothing in
+ * particular rather than to tags the way GitHub's and GitLab's releases are.
+ * Guessing `/releases` there would 404, which is exactly the outcome #125's
+ * own item 4 refuses for a per-version tag address — the same refusal
+ * applies to a page style the forge does not have at all.
+ *
+ * Never a per-version tag address such as `/releases/tag/v1.2.3` (#125): the
+ * tag style — `v1.2.3`, `1.2.3`, `pkg-1.2.3`, none at all — is the
+ * publisher's own business, and a guessed one that 404s is worse than no
+ * link at all. The list page, unlike a tag page, is not a guess about
+ * anything version-specific — except on the one forge that has no such page.
+ */
+export function releasesUrlFor(link: NormalizedRepoLink): string | undefined {
+  const host = link.host.toLowerCase();
+  if (host.includes('bitbucket')) return undefined;
+  if (host.includes('gitlab')) return `${link.url}/-/releases`;
+  return `${link.url}/releases`;
+}
+
+/**
+ * Exactly one `http(s)` URL and nothing else — release notes that are prose
+ * are not this (#125): the band this feeds is a short list of consequences,
+ * and a wall of text is what #114 deliberately kept out of it.
+ */
+function bareUrl(text: string | undefined): string | undefined {
+  const trimmed = text?.trim();
+  return trimmed && /^https?:\/\/\S+$/.test(trimmed) ? trimmed : undefined;
+}
+
+export interface ReleaseNotesLink {
+  label: 'Release notes' | 'Releases';
+  url: string;
+}
+
+/**
+ * What the "What changes" band links to for the version being considered
+ * (#125): the release notes themselves when the publisher gave a bare
+ * address for them, or — failing that — the project's releases list when
+ * `repository` names a recognised forge. Undefined when neither exists: no
+ * label ever names a document the reader cannot open.
+ *
+ * "Recognised" is `isGitHost`, the same check `resolvePackageLinks` already
+ * uses to decide whether an unlabelled URL is a repository at all — anything
+ * `normalizeRepositoryUrl` merely parses into two path segments still goes
+ * through it. Without this an Azure DevOps URL
+ * (`dev.azure.com/org/project/_git/repo`) would normalize into its first two
+ * segments — `org/project`, not the repository at all — and still get a
+ * guessed `/releases` appended to that wrong address.
+ */
+export function releaseNotesLinkFor(
+  releaseNotes: string | undefined,
+  repository: PackageRepository | undefined,
+): ReleaseNotesLink | undefined {
+  const notes = bareUrl(releaseNotes);
+  if (notes) return { label: 'Release notes', url: notes };
+
+  const link = repository ? normalizeRepositoryUrl(repository.url) : undefined;
+  if (!link || !isGitHost(link.host)) return undefined;
+  const releasesUrl = releasesUrlFor(link);
+  return releasesUrl ? { label: 'Releases', url: releasesUrl } : undefined;
 }
 
 /**

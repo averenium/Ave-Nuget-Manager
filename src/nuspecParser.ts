@@ -30,6 +30,8 @@ export interface NuspecMetadata {
   repository?: PackageRepository;
   description: string;
   tags: string[];
+  /** Free text or a URL, at the publisher's choice (#125) — never derived from anything else. */
+  releaseNotes?: string;
 }
 
 /** Real (unmasked) text between `<tagName ...>` and `</tagName>`, or undefined if absent. */
@@ -130,5 +132,6 @@ export function parseNuspec(xml: string): NuspecMetadata | undefined {
     repository: parseRepository(metadata),
     description: extractLeafText(metadata, 'description') ?? '',
     tags: tagsRaw ? splitTags(tagsRaw) : [],
+    releaseNotes: extractLeafText(metadata, 'releaseNotes'),
   };
 }

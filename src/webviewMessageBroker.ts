@@ -49,8 +49,9 @@ import { findMissingCompileAssets } from './missingCompileAssets';
 import { highestCompatibleVersion } from './frameworkCompatibility';
 import { projectFrameworkKey } from './frameworkPins';
 import { computeEntangledCluster } from './batchUpdates';
-import { findNuspecFile, findLicenseFile, listRuntimeIdentifiers } from './nuspecLocator';
+import { findNuspecFile, findLicenseFile, findChangelogFile, listRuntimeIdentifiers } from './nuspecLocator';
 import { parseNuspec } from './nuspecParser';
+import { releaseNotesLinkFor, type ReleaseNotesLink } from './packageLinks';
 import { searchedMetadataToPackageMetadata } from './searchMetadataMapping';
 import { resolvePackageDependencyTree, packageSupportedFrameworks } from './packageDependencyTree';
 import { promises as fs } from 'fs';
@@ -448,6 +449,21 @@ export class WebviewMessageBroker {
      * exercise this.
      */
     private readonly diagnostics?: vscode.DiagnosticCollection,
+    /**
+     * Release notes and the repository, for a version nobody has installed
+     * (#125). Neither the registration resource nor `dotnet package search`
+     * states either at all, so the package's own nuspec is the only source —
+     * fetched only when the licence lookup above would also need it, riding
+     * that one request rather than adding one of its own.
+     */
+    private readonly releaseNotesLookup?: {
+      forVersion: (
+        packageId: string,
+        version: string,
+        configFiles: string[],
+        signal?: AbortSignal,
+      ) => Promise<{ releaseNotes?: string; repository?: import('./types').PackageRepository } | undefined>;
+    },
   ) {
   }
 
@@ -667,9 +683,16 @@ export class WebviewMessageBroker {
         // the previous lookup is dropped rather than raced.
         this._cancelLicenseLookup();
         const signal = this._licenseAbort.signal;
-        const [license, dependencies] = await Promise.all([
-          this._licenseChangeFor(msg.packageId, msg.version, msg.configFiles, signal),
+        // Release notes run after the licence settles, not alongside it: both
+        // can reach for the same nuspec address, and chaining them makes the
+        // second one always a cache hit instead of racing the first for the
+        // same fetch (#125).
+        const [[license, releaseNotesLink], dependencies, changelogPath] = await Promise.all([
+          this._licenseChangeFor(msg.packageId, msg.version, msg.configFiles, signal)
+            .then(async (license) =>
+              [license, await this._releaseNotesFor(msg.packageId, msg.version, msg.configFiles, signal)] as const),
           this._dependencyDiffFor(msg.packageId, msg.version, msg.configFiles, signal),
+          this._installedChangelogFor(msg.packageId),
         ]);
         if (signal.aborted) break;
         this.provider.postMessage({
@@ -678,6 +701,8 @@ export class WebviewMessageBroker {
           version: msg.version,
           license,
           dependencies,
+          releaseNotesLink,
+          changelogPath,
         });
         break;
       }
@@ -777,6 +802,17 @@ export class WebviewMessageBroker {
           await vscode.window.showTextDocument(doc, { preview: true });
         } catch (err) {
           this.logger.error(`Could not open the licence file at ${msg.filePath}`, err);
+        }
+        break;
+
+      case 'OPEN_CHANGELOG_FILE':
+        // Same read-only path as the licence file (#125): both are files
+        // inside the package cache, never one the webview composed itself.
+        try {
+          const doc = await vscode.workspace.openTextDocument(msg.filePath);
+          await vscode.window.showTextDocument(doc, { preview: true });
+        } catch (err) {
+          this.logger.error(`Could not open the changelog at ${msg.filePath}`, err);
         }
         break;
 
@@ -1487,6 +1523,67 @@ export class WebviewMessageBroker {
   }
 
   /**
+   * The "What changes" band's link, for the version being considered (#125).
+   *
+   * Neither the registration resource nor `dotnet package search` states
+   * release notes or a repository at all — not even for a package whose
+   * licence the registration *does* state, since that is a wholly different
+   * field. So this is unconditional rather than mirroring
+   * `_licenceChangeFor`'s "only when the catalog leaves the licence empty"
+   * gate: gating it the same way looked like it reused that method's fetch,
+   * but for a well-maintained package — Dapper, measured, `Apache-2.0` — the
+   * catalog almost always *does* state a licence, and the gate then skipped
+   * the one fetch this feature has no other source for, silencing it on
+   * exactly the packages most likely to publish real release notes.
+   *
+   * Still only one request per version actually opened in the panel, the
+   * same cost `_licenseChangeFor`'s own fetch already accepted for the same
+   * reason (#89) — never one per version merely listed. Called after that
+   * method settles, never alongside it, so when both do reach for the same
+   * nuspec address the second one is a cache hit on `NuspecReader`'s own
+   * per-address cache rather than a race between two callers after the same
+   * fetch at once.
+   */
+  private async _releaseNotesFor(
+    packageId: string,
+    selectedVersion: string,
+    configFiles: string[],
+    signal?: AbortSignal,
+  ): Promise<ReleaseNotesLink | undefined> {
+    if (!selectedVersion) return undefined;
+
+    const installedEntry = this._installedEntryFor(packageId);
+    if (!installedEntry) return undefined;
+    if (versionsEqual(installedEntry.resolvedVersion, selectedVersion)) return undefined;
+
+    const fetched = await this.releaseNotesLookup?.forVersion(packageId, selectedVersion, configFiles, signal)
+      .catch(() => undefined);
+
+    return releaseNotesLinkFor(fetched?.releaseNotes, fetched?.repository);
+  }
+
+  /**
+   * A changelog the installed version shipped, named for that version (#125).
+   *
+   * Independent of whichever version the selector is offering: the file
+   * describes the installed side's own history, so recomputing it per pick
+   * would ask the same question of the same folder every time the reader
+   * scrolls the version list. It is asked anyway, on every `GET_VERSION_DIFF`
+   * rather than once per package, because it costs nothing beyond a directory
+   * listing already local to the machine.
+   */
+  private async _installedChangelogFor(packageId: string): Promise<string | undefined> {
+    const installedEntry = this._installedEntryFor(packageId);
+    if (!installedEntry) return undefined;
+    try {
+      const packageFolders = await readPackageFolders(installedEntry.projectPath);
+      return await findChangelogFile(packageFolders, packageId, installedEntry.resolvedVersion);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * The installed version's licence file, inside the extracted package (#89).
    *
    * The installed side is the one that is on disk, so its file licence — the
@@ -1549,6 +1646,7 @@ export class WebviewMessageBroker {
         repository: parsed.repository,
         description: parsed.description,
         tags: parsed.tags,
+        releaseNotes: parsed.releaseNotes,
         supportedFrameworks: supportedFrameworks?.length ? supportedFrameworks : undefined,
         runtimeIdentifiers: runtimeIdentifiers.length > 0 ? runtimeIdentifiers : undefined,
         dependencyTree,

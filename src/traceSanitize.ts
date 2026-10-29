@@ -58,9 +58,13 @@ function applySourceAliases(text: string, ctx: SanitizeContext): string {
   let out = text;
   for (const { scope, alias } of rows) {
     const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const escaped = escape(scope.origin + scope.path);
+    const [scheme, host] = scope.origin.split('://');
+    // The source may be written with its credentials in the address
+    // (`https://user:pw@nexus/...`); `URL.origin` leaves them out, so the match
+    // has to allow for them or that source would never be recognised.
+    const pattern = `${escape(scheme)}://(?:[^/@\\s"'<>]+@)?${escape(host)}${escape(scope.path)}`;
     // A boundary after it, so `/repository/a` does not eat the front of `/repository/ab`.
-    out = out.replace(new RegExp(`${escaped}(?![A-Za-z0-9._~%-])`, 'gi'), `<${alias}>`);
+    out = out.replace(new RegExp(`${pattern}(?![A-Za-z0-9._~%-])`, 'gi'), `<${alias}>`);
   }
   return out;
 }
@@ -404,7 +408,6 @@ export function sanitizeText(
   out = redactSolutionProjectNames(out, ctx);
   out = redactLeftoverDrivePaths(out, ctx);
 
-  out = out.replace(/:\/\/[^/@\s]+:[^/@\s]+@/g, '://<redacted>@');
   out = out.replace(/ClearTextPassword\s*=\s*("[^"]*"|'[^']*'|\S+)/gi, 'ClearTextPassword=<redacted>');
   out = out.replace(/\b(password|pwd|apikey|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi, '$1=<redacted>');
   out = out.replace(
@@ -417,7 +420,14 @@ export function sanitizeText(
     '$1"<redacted>"',
   );
 
+  // The address passes come first, while the credentials are still in the URL:
+  // `sanitizeFeedUrl` drops them together with the host. Replacing them with a
+  // placeholder first put `<` into the address, which is where the URL pattern
+  // stops, so the host of a feed written as `https://user:pw@nexus.corp/...` was
+  // never seen as part of a URL and stayed in an archive meant for a public issue.
   out = redactUrlsInText(out);
+  // What no address pass owns (`ssh://`, a connection string): the placeholder.
+  out = out.replace(/:\/\/[^/@\s]+:[^/@\s]+@/g, '://<redacted>@');
 
   if (ctx.hostname && ctx.hostname.length > 1) {
     const hostEsc = ctx.hostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

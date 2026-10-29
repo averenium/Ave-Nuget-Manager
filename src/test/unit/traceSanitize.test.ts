@@ -538,3 +538,43 @@ describe('sanitizeJsonLines — the trace stays valid JSON Lines (#134)', () => 
     });
   });
 });
+
+describe('credentials written into an address (#135)', () => {
+  const base = { home: '/home/someone', workspaceRoots: [], hostname: 'workstation' };
+  const WITH_CREDENTIALS = 'https://user:pw@nexus.corp.internal/repository/private-a/index.json';
+
+  it('takes the host with the credentials, as it does for any other feed address', () => {
+    const out = sanitizeText(`GET ${WITH_CREDENTIALS}`, base);
+
+    expect(out).toBe('GET https://<host>/repository/<id>/index.json');
+    expect(out).not.toContain('corp.internal');
+    expect(out).not.toContain('pw');
+  });
+
+  it('does the same inside a JSON Lines payload', () => {
+    const line = JSON.stringify({ kind: 'http', url: WITH_CREDENTIALS, body: `{"next":"${WITH_CREDENTIALS}"}` });
+    const [out] = sanitizeJsonLines(`${line}\n`, base).split('\n').filter(Boolean);
+
+    expect(out).not.toContain('corp.internal');
+    expect(JSON.parse(out).url).toBe('https://<host>/repository/<id>/index.json');
+  });
+
+  it('covers a proxy address written with its user and password', () => {
+    const out = sanitizeText('http_proxy=http://proxyuser:proxypw@proxy.corp.internal:8080', base);
+
+    expect(out).not.toContain('proxy.corp.internal');
+    expect(out).not.toContain('proxypw');
+  });
+
+  it('still gives a source written with credentials its alias', () => {
+    const sourceAliases = assignSourceAliases(['https://nexus.corp.internal/repository/private-a/index.json']);
+    const out = sanitizeText(`GET ${WITH_CREDENTIALS}`, { ...base, sourceAliases });
+
+    expect(out).toBe('GET <s01>/index.json');
+  });
+
+  it('leaves the placeholder for a scheme no address pass owns', () => {
+    expect(sanitizeText('remote=ssh://deploy:secret@git.corp.internal/repo', base))
+      .toBe('remote=ssh://<redacted>@git.corp.internal/repo');
+  });
+});

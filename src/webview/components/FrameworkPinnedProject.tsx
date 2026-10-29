@@ -9,7 +9,7 @@ import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { RoslynCapPopup } from './RoslynCapPopup';
 import { CrossLinePopup } from './CrossLinePopup';
 import { sameMajorLine } from '../../frameworkPins';
-import { highestCompatibleVersion } from '../../frameworkCompatibility';
+import { highestCompatibleVersion, stayingVersion } from '../../frameworkCompatibility';
 import { VersionSelect } from './VersionSelector';
 import { versionTone } from '../utils/versionTone';
 import { IconCheck, IconChevronDown, IconInstall, IconTrash } from '../utils/icons';
@@ -61,6 +61,12 @@ export function FrameworkPinnedProject({
   };
 
   const referenced = rows.filter((row) => row.resolvedVersion).map((row) => row.framework);
+  // What a framework row with nothing compatible of its own falls back to
+  // instead of the feed's raw newest (#130) — every version already resolved
+  // for a sibling framework of this same project.
+  const resolvedVersions = rows
+    .map((row) => row.resolvedVersion)
+    .filter((v): v is string => !!v);
 
   return (
     <div className="project-group">
@@ -104,6 +110,7 @@ export function FrameworkPinnedProject({
           row={row}
           sharedWith={sharedReference ? referenced : undefined}
           allVersions={allVersions}
+          resolvedVersions={resolvedVersions}
           updatesBlocked={updatesBlocked}
           isLoading={isLoading}
           state={state}
@@ -124,6 +131,8 @@ interface RowProps {
   /** Every framework the one shared reference covers, when it is still shared (#82). */
   sharedWith?: string[];
   allVersions: string[];
+  /** Versions already resolved for a sibling framework of this project (#130). */
+  resolvedVersions: string[];
   updatesBlocked: boolean;
   isLoading: boolean;
   state: ReturnType<typeof useNugetManager>['state'];
@@ -142,14 +151,18 @@ interface RowProps {
  * thing to do, and doing it without noticing is the thing this issue is about.
  */
 function FrameworkRow({
-  packageId, project, row, sharedWith, allVersions, updatesBlocked, isLoading, state, dispatch, send,
+  packageId, project, row, sharedWith, allVersions, resolvedVersions, updatesBlocked, isLoading, state, dispatch, send,
 }: RowProps) {
   const p = project.absolutePath;
   const referenced = row.resolvedVersion !== undefined;
   // Not yet referenced from this framework: the version offered by default is
-  // the newest one it can actually use (#107), not the feed's raw latest.
+  // the newest one it can actually use (#107), not the feed's raw latest —
+  // and when nothing is compatible even for this one framework, a sibling
+  // framework's own resolved version beats guessing at the feed's raw latest,
+  // which the picker right below would then dim (#130).
   const startingVersion = row.resolvedVersion
     ?? highestCompatibleVersion(allVersions, (v) => state.detail.versionFlags?.[v]?.declaredDependencies, [row.framework])
+    ?? stayingVersion(resolvedVersions)
     ?? allVersions[0]
     ?? '';
   const [localVersion, setLocalVersion] = useState(startingVersion);

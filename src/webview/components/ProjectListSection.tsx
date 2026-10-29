@@ -341,6 +341,10 @@ function ProjectRow({
           onChange={setLocalVersion}
           versionFlags={state.detail.versionFlags}
           projectTfms={frameworks}
+          // Only this row's own disclosure can narrow it — the one `onExpand`
+          // opens right here — so the note points at it exactly when that
+          // control exists (#130).
+          pointsAtDisclosure={!!onExpand}
         />
         <button
           className={`btn btn--icon version-apply__btn ${updateTone === 'same' ? 'btn--secondary' : 'btn--primary'}`}

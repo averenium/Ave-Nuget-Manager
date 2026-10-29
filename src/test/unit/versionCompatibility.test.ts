@@ -35,6 +35,55 @@ describe('incompatibilityReason (#107)', () => {
   });
 });
 
+describe('incompatibilityReason — fix hints (#130)', () => {
+  const netTenOnly = [{ targetFramework: 'net10.0', dependencies: [] }];
+
+  it('narrow-badges names the framework(s) to leave out, when some but not all fail', () => {
+    expect(incompatibilityReason(netTenOnly, ['net8.0', 'net10.0'], 'narrow-badges')).toBe(
+      "Can't install for net8.0 — no compatible assets (ships net10.0 only) — leave net8.0 out to install it here",
+    );
+  });
+
+  it('open-disclosure names the framework(s) that would still take it', () => {
+    expect(incompatibilityReason(netTenOnly, ['net8.0', 'net10.0'], 'open-disclosure')).toBe(
+      "Can't install for net8.0 — no compatible assets (ships net10.0 only)"
+      + ' — open the project to give net10.0 its own version',
+    );
+  });
+
+  it('adds no hint of either kind when every framework fails — nothing left to narrow away', () => {
+    expect(incompatibilityReason(netTenOnly, ['net8.0'], 'narrow-badges')).toBe(
+      "Can't install for net8.0 — no compatible assets (ships net10.0 only)",
+    );
+    expect(incompatibilityReason(netTenOnly, ['net8.0', 'net9.0'], 'open-disclosure')).toBe(
+      "Can't install for net8.0, net9.0 — no compatible assets (ships net10.0 only)",
+    );
+  });
+
+  it('adds no hint when the version is compatible after all', () => {
+    expect(incompatibilityReason(netTenOnly, ['net10.0'], 'narrow-badges')).toBeUndefined();
+  });
+
+  it('leaves the plain sentence alone when no fix is requested', () => {
+    expect(incompatibilityReason(netTenOnly, ['net8.0', 'net10.0'])).toBe(
+      "Can't install for net8.0 — no compatible assets (ships net10.0 only)",
+    );
+  });
+
+  it('clears when the offending framework is switched off and returns when it is switched back (#130)', () => {
+    // What the popup itself does on every badge click: judge only the
+    // frameworks still switched on, so the note is a fact about the write
+    // Apply is about to make rather than one fixed at the moment it opened.
+    const allFrameworks = ['net8.0', 'net10.0'];
+    const reasonFor = (off: string[]) =>
+      incompatibilityReason(netTenOnly, allFrameworks.filter((f) => !off.includes(f)), 'narrow-badges');
+
+    expect(reasonFor([])).toBeDefined(); // open, both badges on
+    expect(reasonFor(['net8.0'])).toBeUndefined(); // net8.0 switched off
+    expect(reasonFor([])).toBeDefined(); // switched back on
+  });
+});
+
 describe('compatibilityFor', () => {
   it('flags the exact #107 repro: 10.0.12/10.0.0 ship net10.0 only, on a net8.0 project', () => {
     const result = compatibilityFor(
@@ -79,6 +128,24 @@ describe('compatibilityFor', () => {
       ['8.0.0'], flags({ '8.0.0': 'net8.0' }), ['net8.0', 'net9.0'],
     );
     expect(result.incompatible).toEqual([]);
+  });
+
+  it('the collapsed row and the per-framework row disagree on the same version, by design (#130)', () => {
+    // A net8.0;net10.0 project holding one shared reference: the collapsed
+    // row judges the version against both frameworks at once and hides it
+    // (net8.0 has no compatible assets), while the net10.0 row underneath
+    // the disclosure judges it alone and finds it perfectly ordinary — the
+    // exact situation #130 opened with.
+    const netTenOnly = flags({ '10.0.12': 'net10.0' });
+    const collapsed = compatibilityFor(['10.0.12'], netTenOnly, ['net8.0', 'net10.0'], 'open-disclosure');
+    expect(collapsed.incompatible).toEqual(['10.0.12']);
+    expect(collapsed.reason('10.0.12')).toBe(
+      "Can't install for net8.0 — no compatible assets (ships net10.0 only)"
+      + ' — open the project to give net10.0 its own version',
+    );
+
+    const perFramework = compatibilityFor(['10.0.12'], netTenOnly, ['net10.0']);
+    expect(perFramework.incompatible).toEqual([]);
   });
 });
 

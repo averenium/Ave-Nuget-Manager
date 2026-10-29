@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import type { ProjectInfo } from '../../types';
+import type { DeclaredDependencyGroup, ProjectInfo } from '../../types';
 import { versionTone, versionLabel } from '../utils/versionTone';
+import { incompatibilityReason } from '../utils/versionCompatibility';
 
 
 interface Props {
@@ -26,22 +27,23 @@ interface Props {
    */
   splitsReference?: string[];
   /**
-   * Why `targetVersion` can't serve a project, keyed by absolute path — set
-   * only for the projects it doesn't work for (#107). A shared version
-   * applied across several projects at once has no per-project picker the
-   * way an installed row does, so this is the one warning available before
-   * Apply writes it anyway; a project it names starts unchecked, but nothing
-   * stops picking it back — the same "dim, not remove" rule the version list
-   * itself follows.
+   * `targetVersion`'s own declared groups, so a project's "can't install"
+   * note can be judged against whichever of its frameworks are still
+   * switched on rather than fixed at the set open with (#130) — a shared
+   * version applied across several projects at once has no per-project
+   * picker the way an installed row does, so this is the one warning
+   * available before Apply writes it anyway; a project it names starts
+   * unchecked, but nothing stops picking it back — the same "dim, not
+   * remove" rule the version list itself follows.
    */
-  incompatibleProjects?: Map<string, string>;
+  declaredGroups?: DeclaredDependencyGroup[];
   onConfirm: (selected: string[], frameworks?: Record<string, string[]>) => void;
   onCancel: () => void;
 }
 
 export function ProjectSelectionPopup({
   title, projects, initiallySelected, currentVersions, targetVersion, frameworksByProject,
-  splitsReference, incompatibleProjects, onConfirm, onCancel,
+  splitsReference, declaredGroups, onConfirm, onCancel,
 }: Props) {
   const installedSet = useMemo(
     () => new Set(Object.keys(currentVersions ?? {})),
@@ -51,7 +53,7 @@ export function ProjectSelectionPopup({
   const [checked, setChecked] = useState<Set<string>>(
     () => new Set(
       (initiallySelected ?? projects.map((p) => p.absolutePath))
-        .filter((p) => !incompatibleProjects?.has(p)),
+        .filter((p) => !incompatibilityReason(declaredGroups, frameworksByProject?.[p] ?? [])),
     ),
   );
   const [query, setQuery] = useState('');
@@ -189,7 +191,16 @@ export function ProjectSelectionPopup({
             const from = currentVersions?.[p.absolutePath];
             const tone = versionTone(from, targetVersion);
             const label = versionLabel(from, targetVersion);
-            const incompatReason = incompatibleProjects?.get(p.absolutePath);
+
+            const frameworks = frameworksByProject?.[p.absolutePath] ?? [];
+            const off = offByProject[p.absolutePath] ?? [];
+            // Judged against the frameworks still switched on, not the whole
+            // project as it stood when the popup opened (#130) — the note is
+            // a fact about the write Apply is about to make, so it clears the
+            // moment the offending badge goes off and returns the moment it's
+            // switched back on.
+            const on = frameworks.filter((f) => !off.includes(f));
+            const incompatReason = incompatibilityReason(declaredGroups, on, 'narrow-badges');
             const rowClass = [
               'popup__item',
               tone === 'up' ? 'popup__item--up' : '',
@@ -197,8 +208,6 @@ export function ProjectSelectionPopup({
               incompatReason ? 'popup__item--incompatible' : '',
             ].filter(Boolean).join(' ');
 
-            const frameworks = frameworksByProject?.[p.absolutePath] ?? [];
-            const off = offByProject[p.absolutePath] ?? [];
             const showFrameworks = !!targetVersion && frameworks.length > 1;
             const willSplit = off.length > 0
               && off.length < frameworks.length

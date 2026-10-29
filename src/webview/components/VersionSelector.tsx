@@ -33,6 +33,7 @@ export function VersionSelect({
   versionFlags,
   versionLine,
   projectTfms,
+  pointsAtDisclosure,
 }: {
   versions: string[];
   selected: string;
@@ -55,6 +56,15 @@ export function VersionSelect({
    * as offered today, which is what a caller with nothing to judge by passes.
    */
   projectTfms?: readonly string[];
+  /**
+   * True only for the Projects section's collapsed multi-TFM row (#130): a
+   * version refused for some, not all, of `projectTfms` names the way out —
+   * opening this very row's own disclosure to give the framework that *would*
+   * take it a version of its own. Every other picker judging more than one
+   * framework at once (the popup, the panel-level selector spanning several
+   * projects) has no single disclosure to point at, so it stays unset there.
+   */
+  pointsAtDisclosure?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [disclosed, setDisclosed] = useState(false);
@@ -70,7 +80,7 @@ export function VersionSelect({
   // or one installed before the feed ever described its frameworks — always
   // stays in the visible list: a picker that hides its own current value on
   // open would be worse than one that never learned to dim anything at all.
-  const compat = compatibilityFor(options, versionFlags, projectTfms);
+  const compat = compatibilityFor(options, versionFlags, projectTfms, pointsAtDisclosure ? 'open-disclosure' : undefined);
   const hiddenSet = new Set(hiddenVersions(compat, selected));
   const visibleOptions = options.filter((v) => !hiddenSet.has(v));
   const hiddenOptions = options.filter((v) => hiddenSet.has(v));

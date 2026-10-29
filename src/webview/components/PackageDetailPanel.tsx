@@ -26,10 +26,9 @@ import { resolveVersionSpread } from '../../packageResolvedVersions';
 import { ProblemsBand } from './ProblemsBand';
 import { VersionChangesBand } from './VersionChangesBand';
 import { sortTargetFrameworksDesc } from '../../targetFrameworks';
-import { highestCompatibleVersion } from '../../frameworkCompatibility';
+import { highestCompatibleVersion, stayingVersion } from '../../frameworkCompatibility';
 import { nearestUnaffectedVersion } from '../utils/nearestUnaffected';
 import { flagsForVersion } from '../utils/versionFlags';
-import { incompatibilityReason } from '../utils/versionCompatibility';
 import type { VulnerabilityFinding } from '../../types';
 
 /** How long the version selection has to hold still before the question goes out (#89, #114). */
@@ -196,7 +195,12 @@ export function PackageDetailPanel() {
   const compatibleVersion = highestCompatibleVersion(
     allVersions, (v) => flagsForVersion(state.detail.versionFlags, v)?.declaredDependencies, packageProjectTfms,
   );
-  const effectiveVersion = selectedVersion || compatibleVersion || allVersions[0] || metadata?.version || '';
+  // Nothing satisfies every one of packageProjectTfms at once: default to
+  // wherever the package already is rather than the feed's raw newest, which
+  // the version picker right here would then dim (#130) — the same
+  // "stay where you are" rule the host already answers with.
+  const effectiveVersion = selectedVersion || compatibleVersion
+    || stayingVersion(installedVersions) || allVersions[0] || metadata?.version || '';
   // The local .nuspec and the restore graph (#86) are readable for anything the
   // restore put on disk, and a transitive package's folder and its entry in
   // project.assets.json are as present as a direct one's. Deliberately not
@@ -422,22 +426,13 @@ export function PackageDetailPanel() {
   })();
 
   /**
-   * Why `effectiveVersion` can't serve a project, keyed by absolute path
-   * (#107) — the popup applies one version across every project checked, with
-   * no per-project picker the way an already-installed row has, so this is
-   * what stops it from writing an incompatible version silently into a
-   * project the reader only meant to include because it was on by default.
+   * `effectiveVersion`'s own declared groups (#107) — handed to the popup
+   * rather than a per-project verdict computed once here, so its note can
+   * follow which of a project's frameworks are still switched on rather than
+   * staying fixed at whatever they were when the popup opened (#130).
    */
-  const incompatibleProjects = (() => {
-    const map = new Map<string, string>();
-    if (!scope || (scope.kind !== 'solution' && scope.kind !== 'folder')) return map;
-    const groups = flagsForVersion(state.detail.versionFlags, effectiveVersion)?.declaredDependencies;
-    for (const p of scope.projects) {
-      const reason = incompatibilityReason(groups, frameworksOf(p.absolutePath));
-      if (reason) map.set(p.absolutePath, reason);
-    }
-    return map;
-  })();
+  const declaredGroupsForEffectiveVersion = flagsForVersion(state.detail.versionFlags, effectiveVersion)
+    ?.declaredDependencies;
 
   /** Those of them the user actually narrowed, named for the confirmation. */
   const splittingProjects = (frameworks?: Record<string, string[]>) => {
@@ -776,7 +771,7 @@ export function PackageDetailPanel() {
           targetVersion={showPopup === 'install' ? effectiveVersion : undefined}
           frameworksByProject={showPopup === 'install' ? state.packages.projectFrameworks : undefined}
           splitsReference={showPopup === 'install' ? splitsReference : undefined}
-          incompatibleProjects={showPopup === 'install' ? incompatibleProjects : undefined}
+          declaredGroups={showPopup === 'install' ? declaredGroupsForEffectiveVersion : undefined}
           onConfirm={handlePopupConfirm}
           onCancel={() => setShowPopup(null)}
         />

@@ -8,6 +8,7 @@ import {
   type ParsedTargetFramework,
 } from './targetFrameworks';
 import { frameworkKey } from './frameworkMoniker';
+import { compareSemVer } from './semver';
 
 /**
  * Which dependency group a project's framework would actually take (#114).
@@ -178,6 +179,31 @@ export function highestCompatibleVersion<T extends { targetFramework?: string }>
   projectTfms: readonly string[],
 ): string | undefined {
   return versionsDesc.find((v) => isVersionCompatible(groupsByVersion(v), projectTfms));
+}
+
+/**
+ * What a version picker defaults to once `highestCompatibleVersion` has
+ * nothing to offer — no version satisfies every framework in play at once
+ * (#130). The lowest of `resolvedVersions` (versions already resolved
+ * somewhere for this reference), never the feed's raw newest: that newest is
+ * exactly the version #107 was written to stop proposing, and the picker
+ * right beside the row would dim it the moment it opened. "Lowest" rather
+ * than any one resolved version in particular so it is never itself newer
+ * than something already installed, which would draw an update arrow nothing
+ * here actually satisfies.
+ *
+ * `resolvedVersions` empty — nothing is resolved yet, so there is no "stay
+ * where you are" to fall back to — leaves the decision to the caller, which
+ * is expected to fall through to its own last resort from there.
+ *
+ * Shared by the host (`_compatibleLatestForTfms`) and the webview
+ * (`PackageDetailPanel`, `FrameworkPinnedProject`) so the two stop answering
+ * this the opposite way: before #130 the host already proposed "stay where
+ * you are" while the webview proposed the feed's newest for the very same
+ * situation.
+ */
+export function stayingVersion(resolvedVersions: readonly string[]): string | undefined {
+  return [...resolvedVersions].filter(Boolean).sort(compareSemVer)[0];
 }
 
 function newestGroup<T extends { targetFramework?: string }>(

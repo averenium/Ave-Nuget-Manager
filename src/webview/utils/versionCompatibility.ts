@@ -4,6 +4,22 @@ import { frameworkLabel } from '../../frameworkMoniker';
 import { versionsEqual } from '../../semver';
 
 /**
+ * The remedy a "can't install" note points at, when it can point at one at
+ * all (#130) — the same sentence, `incompatibilityReason` builds otherwise,
+ * with one more clause naming the way out:
+ *
+ * - `narrow-badges`: the multi-project install popup, which can leave the
+ *   failing framework(s) out of the write with a click on their own badges.
+ * - `open-disclosure`: the Projects section's collapsed multi-TFM row, whose
+ *   only way to narrow is the disclosure that gives each framework a version
+ *   of its own.
+ *
+ * Neither applies when *every* one of `projectTfms` fails — there is nothing
+ * left to narrow away, so the plain sentence stands on its own.
+ */
+export type IncompatibilityFix = 'narrow-badges' | 'open-disclosure';
+
+/**
  * Why one version's declared groups can't serve `projectTfms` — undefined
  * when they can, or when there's nothing to judge (#107). The one place the
  * "Can't install for X — ships Y only" sentence is built, shared by the
@@ -17,6 +33,7 @@ import { versionsEqual } from '../../semver';
 export function incompatibilityReason(
   groups: DeclaredDependencyGroup[] | undefined,
   projectTfms: readonly string[],
+  fix?: IncompatibilityFix,
 ): string | undefined {
   const failing = unsatisfiedFrameworks(groups, projectTfms);
   if (failing.length === 0) return undefined;
@@ -24,9 +41,21 @@ export function incompatibilityReason(
   const shipped = [...new Set(
     (groups ?? []).map((g) => g.targetFramework).filter((f): f is string => !!f).map(frameworkLabel),
   )];
-  return shipped.length > 0
+  const base = shipped.length > 0
     ? `Can't install for ${forWhat} — no compatible assets (ships ${shipped.join(', ')} only)`
     : `Can't install for ${forWhat}`;
+
+  // A framework that also fails has nothing to offer as "the one that would
+  // still work" — every one of projectTfms failing leaves neither remedy
+  // sayable, so the note stops being a dead end only when some of them don't.
+  if (!fix || failing.length >= projectTfms.length) return base;
+
+  if (fix === 'narrow-badges') return `${base} — leave ${forWhat} out to install it here`;
+
+  const working = [...new Set(
+    projectTfms.filter((tfm) => !failing.includes(tfm)).map(frameworkLabel),
+  )].join(', ');
+  return `${base} — open the project to give ${working} its own version`;
 }
 
 /**
@@ -55,6 +84,7 @@ export function compatibilityFor(
   versions: readonly string[],
   versionFlags: Record<string, VersionFlag> | undefined,
   projectTfms: readonly string[] | undefined,
+  fix?: IncompatibilityFix,
 ): VersionCompatibility {
   if (!projectTfms?.length || !versionFlags) return NONE;
 
@@ -62,7 +92,7 @@ export function compatibilityFor(
   const reasons = new Map<string, string>();
 
   for (const v of versions) {
-    const reason = incompatibilityReason(versionFlags[v]?.declaredDependencies, projectTfms);
+    const reason = incompatibilityReason(versionFlags[v]?.declaredDependencies, projectTfms, fix);
     if (!reason) continue;
     incompatible.push(v);
     reasons.set(v, reason);

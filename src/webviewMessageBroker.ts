@@ -46,7 +46,7 @@ import { buildScopeChoices } from './scopeChoices';
 import { resolveRememberedChoice, type RememberedScopeChoice, type ScopeChoiceMemory } from './scopeChoiceMemory';
 import { readProjectAssets, readPackageFolders, readAssetsJson } from './projectAssets';
 import { findMissingCompileAssets } from './missingCompileAssets';
-import { highestCompatibleVersion } from './frameworkCompatibility';
+import { highestCompatibleVersion, stayingVersion } from './frameworkCompatibility';
 import { projectFrameworkKey } from './frameworkPins';
 import { computeEntangledCluster } from './batchUpdates';
 import { findNuspecFile, findLicenseFile, findChangelogFile, listRuntimeIdentifiers } from './nuspecLocator';
@@ -3365,9 +3365,10 @@ export class WebviewMessageBroker {
    * version already missing its compile assets — this must not fall back to
    * the raw feed latest: that is exactly the incompatible version #107 opens
    * with, and it would sit in webview state proposing an ↑ to it until the
-   * next full list corrected it. The lowest resolved version among the rows
-   * that share this id is never newer than any of them, so it proposes no ↑
-   * for any row instead of guessing.
+   * next full list corrected it. `stayingVersion` — the lowest resolved
+   * version among the rows that share this id — is never newer than any of
+   * them, so it proposes no ↑ for any row instead of guessing; the same
+   * fallback the webview now shares (#130).
    */
   private _compatibleLatestForTfms(
     cached: CacheEntry,
@@ -3378,9 +3379,7 @@ export class WebviewMessageBroker {
     const compatible = highestCompatibleVersion(
       cached.versions, (v) => cached.metadataByVersion?.[v]?.declaredDependencies, tfms,
     );
-    if (compatible) return compatible;
-    const lowest = [...resolvedVersions].sort(compareSemVer)[0];
-    return lowest ?? cached.latestVersion;
+    return compatible ?? stayingVersion(resolvedVersions) ?? cached.latestVersion;
   }
 
   /**

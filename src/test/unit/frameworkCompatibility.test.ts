@@ -4,6 +4,7 @@ import {
   highestCompatibleVersion,
   isVersionCompatible,
   selectCompatibleGroup,
+  stayingVersion,
   unsatisfiedFrameworks,
 } from '../../frameworkCompatibility';
 
@@ -233,5 +234,26 @@ describe('highestCompatibleVersion', () => {
     const groups = groupsByVersion({ '10.0.12': 'net10.0', '8.0.11': 'net8.0' });
     expect(highestCompatibleVersion(['10.0.12', '8.0.11'], groups, ['net8.0'])).toBe('8.0.11');
     expect(highestCompatibleVersion(['10.0.12'], groups, ['net8.0'])).toBeUndefined();
+  });
+});
+
+describe('stayingVersion (#130)', () => {
+  it('picks the lowest of several already-resolved versions, never a newer one', () => {
+    // Never proposes an update for any of the rows that share it — the same
+    // guarantee #107 already relies on for the host's own id-wide fallback.
+    expect(stayingVersion(['9.1.0', '9.0.3', '10.0.0'])).toBe('9.0.3');
+  });
+
+  it('returns the one resolved version unchanged', () => {
+    expect(stayingVersion(['9.0.0'])).toBe('9.0.0');
+  });
+
+  it('returns undefined when nothing is resolved yet, leaving the caller its own last resort', () => {
+    expect(stayingVersion([])).toBeUndefined();
+  });
+
+  it('ignores an empty string standing in for "not yet referenced"', () => {
+    expect(stayingVersion(['', '9.0.0'])).toBe('9.0.0');
+    expect(stayingVersion([''])).toBeUndefined();
   });
 });

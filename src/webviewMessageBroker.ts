@@ -1546,6 +1546,12 @@ export class WebviewMessageBroker {
    * nuspec address the second one is a cache hit on `NuspecReader`'s own
    * per-address cache rather than a race between two callers after the same
    * fetch at once.
+   *
+   * Not a diff, so it has none of the guards the licence change and the
+   * dependency diff carry (#132): release notes describe *one* version, and
+   * there is something to say about it whether or not it is the installed one,
+   * and whether or not the package is installed at all — a version nobody has
+   * installed yet is exactly the one a reader deciding on it wants them for.
    */
   private async _releaseNotesFor(
     packageId: string,
@@ -1554,10 +1560,6 @@ export class WebviewMessageBroker {
     signal?: AbortSignal,
   ): Promise<ReleaseNotesLink | undefined> {
     if (!selectedVersion) return undefined;
-
-    const installedEntry = this._installedEntryFor(packageId);
-    if (!installedEntry) return undefined;
-    if (versionsEqual(installedEntry.resolvedVersion, selectedVersion)) return undefined;
 
     const fetched = await this.releaseNotesLookup?.forVersion(packageId, selectedVersion, configFiles, signal)
       .catch(() => undefined);

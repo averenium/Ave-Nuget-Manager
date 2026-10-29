@@ -3,10 +3,13 @@ import type { VersionDependencyDiff } from '../../packageVersionDiff';
 import type { ReleaseNotesLink } from '../../packageLinks';
 
 interface Props {
-  diff: VersionDependencyDiff;
-  /** The version installed now, and the one the selector is offering. */
-  from: string;
+  /** Absent when nothing changes — then only the header renders, as the version's own line (#132). */
+  diff?: VersionDependencyDiff;
+  /** The version installed now, and the one the selector is offering. `from` is absent when nothing is installed. */
+  from?: string;
   to: string;
+  /** "What changes" with a difference, the version's own name without one (#132). */
+  title: string;
   /** The band's own link (#125) — release notes when the package names a bare address for them, the project's releases page otherwise. Absent when neither exists. */
   releaseNotesLink?: ReleaseNotesLink;
   /** A changelog the *installed* (`from`) version ships, absolute path — absent when it ships none of the conventional names (#125). */
@@ -26,8 +29,7 @@ interface Props {
  *
  * Under the version row and nowhere else: it describes the *picked* version, and
  * the resolved Dependencies tree below still describes what is installed now.
- * Absent while the picked version is the installed one, because then there is
- * nothing to describe.
+ * Without a difference there are no rows to show (see the end of this comment).
  *
  * **The licence is deliberately not a row here.** #89 owns that fact and puts it
  * in Problems, where a consequence belongs; saying it in both places would be
@@ -41,16 +43,22 @@ interface Props {
  * reachable; and, separately, the changelog the *installed* version shipped —
  * always stamped with that version, never the one being considered, since the
  * file on disk cannot describe a step it has not taken.
+ *
+ * Neither link is a diff, so neither can depend on one existing (#132): with no
+ * dependency difference — the version already installed, a package not installed
+ * at all, or a bump that changes no dependency — the band is the header row
+ * alone, titled with the version it is about instead of "What changes", and the
+ * rows are not rendered.
  */
 export function VersionChangesBand({
-  diff, from, to, releaseNotesLink, changelogPath, onOpenChangelog,
+  diff, from, to, title, releaseNotesLink, changelogPath, onOpenChangelog,
 }: Props) {
   return (
     <div className="detail-section">
       <div className="dep-section__header">
-        <span className="detail-section__title">What changes</span>
+        <span className="detail-section__title">{title}</span>
         <span className="dep-section__aside">
-          <span className="dep-section__context">{from} → {to}</span>
+          {diff && from && <span className="dep-section__context">{from} → {to}</span>}
           {releaseNotesLink && (
             <a
               className="dep-section__link"
@@ -61,7 +69,7 @@ export function VersionChangesBand({
               {releaseNotesLink.label}
             </a>
           )}
-          {changelogPath && (
+          {changelogPath && from && (
             <button
               type="button"
               className="dep-section__link"
@@ -73,42 +81,44 @@ export function VersionChangesBand({
           )}
         </span>
       </div>
-      <div className="dep-list">
-        {diff.added.map((change) => (
-          <div className="chg-row" key={`add:${change.id}`}>
-            <span className="chg-row__op chg-row__op--add" aria-hidden="true">+</span>
-            <span className="chg-row__id" title={change.id}>{change.id}</span>
-            <span className="chg-row__to">{change.to ?? 'any version'} — new dependency</span>
-          </div>
-        ))}
-        {diff.changed.map((change) => (
-          <div className="chg-row" key={`chg:${change.id}`}>
-            {/* Not an arrow: whether the range went up is a judgement about what
-                restore would pick inside it, which this does not make. */}
-            <span className="chg-row__op chg-row__op--change" aria-hidden="true">~</span>
-            <span className="chg-row__id" title={change.id}>{change.id}</span>
-            <span className="chg-row__to">{change.from ?? 'any version'} → {change.to ?? 'any version'}</span>
-          </div>
-        ))}
-        {diff.dropped.map((change) => (
-          <div className="chg-row" key={`drop:${change.id}`}>
-            <span className="chg-row__op chg-row__op--drop" aria-hidden="true">−</span>
-            <span className="chg-row__id chg-row__id--drop" title={change.id}>{change.id}</span>
-            <span className="chg-row__to">no longer declared</span>
-          </div>
-        ))}
-        {diff.frameworksDropped.length > 0 && (
-          <div className="chg-row">
-            <span className="chg-row__op chg-row__op--change" aria-hidden="true">!</span>
-            <span className="chg-row__id">Declared frameworks</span>
-            {/* Only frameworks this workspace targets reach here: a package
-                dropping one nobody builds for is not a consequence. */}
-            <span className="chg-row__to">
-              stops declaring {diff.frameworksDropped.join(', ')}
-            </span>
-          </div>
-        )}
-      </div>
+      {diff && (
+        <div className="dep-list">
+          {diff.added.map((change) => (
+            <div className="chg-row" key={`add:${change.id}`}>
+              <span className="chg-row__op chg-row__op--add" aria-hidden="true">+</span>
+              <span className="chg-row__id" title={change.id}>{change.id}</span>
+              <span className="chg-row__to">{change.to ?? 'any version'} — new dependency</span>
+            </div>
+          ))}
+          {diff.changed.map((change) => (
+            <div className="chg-row" key={`chg:${change.id}`}>
+              {/* Not an arrow: whether the range went up is a judgement about what
+                  restore would pick inside it, which this does not make. */}
+              <span className="chg-row__op chg-row__op--change" aria-hidden="true">~</span>
+              <span className="chg-row__id" title={change.id}>{change.id}</span>
+              <span className="chg-row__to">{change.from ?? 'any version'} → {change.to ?? 'any version'}</span>
+            </div>
+          ))}
+          {diff.dropped.map((change) => (
+            <div className="chg-row" key={`drop:${change.id}`}>
+              <span className="chg-row__op chg-row__op--drop" aria-hidden="true">−</span>
+              <span className="chg-row__id chg-row__id--drop" title={change.id}>{change.id}</span>
+              <span className="chg-row__to">no longer declared</span>
+            </div>
+          ))}
+          {diff.frameworksDropped.length > 0 && (
+            <div className="chg-row">
+              <span className="chg-row__op chg-row__op--change" aria-hidden="true">!</span>
+              <span className="chg-row__id">Declared frameworks</span>
+              {/* Only frameworks this workspace targets reach here: a package
+                  dropping one nobody builds for is not a consequence. */}
+              <span className="chg-row__to">
+                stops declaring {diff.frameworksDropped.join(', ')}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

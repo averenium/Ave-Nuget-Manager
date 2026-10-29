@@ -2042,6 +2042,89 @@ describe('WebviewMessageBroker', () => {
     });
   });
 
+  describe('release notes and the changelog are not a diff, so they need no installed version to differ from (#132)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    async function askAbout(installed: InstalledPackage[], version: string) {
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({ installed, implicit: [] });
+      jest.spyOn(projectAssets, 'readPackageFolders').mockResolvedValue(['/cache']);
+      jest.spyOn(nuspecLocator, 'findChangelogFile')
+        .mockResolvedValue('/cache/example.imaging/2.1.9/CHANGELOG.md');
+      const licenseForVersion = jest.fn().mockResolvedValue(undefined);
+      const releaseNotesForVersion = jest.fn()
+        .mockResolvedValue({ releaseNotes: `https://example.com/imaging/releases/${version}` });
+
+      const broker = new WebviewMessageBroker(
+        stub, backend, makeSolutionParser(), makeConfigResolver(), logger,
+        undefined, undefined, undefined, undefined, undefined, undefined,
+        { forVersion: licenseForVersion }, undefined, undefined, { forVersion: releaseNotesForVersion },
+      );
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => !!(broker as any)._lastListed);
+
+      simulateMessage({
+        type: 'GET_VERSION_DIFF', packageId: 'Example.Imaging', version, configFiles: ['a.config'],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'VERSION_DIFF'));
+      return {
+        answer: posted.find((m) => m.type === 'VERSION_DIFF') as Extract<ExtensionMessage, { type: 'VERSION_DIFF' }>,
+        backend,
+        releaseNotesForVersion,
+        licenseForVersion,
+      };
+    }
+
+    it('still links the release notes when the selected version is the installed one', async () => {
+      const { answer, releaseNotesForVersion } = await askAbout(
+        [{ id: 'Example.Imaging', requestedVersion: '2.1.9', resolvedVersion: '2.1.9', projectPath: '/p/App.csproj' }],
+        '2.1.9',
+      );
+
+      expect(answer.releaseNotesLink).toEqual({
+        label: 'Release notes', url: 'https://example.com/imaging/releases/2.1.9',
+      });
+      expect(releaseNotesForVersion).toHaveBeenCalledTimes(1);
+    });
+
+    it('still names the changelog when the selected version is the installed one', async () => {
+      const { answer } = await askAbout(
+        [{ id: 'Example.Imaging', requestedVersion: '2.1.9', resolvedVersion: '2.1.9', projectPath: '/p/App.csproj' }],
+        '2.1.9',
+      );
+
+      expect(answer.changelogPath).toBe('/cache/example.imaging/2.1.9/CHANGELOG.md');
+    });
+
+    it('links the release notes of a version of a package that is not installed at all', async () => {
+      const { answer } = await askAbout([], '4.1.2');
+
+      expect(answer.releaseNotesLink).toEqual({
+        label: 'Release notes', url: 'https://example.com/imaging/releases/4.1.2',
+      });
+      expect(answer.changelogPath).toBeUndefined();
+    });
+
+    it('keeps the licence change and the dependency diff undefined in both cases — nothing changed is a true answer', async () => {
+      for (const [installed, version] of [
+        [[{ id: 'Example.Imaging', requestedVersion: '2.1.9', resolvedVersion: '2.1.9', projectPath: '/p/App.csproj' }], '2.1.9'],
+        [[], '4.1.2'],
+      ] as const) {
+        const { answer, backend, licenseForVersion } = await askAbout([...installed], version);
+
+        expect(answer.license).toBeUndefined();
+        expect(answer.dependencies).toBeUndefined();
+        expect(licenseForVersion).not.toHaveBeenCalled();
+        expect(backend.getMetadata).not.toHaveBeenCalled();
+        jest.restoreAllMocks();
+      }
+    });
+  });
+
   describe('OPEN_CHANGELOG_FILE opens the file read-only, same as OPEN_LICENSE_FILE (#125)', () => {
     afterEach(() => {
       jest.restoreAllMocks();

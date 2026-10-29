@@ -25,8 +25,9 @@ import { buildPackageProblems } from '../utils/packageProblems';
 import { resolveVersionSpread } from '../../packageResolvedVersions';
 import { ProblemsBand } from './ProblemsBand';
 import { VersionChangesBand } from './VersionChangesBand';
+import { versionBandFor } from '../utils/versionBand';
 import { sortTargetFrameworksDesc } from '../../targetFrameworks';
-import { highestCompatibleVersion, stayingVersion } from '../../frameworkCompatibility';
+import { effectiveVersionFor } from '../utils/effectiveVersion';
 import { nearestUnaffectedVersion } from '../utils/nearestUnaffected';
 import { flagsForVersion } from '../utils/versionFlags';
 import type { VulnerabilityFinding } from '../../types';
@@ -109,21 +110,56 @@ export function PackageDetailPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPackageId]);
 
+  // Computed ahead of the effect below, which has to ask about the version the
+  // selector actually shows. Plain values, not hooks, so nothing about hook
+  // order depends on where they sit; the early return further down is what
+  // guards a missing package for everything that renders.
+  const scope = state.scope;
+  const installedEntries = state.packages.installed.filter((p) => packageIdsEqual(p.id, selectedPackageId ?? ''));
+  const installedVersions = installedEntries.map((p) => p.resolvedVersion);
+  const frameworksOf = (projectPath: string): string[] => state.packages.projectFrameworks[projectPath]
+    ?? Object.entries(state.packages.projectFrameworks)
+      .find(([key]) => pathsEqual(key, projectPath))?.[1]
+    ?? [];
+  // Every framework of every project this package is installed into, plus —
+  // when the scope names exactly one project — that project's own
+  // frameworks even if nothing is installed there yet (#107). A single
+  // project scope is the one case where "which project" is never in doubt:
+  // the Install button writes straight to it with no picker in between, so
+  // the default proposed here has to hold for it from the very first click,
+  // not just once something is already installed to read a framework back
+  // from. Solution/folder scope stays unfiltered for a not-yet-installed
+  // package — which project the popup will end up targeting isn't known
+  // until the reader picks one there.
+  const packageProjectTfms = [...new Set([
+    ...installedEntries.flatMap((p) => frameworksOf(p.projectPath)),
+    ...(scope?.kind === 'project' ? frameworksOf(scope.projectPath) : []),
+  ])];
+  const effectiveVersion = effectiveVersionFor({
+    selectedVersion,
+    allVersions,
+    declaredGroups: (v) => flagsForVersion(state.detail.versionFlags, v)?.declaredDependencies,
+    projectTfms: packageProjectTfms,
+    installedVersions,
+    metadataVersion: metadata?.version,
+  });
   // The licence question is about the version the selector is offering, which
   // on entry is the newest rather than the installed one — so it cannot ride on
   // the metadata request, which asks about the installed version. Re-asked
   // whenever that offer changes, including on returning to a package.
   useEffect(() => {
     const configFiles = searchableConfigFiles(state.sources.configChain);
-    // The same expression `effectiveVersion` uses below; it cannot be read here
-    // because hooks run before the early return that guards it.
-    const offered = selectedVersion || allVersions[0] || metadata?.version || '';
+    // The version the selector shows. Not a second expression of its own: an
+    // installed package whose feed has a newer version the project's frameworks
+    // cannot take shows the installed one, and a question asked about the newer
+    // one is answered about a version no longer on screen and thrown away (#132).
+    const offered = effectiveVersion;
     if (!selectedPackageId || !offered || configFiles.length === 0) return;
     // What was asked about lives in state rather than a ref, so it clears with
     // the package: a ref survives the switch, and coming back to a package
     // whose answer `SELECT_PACKAGE` had just cleared would look like it had
     // already been asked and leave the row permanently absent.
-    if (state.detail.versionDiff?.version === offered) return;
+    if (state.detail.versionDiff?.version && versionsEqual(state.detail.versionDiff.version, offered)) return;
     // Held back until the selection settles. Arrowing through a version list
     // passes every version on the way, and a version whose licence expression
     // the feed leaves empty costs a nuspec request each — so the ones merely
@@ -141,7 +177,7 @@ export function PackageDetailPanel() {
     }, VERSION_DIFF_DEBOUNCE_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPackageId, selectedVersion, allVersions, metadata?.version, state.sources.configChain]);
+  }, [selectedPackageId, effectiveVersion, state.sources.configChain]);
 
   // "more" only appears when the two-line clamp actually hides something.
   // Whether it does depends on the pane width and the theme's font, so it is
@@ -166,41 +202,11 @@ export function PackageDetailPanel() {
     return <div className="detail-panel__empty">Select a package to see details</div>;
   }
 
-  const scope = state.scope;
   /** Solution/folder scopes list multiple projects and need the project-picker popup. */
   const isMultiProject = scope?.kind === 'solution' || scope?.kind === 'folder';
   const isInstalled = state.packages.installed.some((p) => packageIdsEqual(p.id, selectedPackageId));
   const updatesBlocked = isInstalled && isPackageBlocked(selectedPackageId, state.packages.blockedPackages);
 
-  const installedEntries = state.packages.installed.filter((p) => packageIdsEqual(p.id, selectedPackageId));
-  const installedVersions = installedEntries.map((p) => p.resolvedVersion);
-  const frameworksOf = (projectPath: string): string[] => state.packages.projectFrameworks[projectPath]
-    ?? Object.entries(state.packages.projectFrameworks)
-      .find(([key]) => pathsEqual(key, projectPath))?.[1]
-    ?? [];
-  // Every framework of every project this package is installed into, plus —
-  // when the scope names exactly one project — that project's own
-  // frameworks even if nothing is installed there yet (#107). A single
-  // project scope is the one case where "which project" is never in doubt:
-  // the Install button writes straight to it with no picker in between, so
-  // the default proposed here has to hold for it from the very first click,
-  // not just once something is already installed to read a framework back
-  // from. Solution/folder scope stays unfiltered for a not-yet-installed
-  // package — which project the popup will end up targeting isn't known
-  // until the reader picks one there.
-  const packageProjectTfms = [...new Set([
-    ...installedEntries.flatMap((p) => frameworksOf(p.projectPath)),
-    ...(scope?.kind === 'project' ? frameworksOf(scope.projectPath) : []),
-  ])];
-  const compatibleVersion = highestCompatibleVersion(
-    allVersions, (v) => flagsForVersion(state.detail.versionFlags, v)?.declaredDependencies, packageProjectTfms,
-  );
-  // Nothing satisfies every one of packageProjectTfms at once: default to
-  // wherever the package already is rather than the feed's raw newest, which
-  // the version picker right here would then dim (#130) — the same
-  // "stay where you are" rule the host already answers with.
-  const effectiveVersion = selectedVersion || compatibleVersion
-    || stayingVersion(installedVersions) || allVersions[0] || metadata?.version || '';
   // The local .nuspec and the restore graph (#86) are readable for anything the
   // restore put on disk, and a transitive package's folder and its entry in
   // project.assets.json are as present as a direct one's. Deliberately not
@@ -254,6 +260,15 @@ export function PackageDetailPanel() {
     && versionsEqual(state.detail.versionDiff.version, effectiveVersion)
     ? state.detail.versionDiff.changelogPath ?? undefined
     : undefined;
+
+  const versionBand = versionBandFor({
+    diff: versionChanges,
+    isInstalled,
+    installedFrom,
+    to: effectiveVersion,
+    hasReleaseNotesLink: !!releaseNotesLink,
+    hasChangelog: !!changelogPath,
+  });
 
   const nearestClean = nearestUnaffectedVersion(
     allVersions, state.detail.versionFlags, effectiveVersion,
@@ -671,10 +686,11 @@ export function PackageDetailPanel() {
 
       {/* Describes the picked version, so it sits above the resolved tree, which
           still describes what is installed now (#114). */}
-      {versionChanges && isInstalled && installedFrom && (
+      {versionBand && (
         <VersionChangesBand
-          diff={versionChanges}
-          from={installedFrom}
+          diff={versionBand.diff}
+          from={versionBand.from}
+          title={versionBand.title}
           to={effectiveVersion}
           releaseNotesLink={releaseNotesLink}
           changelogPath={changelogPath}

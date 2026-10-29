@@ -18,6 +18,7 @@
 - **Package details**: versions the project's target framework can't use are collapsed behind a disclosure in the version list, and no longer proposed by the update mark or a **Groups** family target (#107)
 - **Problems** (native, not the panel's own): a package restored with no compile assets for the project's target framework, which `dotnet restore` accepts silently (#107)
 - **Package details**: installing across several projects starts with a project the target version can't use left unchecked, marked with why, rather than writing it there silently (#107)
+- **Package details**: the **What changes** band links the selected version's release notes, or the project's releases page, and opens the changelog the installed version shipped (#125)
 - Experimental HTTP catalog: enrich now stops mid-request on a scope switch or a force refresh instead of finishing a discarded answer, and search, the version list and package details each stop the same way when a newer request of their own kind replaces them; a new `httpConcurrencyPerOrigin` setting (default 6) caps parallel requests to one feed, separately from `dotnetConcurrency`; on the proxied path, a tunnelled connection is now reused across requests to the same target instead of opening a fresh one for each (#116)
 
 ### Fixed
@@ -32,6 +33,9 @@
 - Installing or removing a package an SDK (or `Directory.Build.props`) declares for the project, such as F#'s implicit `FSharp.Core`, no longer fails after `dotnet add`/`dotnet remove` refuse to edit the imported reference (#124)
 - **Package details**: **Problems** now groups rows under **Installed** / **Selected** headings, so a scan finding about the installed version no longer reads as one about whatever version the selector has since moved to, and says when the selected version clears an installed vulnerability (#122)
 - **Packages**: a row resolved at several versions across projects or frameworks now shows the newest one with a count of the rest instead of every version run together, marked only when the spread crosses a major version (#115)
+- **Package details**: a multi-target project is judged against the frameworks still switched on for the install, so leaving one out clears its "can't install" note, and with no version good for every framework the default stays on the installed version (#130)
+- **Log**: the trace button keeps working after a trace is saved, shows **Saving…** while the zip is written, and a trace that could not be saved says it was discarded (#131)
+- **Package details**: the release-notes link and the shipped changelog show for the installed version and for a package not installed yet, not only after picking another version (#132)
 
 ## 0.8.0
 

@@ -120,6 +120,21 @@ describe('TraceController stop and pack (#131)', () => {
     expect(h.controller.isPacking()).toBe(false);
   });
 
+  it('says the trace was discarded when the chosen location cannot be written, rather than hinting at a retry', async () => {
+    const h = await makeHarness();
+    await h.controller.startFromUi();
+    window.showSaveDialog.mockResolvedValue(
+      vscode.Uri.file(path.join(h.storageRoot, 'no-such-folder', 'saved.zip')),
+    );
+
+    await h.controller.stopAndPack();
+
+    expect(window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/could not save the trace.*discarded/),
+    );
+    expect(await sessionDirs(h.storageRoot)).toEqual([]);
+  });
+
   it('is not held by the "discarded" notice when the save dialog is cancelled', async () => {
     const h = await makeHarness();
     await h.controller.startFromUi();

@@ -312,7 +312,8 @@ export class TraceController implements ITrace {
       }
     } catch (err) {
       showWithoutWaiting(vscode.window.showErrorMessage(
-        `AVE NuGet Manager: could not pack the trace (${err instanceof Error ? err.message : String(err)}).`,
+        `AVE NuGet Manager: could not save the trace (${err instanceof Error ? err.message : String(err)}). `
+        + 'It has been discarded — start a new one.',
       ));
     } finally {
       // Whatever happened above, the session is over: a directory left marked

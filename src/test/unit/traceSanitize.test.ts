@@ -1,6 +1,6 @@
 import * as path from 'path';
 import {
-  assignSourceAliases, sanitizeText, sanitizeXml, sanitizeFeedUrl, buildPathReplacements, defaultTraceZipName,
+  assignSourceAliases, sanitizeJsonLines, sanitizeText, sanitizeXml, sanitizeFeedUrl, buildPathReplacements, defaultTraceZipName,
 } from '../../traceSanitize';
 
 const ctx = {
@@ -394,5 +394,147 @@ describe('source aliases (#133)', () => {
   it('shows which source a config entry is, through the same names', () => {
     const xml = `<configuration><packageSources><add key="Private" value="${A}" /></packageSources></configuration>`;
     expect(sanitizeXml(xml, withAliases)).toContain('value="<s01>/index.json"');
+  });
+});
+
+describe('sanitizeJsonLines — the trace stays valid JSON Lines (#134)', () => {
+  const jsonCtx = {
+    home: 'C:\\Users\\lesov',
+    workspaceRoots: ['C:\\Users\\lesov\\repo'],
+    hostname: 'DEVBOX',
+    aliases: [{ absPath: 'C:\\Users\\lesov\\repo\\src\\App\\App.csproj', dest: 'projects/p01.csproj' }],
+  };
+
+  // A `dotnet package search --format json` answer is itself JSON, carried as a
+  // string inside a trace event: escapes within escapes.
+  const nestedStdout = '{\n  "version": 2,\n  "problems": [],\n  "searchResult": [{"id": "Example.Core", "note": "a quoted word"}]\n}\n';
+
+  const events = [
+    {
+      kind: 'cli', at: '2026-10-29T11:41:00.000Z', command: 'dotnet', args: ['package', 'search', 'Example.Core'],
+      cwd: 'C:\\Users\\lesov\\repo\\src\\App', exitCode: 0, timedOut: false, durationMs: 412,
+      stdout: nestedStdout, stderr: '',
+    },
+    {
+      kind: 'http', at: '2026-10-29T11:41:01.000Z', url: 'https://feed.example.com/v3/index.json', status: 200,
+      body: '{"resources":[{"@id":"https://feed.example.com/v3/query","@type":"SearchQueryService"}]}',
+    },
+    { kind: 'broker', at: '2026-10-29T11:41:02.000Z', step: 'path', detail: { file: 'C:\\Users\\lesov\\repo\\src\\App\\App.csproj', tab: 'a\tb', slash: 'back\\slash' } },
+  ];
+  const jsonl = events.map((event) => JSON.stringify(event)).join('\n') + '\n';
+
+  it('leaves every line parseable, which sanitising the encoded text did not', () => {
+    const out = sanitizeJsonLines(jsonl, jsonCtx);
+    const lines = out.split('\n').filter(Boolean);
+
+    expect(lines).toHaveLength(events.length);
+    for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
+  });
+
+  it('keeps the escapes of the line itself as they were: the newlines inside a payload, and nested JSON that is still readable as JSON', () => {
+    const [cli] = sanitizeJsonLines(jsonl, jsonCtx).split('\n').map((line) => (line ? JSON.parse(line) : undefined));
+
+    expect(cli.stdout).toContain('\n  "version": 2');
+    expect(() => JSON.parse(cli.stdout)).not.toThrow();
+    expect(JSON.parse(cli.stdout).searchResult[0].note).toBe('a quoted word');
+  });
+
+  it('still redacts what it was there to redact: a Windows path becomes its alias', () => {
+    const parsed = sanitizeJsonLines(jsonl, jsonCtx).split('\n').filter(Boolean).map((line) => JSON.parse(line));
+
+    expect(parsed[0].cwd).not.toContain('lesov');
+    expect(parsed[2].detail.file).toBe('projects/p01.csproj');
+    expect(JSON.stringify(parsed)).not.toContain('DEVBOX');
+  });
+
+  it('redacts a credential inside a response body without breaking the line', () => {
+    const line = JSON.stringify({ kind: 'http', body: '{"password": "hunter2", "ok": true}' });
+    const [out] = sanitizeJsonLines(`${line}\n`, jsonCtx).split('\n').filter(Boolean);
+
+    const body = JSON.parse(out).body as string;
+    expect(body).not.toContain('hunter2');
+  });
+
+  it('redacts a value by the name of its key, but leaves a flag that merely names a secret', () => {
+    const line = JSON.stringify({ kind: 'broker', detail: { clearApiKey: false, apiKey: 'abc', password: 42, hasSecret: null } });
+    const [out] = sanitizeJsonLines(`${line}\n`, jsonCtx).split('\n').filter(Boolean);
+
+    expect(JSON.parse(out).detail).toEqual({ clearApiKey: false, apiKey: '<redacted>', password: '<redacted>', hasSecret: null });
+  });
+
+  it('turns a line that is not JSON into one that is, instead of passing it through', () => {
+    const out = sanitizeJsonLines('{"kind":"broker"}\nnot json at all C:\\Users\\lesov\\x\n', jsonCtx);
+    const lines = out.split('\n').filter(Boolean);
+
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[1])).toMatchObject({ kind: 'unparseable' });
+    expect(lines[1]).not.toContain('lesov');
+  });
+
+  it('is empty for an empty file', () => {
+    expect(sanitizeJsonLines('', jsonCtx)).toBe('');
+  });
+
+  it('sanitises the keys of an object too: INSTALL_PACKAGE_MULTI keys its frameworks by project path', () => {
+    const event = {
+      kind: 'webview', type: 'INSTALL_PACKAGE_MULTI',
+      payload: { frameworks: { 'C:\\Users\\lesov\\repo\\src\\App\\App.csproj': ['net8.0'] } },
+    };
+    const [out] = sanitizeJsonLines(`${JSON.stringify(event)}\n`, jsonCtx).split('\n').filter(Boolean);
+
+    expect(JSON.parse(out).payload.frameworks).toEqual({ 'projects/p01.csproj': ['net8.0'] });
+    expect(out).not.toContain('lesov');
+  });
+
+  it('keeps two keys that sanitise to the same name apart instead of dropping one', () => {
+    const event = { map: { 'C:\\Users\\lesov\\repo\\x\\App.csproj': 1, 'C:\\Users\\lesov\\repo\\y\\App.csproj': 2 } };
+    const [out] = sanitizeJsonLines(`${JSON.stringify(event)}\n`, {
+      ...jsonCtx, aliases: [],
+    }).split('\n').filter(Boolean);
+
+    expect(Object.values(JSON.parse(out).map).sort()).toEqual([1, 2]);
+  });
+
+  describe('JSON carried inside a payload keeps its own escapes', () => {
+    const httpLine = (body: string) => `${JSON.stringify({ kind: 'http', at: 't', url: 'https://feed.example.com/x', status: 200, body })}\n`;
+    const bodyOf = (out: string) => JSON.parse(out.split('\n').filter(Boolean)[0]).body as string;
+
+    it('a response body with newlines and quotes in its own strings still parses', () => {
+      const body = '{"description":"Line one\\nLine two says \\"hi\\" é"}';
+      const out = bodyOf(sanitizeJsonLines(httpLine(body), jsonCtx));
+
+      expect(JSON.parse(out)).toEqual({ description: 'Line one\nLine two says "hi" é' });
+    });
+
+    it('a pretty-printed stdout keeps its layout and its trailing newline', () => {
+      const stdout = '{\n  "version": 2,\n  "items": [\n    "a"\n  ]\n}\n';
+      const out = bodyOf(sanitizeJsonLines(httpLine(stdout), jsonCtx));
+
+      expect(out).toBe(stdout);
+    });
+
+    it('a path inside the nested JSON is still redacted, as data', () => {
+      const body = JSON.stringify({ file: 'C:\\Users\\lesov\\repo\\src\\App\\App.csproj' });
+      const out = bodyOf(sanitizeJsonLines(httpLine(body), jsonCtx));
+
+      expect(JSON.parse(out)).toEqual({ file: 'projects/p01.csproj' });
+    });
+
+    it('a body cut off by the preview limit keeps the escapes it had, though it cannot be parsed', () => {
+      const cut = '{"description":"Line one\\nLine two says \\"hi\\" and then it is cut o';
+      const out = bodyOf(sanitizeJsonLines(httpLine(cut), jsonCtx));
+
+      expect(out).toContain('\\n');
+      expect(out).toContain('\\"hi\\"');
+      expect(out).not.toContain('/n');
+    });
+
+    it('JSON inside JSON inside the payload is handled the same way', () => {
+      const inner = JSON.stringify({ note: 'say "hi"\nthen go', file: 'C:\\Users\\lesov\\repo\\src\\App\\App.csproj' });
+      const out = bodyOf(sanitizeJsonLines(httpLine(JSON.stringify({ wrapped: inner })), jsonCtx));
+
+      const wrapped = JSON.parse(JSON.parse(out).wrapped);
+      expect(wrapped).toEqual({ note: 'say "hi"\nthen go', file: 'projects/p01.csproj' });
+    });
   });
 });

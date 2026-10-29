@@ -10,6 +10,7 @@ import type { NugetManagerViewProvider } from './nugetManagerViewProvider';
 import { collectScopeSnapshotFiles } from './tracePack';
 import {
   sanitizeText,
+  sanitizeJsonLines,
   sanitizeXml,
   assignSourceAliases,
   defaultTraceZipName,
@@ -106,7 +107,7 @@ export async function buildSanitizedZip(opts: {
   } catch {
     jsonl = '';
   }
-  add('trace.jsonl', sanitizeText(jsonl, ctx));
+  add('trace.jsonl', sanitizeJsonLines(jsonl, ctx));
 
   add('blocked-packages.json', `${JSON.stringify({ blockedPackages: getBlockedPackages() }, null, 2)}\n`);
 

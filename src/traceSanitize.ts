@@ -57,7 +57,8 @@ function applySourceAliases(text: string, ctx: SanitizeContext): string {
     .sort((a, b) => (b.scope.origin + b.scope.path).length - (a.scope.origin + a.scope.path).length);
   let out = text;
   for (const { scope, alias } of rows) {
-    const escaped = (scope.origin + scope.path).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escaped = escape(scope.origin + scope.path);
     // A boundary after it, so `/repository/a` does not eat the front of `/repository/ab`.
     out = out.replace(new RegExp(`${escaped}(?![A-Za-z0-9._~%-])`, 'gi'), `<${alias}>`);
   }
@@ -371,9 +372,28 @@ function redactUrlsInText(text: string): string {
   });
 }
 
-/** Paths, home, host, emails, credentials. Longest workspace root first. */
-export function sanitizeText(text: string, ctx: SanitizeContext): string {
-  const replacements = buildPathReplacements(ctx);
+/**
+ * Paths, home, host, emails, credentials. Longest workspace root first.
+ *
+ * Only ever for text meant to be read as text. It rewrites every backslash and
+ * collapses runs of slashes, which is exactly what damages JSON syntax: run
+ * over an encoded line it turned `\n` into `/n` and `\"` into `/"`, and the
+ * line stopped parsing (#134). A JSON line goes through `sanitizeJsonLines`.
+ *
+ * `replacements` lets a caller that sanitises many strings against one context
+ * build the path rows once.
+ *
+ * `keepJsonEscapes` is for text that is JSON but cannot be parsed to be
+ * sanitised as data (a body cut off by the preview limit): a backslash that
+ * introduces a JSON escape is left alone, and runs of slashes are not
+ * collapsed, since `//` is ordinary content there.
+ */
+export function sanitizeText(
+  text: string,
+  ctx: SanitizeContext,
+  replacements: Array<{ from: string; to: string }> = buildPathReplacements(ctx),
+  options: { keepJsonEscapes?: boolean } = {},
+): string {
   text = applySourceAliases(text, ctx);
   const pathRows = replacements.filter((r) => isPathLike(r.from));
   const nameRows = replacements.filter((r) => !isPathLike(r.from));
@@ -405,11 +425,108 @@ export function sanitizeText(text: string, ctx: SanitizeContext): string {
   }
 
   out = out.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '<email>');
+  // Whole escapes are kept as pairs, so the second backslash of `\\` is not
+  // taken for the start of another.
+  if (options.keepJsonEscapes) return out.replace(/\\["\\/bfnrtu]|\\/g, (match) => (match.length === 2 ? match : '/'));
   out = out.replace(/\\/g, '/');
   // NUL is the sentinel the swap below parks `://` under while the run of
   // slashes beside it is collapsed.
   // eslint-disable-next-line no-control-regex -- the sentinel is the point
   return out.replace(/:\/\//g, '\u0000').replace(/\/{2,}/g, '/').replace(/\u0000/g, '://');
+}
+
+const SECRET_KEY = /password|pwd|apikey|api[_-]?key|access[_-]?token|secret/i;
+
+/**
+ * Keys are text too: `INSTALL_PACKAGE_MULTI` carries `frameworks` keyed by the
+ * absolute path of each project. Two keys that sanitise to the same name are
+ * kept apart rather than one silently replacing the other.
+ */
+function sanitizeValue(value: unknown, clean: (text: string) => string, cleanKey: (text: string) => string): unknown {
+  if (typeof value === 'string') return clean(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizeValue(item, clean, cleanKey));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      let name = cleanKey(key);
+      for (let n = 2; Object.prototype.hasOwnProperty.call(out, name); n += 1) name = `${cleanKey(key)}#${n}`;
+      // What `sanitizeText` does to `"password": "x"` in text: a value is a
+      // secret by the name of its key. Only a string or a number can be one: a
+      // flag such as `clearApiKey: false` names a secret and holds none, and
+      // hiding it loses a fact the diagnosis may need.
+      out[name] = SECRET_KEY.test(key) && (typeof item === 'string' || typeof item === 'number')
+        ? '<redacted>'
+        : sanitizeValue(item, clean, cleanKey);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** The indent of a pretty-printed JSON text, or nothing for a compact one. */
+function indentOf(text: string): number | undefined {
+  const match = /^\s*[[{]\s*\n( +)\S/.exec(text);
+  return match ? match[1].length : undefined;
+}
+
+/**
+ * A string that is itself a JSON document (a `dotnet` stdout, a response body)
+ * is sanitised as data and written back the way it was laid out, rather than as
+ * text, whose backslash pass would take the escapes out of it. `undefined` when
+ * it is not one that parses.
+ */
+function sanitizeEmbeddedJson(
+  text: string,
+  clean: (text: string) => string,
+  cleanKey: (text: string) => string,
+): string | undefined {
+  const trimmed = text.trim();
+  if (!/^[[{]/.test(trimmed)) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== 'object') return undefined;
+  const lead = /^\s*/.exec(text)?.[0] ?? '';
+  const trail = /\s*$/.exec(text)?.[0] ?? '';
+  return lead + JSON.stringify(sanitizeValue(parsed, clean, cleanKey), null, indentOf(text)) + trail;
+}
+
+/**
+ * Sanitises a JSON Lines file by sanitising the text inside each event, then
+ * writing the event out again (#134). No pass ever runs over JSON syntax, so
+ * the escapes inside a payload, the `\n` and `\"` of a `dotnet` stdout or a
+ * response body, cannot be damaged, and every line stays one parseable
+ * object.
+ *
+ * A line that is not JSON to begin with is kept as a text field of a small
+ * object rather than passed through, so the result is valid JSON Lines
+ * whatever it was given.
+ */
+export function sanitizeJsonLines(jsonl: string, ctx: SanitizeContext): string {
+  const replacements = buildPathReplacements(ctx);
+  const cleanKey = (text: string) => sanitizeText(text, ctx, replacements);
+  const clean = (text: string): string => {
+    const nested = sanitizeEmbeddedJson(text, clean, cleanKey);
+    if (nested !== undefined) return nested;
+    // Cut off by the preview limit, so it cannot be read as data, but still
+    // JSON text whose escapes are not ours to rewrite.
+    return /^\s*[[{]/.test(text)
+      ? sanitizeText(text, ctx, replacements, { keepJsonEscapes: true })
+      : sanitizeText(text, ctx, replacements);
+  };
+  const lines = jsonl.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  return lines.map((line) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return JSON.stringify({ kind: 'unparseable', text: sanitizeText(line, ctx, replacements) });
+    }
+    return JSON.stringify(sanitizeValue(parsed, clean, cleanKey));
+  }).map((line) => `${line}\n`).join('');
 }
 
 const DROP_XML_BLOCKS = [

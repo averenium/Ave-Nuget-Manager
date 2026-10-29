@@ -36,6 +36,7 @@
 - **Package details**: a multi-target project is judged against the frameworks still switched on for the install, so leaving one out clears its "can't install" note, and with no version good for every framework the default stays on the installed version (#130)
 - **Log**: the trace button keeps working after a trace is saved, shows **Saving…** while the zip is written, and a trace that could not be saved says it was discarded (#131)
 - **Package details**: the release-notes link and the shipped changelog show for the installed version and for a package not installed yet, not only after picking another version (#132)
+- Experimental HTTP catalog: credentials configured for one source are no longer sent to the other sources on the same host, which refused them with 403 (#133)
 
 ## 0.8.0
 

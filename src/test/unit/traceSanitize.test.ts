@@ -1,5 +1,7 @@
 import * as path from 'path';
-import { sanitizeText, sanitizeXml, sanitizeFeedUrl, buildPathReplacements, defaultTraceZipName } from '../../traceSanitize';
+import {
+  assignSourceAliases, sanitizeText, sanitizeXml, sanitizeFeedUrl, buildPathReplacements, defaultTraceZipName,
+} from '../../traceSanitize';
 
 const ctx = {
   home: 'C:\\Users\\lesov',
@@ -354,5 +356,43 @@ describe('sanitizeXml', () => {
     expect(leftoverFsOut).toContain('= "p02"');
     expect(leftoverFsOut).toContain('"projects/p02.fsproj"');
     expect(leftoverFsOut).not.toContain('Domain');
+  });
+});
+
+describe('source aliases (#133)', () => {
+  const A = 'https://nexus.example.com/repository/private-a/index.json';
+  const B = 'https://nexus.example.com/repository/pub-b/index.json';
+  const C = 'https://nexus.example.com/repository/snap-c/index.json';
+  const base = { home: '/home/someone', workspaceRoots: [], hostname: 'workstation' };
+  const withAliases = { ...base, sourceAliases: assignSourceAliases([A, B, C]) };
+  const requests = [`GET ${A}`, `GET ${B}`, `GET ${C}`];
+
+  it('numbers distinct sources in the order given, once each', () => {
+    expect(assignSourceAliases([A, B, A, C]).map((a) => a.alias)).toEqual(['s01', 's02', 's03']);
+  });
+
+  it('tells three repositories on one host apart, which the host and id redaction alone cannot', () => {
+    const plain = requests.map((line) => sanitizeText(line, base));
+    expect(new Set(plain).size).toBe(1);
+
+    expect(requests.map((line) => sanitizeText(line, withAliases))).toEqual([
+      'GET <s01>/index.json', 'GET <s02>/index.json', 'GET <s03>/index.json',
+    ]);
+  });
+
+  it("keeps what follows the source's address, so a request stays readable", () => {
+    expect(sanitizeText('GET https://nexus.example.com/repository/pub-b/v3/search?q=Example.Core', withAliases))
+      .toBe('GET <s02>/v3/search?q=Example.Core');
+  });
+
+  it("does not let one source's alias eat the front of a sibling whose name starts the same way", () => {
+    const near = assignSourceAliases(['https://nexus.example.com/repository/a/index.json']);
+    const out = sanitizeText('https://nexus.example.com/repository/ab/index.json', { ...base, sourceAliases: near });
+    expect(out).not.toContain('<s01>');
+  });
+
+  it('shows which source a config entry is, through the same names', () => {
+    const xml = `<configuration><packageSources><add key="Private" value="${A}" /></packageSources></configuration>`;
+    expect(sanitizeXml(xml, withAliases)).toContain('value="<s01>/index.json"');
   });
 });

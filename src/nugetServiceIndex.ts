@@ -208,6 +208,33 @@ export function originOf(url: string): string | undefined {
 }
 
 /**
+ * What identifies a package source on its host (#133): the origin and the path
+ * the source lives under, with the protocol furniture taken off - the trailing
+ * `index.json` and the `v3` that names the protocol version, not the feed.
+ *
+ * The origin alone is too coarse: a Nexus host carries many repositories that
+ * differ only in `/repository/<name>/`, and they are different sources with
+ * different rights. Lowercased throughout, matching how origins are compared.
+ */
+export function sourceScopeOf(url: string): { origin: string; path: string } | undefined {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase()
+      .replace(/\/index\.json$/, '')
+      .replace(/\/v3$/, '')
+      .replace(/\/+$/, '');
+    return { origin: parsed.origin.toLowerCase(), path };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `path` is `scopePath` or lies below it, on a segment boundary (`/a` covers `/a/b`, not `/ab`). */
+export function pathIsUnder(path: string, scopePath: string): boolean {
+  return scopePath === '' || path === scopePath || path.startsWith(`${scopePath}/`);
+}
+
+/**
  * Classifies one resource URL against the source it came from.
  *
  * `knownOrigins` are the origins the user has configured — every enabled

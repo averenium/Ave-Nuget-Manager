@@ -27,7 +27,7 @@ import { isHttpPackageUrl } from './vulnerabilityScanPolicy';
 import { expandNuGetConfigValue } from './nugetConfigEnv';
 import { createJsonFetcher, DEFAULT_PREVIEW_BYTES } from './nugetHttpJson';
 import { createTunnelPool } from './nugetProxyPool';
-import { authorizingFetcher, CredentialRegistry } from './nugetHttpAuth';
+import { authorizingFetcher, CredentialRegistry, refusalNote } from './nugetHttpAuth';
 import { ProxyRegistry } from './nugetProxyRegistry';
 import { httpLogSink, loggingFetcher } from './nugetHttpLog';
 import { HttpResponseCache } from './nugetHttpCache';
@@ -110,7 +110,11 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
   // to requests to the origin they belong to (#27). Sources needing none are
   // unaffected; a source whose sign-in method this cannot express answers 401
   // and its work falls back to the CLI.
-  const credentials = new CredentialRegistry();
+  const credentials = new CredentialRegistry({
+    onRefused: (sourceUrl, status) => log.error(refusalNote(sourceUrl, status)),
+    // Defined a few lines down; only ever called once a request is being made.
+    publishedResources: (sourceUrl) => capabilities.publishedUrls(sourceUrl),
+  });
   // Logging sits inside the credential wrapper: it sees that a request carried
   // a credential without ever seeing the credential.
   const httpLog = httpLogSink(log, trace);

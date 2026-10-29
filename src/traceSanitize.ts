@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as os from 'os';
+import { sourceScopeOf } from './nugetServiceIndex';
 
 export interface FileAlias {
   /** Absolute path on disk. */
@@ -8,12 +9,59 @@ export interface FileAlias {
   dest: string;
 }
 
+export interface SourceAlias {
+  /** The source as configured. */
+  url: string;
+  /** `s01`, `s02`, ... — what the archive calls it (#133). */
+  alias: string;
+}
+
 export interface SanitizeContext {
   home: string;
   workspaceRoots: string[];
   hostname: string;
   /** Pack-time file ids — applied before home/workspace so names match zip entries. */
   aliases?: FileAlias[];
+  /**
+   * Package sources by number, so an archive can say which source a request
+   * belonged to without naming its host (#133). Without them three repositories
+   * on one host all read as the same `https://<host>/repository/<id>/index.json`.
+   */
+  sourceAliases?: SourceAlias[];
+}
+
+/** `s01`, `s02`, ... for each distinct source, in the order they are given. */
+export function assignSourceAliases(urls: readonly string[]): SourceAlias[] {
+  const seen = new Set<string>();
+  const out: SourceAlias[] = [];
+  for (const url of urls) {
+    const scope = sourceScopeOf(url);
+    if (!scope) continue;
+    const key = `${scope.origin}${scope.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ url, alias: `s${String(out.length + 1).padStart(2, '0')}` });
+  }
+  return out;
+}
+
+/**
+ * A source's address, up to and not including `index.json`, becomes `<s01>`;
+ * what follows it — `/index.json`, `/v3/search`, a package id — is untouched, so
+ * the request stays readable and only the part that names the feed is gone.
+ */
+function applySourceAliases(text: string, ctx: SanitizeContext): string {
+  const rows = (ctx.sourceAliases ?? [])
+    .map(({ url, alias }) => ({ scope: sourceScopeOf(url), alias }))
+    .filter((row): row is { scope: { origin: string; path: string }; alias: string } => !!row.scope)
+    .sort((a, b) => (b.scope.origin + b.scope.path).length - (a.scope.origin + a.scope.path).length);
+  let out = text;
+  for (const { scope, alias } of rows) {
+    const escaped = (scope.origin + scope.path).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // A boundary after it, so `/repository/a` does not eat the front of `/repository/ab`.
+    out = out.replace(new RegExp(`${escaped}(?![A-Za-z0-9._~%-])`, 'gi'), `<${alias}>`);
+  }
+  return out;
 }
 
 const KEEP_URL_SEGMENTS = new Set([
@@ -326,6 +374,7 @@ function redactUrlsInText(text: string): string {
 /** Paths, home, host, emails, credentials. Longest workspace root first. */
 export function sanitizeText(text: string, ctx: SanitizeContext): string {
   const replacements = buildPathReplacements(ctx);
+  text = applySourceAliases(text, ctx);
   const pathRows = replacements.filter((r) => isPathLike(r.from));
   const nameRows = replacements.filter((r) => !isPathLike(r.from));
   let out = applyPaths(text, pathRows);

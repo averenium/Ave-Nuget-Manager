@@ -304,6 +304,19 @@ export class SourceCapabilityStore {
     return shared.promise.finally(leave);
   }
 
+  /**
+   * Every address this source's own service index published, whatever the
+   * resource (#133). Which source a request belongs to is not always readable
+   * from its path: Azure Artifacts names the source by project and feed in the
+   * address it is configured with, and publishes every resource under the GUIDs
+   * of both instead.
+   */
+  publishedUrls(sourceUrl: string): string[] {
+    const record = this.get(sourceUrl);
+    if (!record) return [];
+    return Object.values(record.resources).flatMap((capability) => capability?.urls ?? []);
+  }
+
   /** Candidate addresses for one resource, best first; empty when unusable. */
   resourceUrls(sourceUrl: string, baseType: ProbedBaseType): string[] {
     const capability = this.get(sourceUrl)?.resources[baseType];

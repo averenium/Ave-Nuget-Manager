@@ -11,6 +11,7 @@ import { collectScopeSnapshotFiles } from './tracePack';
 import {
   sanitizeText,
   sanitizeXml,
+  assignSourceAliases,
   defaultTraceZipName,
   type FileAlias,
   type SanitizeContext,
@@ -89,7 +90,10 @@ export async function buildSanitizedZip(opts: {
     ...chain.map((file, i) => ({ absPath: file.filePath, dest: configDest(i) })),
     ...snapshot.files.map((file) => ({ absPath: file.absPath, dest: file.destName })),
   ];
-  const ctx: SanitizeContext = { ...sanitizeCtx(), aliases };
+  const sourceAliases = assignSourceAliases(
+    chain.flatMap((file) => file.sources.map((source) => source.url)),
+  );
+  const ctx: SanitizeContext = { ...sanitizeCtx(), aliases, sourceAliases };
 
   const entries: ZipEntry[] = [];
   const add = (name: string, body: string) => {
@@ -147,6 +151,8 @@ export async function buildSanitizedZip(opts: {
     'This archive is sanitised for a GitHub issue (paths, host, emails, credentials).',
     'Project and config files are renamed (projects/p01.csproj, nuget-config/c00.xml).',
     'The same names are used in trace.jsonl. c00 is the nearest nuget.config, last is global.',
+    'Package sources are numbered <s01>, <s02>, ... in the order the config files list them,',
+    'standing for the source address up to index.json; nuget-config/ shows which is which.',
     'Do not commit it. Do not share the unsanitised session folder.',
     `truncated=${opts.session.truncated ? 'yes' : 'no'}`,
     '',

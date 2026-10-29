@@ -210,6 +210,7 @@ export interface AppState {
   pendingRollback: boolean;
   workspaceActivity: { kind: 'restore' | 'refresh'; phase: 'work' | 'enrich' } | null;
   traceRecording: boolean;
+  tracePacking: boolean;
   roslynCap: RoslynCap | null;
   isWindows: boolean;
 }
@@ -262,6 +263,7 @@ const initialState: AppState = {
   pendingRollback: false,
   workspaceActivity: null,
   traceRecording: false,
+  tracePacking: false,
   roslynCap: null,
   isWindows: true,
 };
@@ -493,6 +495,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         updates: { ...state.updates, versionsByPackageId: {}, flagsByPackageId: {} },
         workspaceActivity: null,
         traceRecording: !!msg.traceRecording,
+        tracePacking: !!msg.tracePacking,
         agents: {
           bundledVersion: msg.bundledVersion,
           detected: msg.detected,
@@ -739,7 +742,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
       return { ...state, log: { entries: [] } };
 
     case 'TRACE_STATE':
-      return { ...state, traceRecording: msg.recording };
+      return { ...state, traceRecording: msg.recording, tracePacking: msg.packing };
 
     case 'SKILL_STATUS':
       return {

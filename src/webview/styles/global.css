@@ -1679,6 +1679,7 @@ a.badge:hover { text-decoration: underline; }
    `color` left unchanged — see .pkg-toolbar__refresh:hover's comment on why
    recolouring text/icons to the accent colour is unsafe in HC themes. */
 .log-trace-btn--recording { border-color: var(--color-error); color: var(--color-error); }
+.log-trace-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .log-tab__list-wrap { flex: 1; min-height: 0; position: relative; }
 .log-tab__list { height: 100%; overflow-y: auto; padding: 0 var(--spacing-sm) var(--spacing-xs); }
 .log-tab .log-entry { font-family: var(--font-mono); }

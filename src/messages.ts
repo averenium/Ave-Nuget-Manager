@@ -278,6 +278,8 @@ export type ExtensionMessage =
       includePrerelease: boolean;
       blockedPackages: string[];
       traceRecording: boolean;
+      /** Stop was pressed and the zip is not written yet (#131). */
+      tracePacking: boolean;
       bundledVersion: string;
       detected: SkillFamily[];
       installs: SkillInstallRow[];
@@ -458,7 +460,7 @@ export type ExtensionMessage =
   | { type: 'LOG_ENTRIES'; entries: LogEntry[] }
   | { type: 'LOG_ENTRY_ADDED'; entry: LogEntry }
   | { type: 'LOG_CLEARED' }
-  | { type: 'TRACE_STATE'; recording: boolean }
+  | { type: 'TRACE_STATE'; recording: boolean; packing: boolean }
   | { type: 'SKILL_STATUS'; bundledVersion: string; detected: SkillFamily[]; installs: SkillInstallRow[] }
 
   // Errors

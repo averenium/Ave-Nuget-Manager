@@ -157,6 +157,22 @@ export async function buildSanitizedZip(opts: {
   return createZip(entries);
 }
 
+/**
+ * Shows a notification and lets go of it (#131). A notification with an action
+ * button never times out and collapsing it into the bell does not settle its
+ * promise, so awaiting one ties whatever awaits it to the user's attention for
+ * the rest of the session — here, the `packing` gate that every press of the
+ * trace button runs into.
+ */
+function showWithoutWaiting(
+  shown: Thenable<string | undefined>,
+  onChoice?: (choice: string) => Thenable<unknown> | void,
+): void {
+  void Promise.resolve(shown)
+    .then((choice) => (choice && onChoice ? onChoice(choice) : undefined))
+    .then(undefined, () => { /* a notification must never break the trace */ });
+}
+
 export class TraceController implements ITrace {
   private session: TraceSession | null = null;
   private packing = false;
@@ -173,6 +189,11 @@ export class TraceController implements ITrace {
 
   isRecording(): boolean {
     return this.session?.isRecording() === true;
+  }
+
+  /** The seconds between pressing Stop and the zip being written — the one gate the button can be held by. */
+  isPacking(): boolean {
+    return this.packing;
   }
 
   record(event: TraceEvent): void {
@@ -235,7 +256,7 @@ export class TraceController implements ITrace {
   }
 
   private _postState(): void {
-    this.provider.postMessage({ type: 'TRACE_STATE', recording: this.isRecording() });
+    this.provider.postMessage({ type: 'TRACE_STATE', recording: this.isRecording(), packing: this.packing });
   }
 
   private _workspaceRoot(): string | undefined {
@@ -286,16 +307,18 @@ export class TraceController implements ITrace {
       this._postState();
       const zip = await this._pack(session);
       const saved = await this._saveZip(zip, session.startedAt);
-      await fs.rm(session.dir, { recursive: true, force: true }).catch(() => { /* ignore */ });
       if (!saved) {
-        await vscode.window.showInformationMessage('Trace discarded (save cancelled).');
-        return;
+        showWithoutWaiting(vscode.window.showInformationMessage('Trace discarded (save cancelled).'));
       }
     } catch (err) {
-      await vscode.window.showErrorMessage(
+      showWithoutWaiting(vscode.window.showErrorMessage(
         `AVE NuGet Manager: could not pack the trace (${err instanceof Error ? err.message : String(err)}).`,
-      );
+      ));
     } finally {
+      // Whatever happened above, the session is over: a directory left marked
+      // `recording` is a trace `recoverOrphan` would ask about next session
+      // although the user stopped it (#131).
+      await fs.rm(session.dir, { recursive: true, force: true }).catch(() => { /* ignore */ });
       this.packing = false;
       this._postState();
     }
@@ -367,13 +390,13 @@ export class TraceController implements ITrace {
     });
     if (!uri) return false;
     await fs.writeFile(uri.fsPath, zip);
-    const reveal = await vscode.window.showInformationMessage(
-      'Attach this zip to the GitHub issue. Do not commit it.',
-      'Show in folder',
+    showWithoutWaiting(
+      vscode.window.showInformationMessage(
+        'Attach this zip to the GitHub issue. Do not commit it.',
+        'Show in folder',
+      ),
+      (choice) => (choice === 'Show in folder' ? vscode.commands.executeCommand('revealFileInOS', uri) : undefined),
     );
-    if (reveal === 'Show in folder') {
-      await vscode.commands.executeCommand('revealFileInOS', uri);
-    }
     return true;
   }
 }

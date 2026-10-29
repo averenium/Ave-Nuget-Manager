@@ -4,6 +4,7 @@ import { summarizeDotnetFailure, summarizeListProblems } from '../../dotnetOutpu
 import { IconCopy, IconBroom, IconShieldBadge, IconOutputPanel, IconRecordDot, IconStopSquare } from '../utils/icons';
 import type { LogEntry, LogEntryKind } from '../../types';
 import { useFocusSearchOnFind } from '../utils/useFocusSearchOnFind';
+import { traceButtonState } from '../utils/traceButton';
 
 type KindFilter = 'all' | 'error' | 'cli' | 'http' | 'ui' | 'edit';
 
@@ -132,6 +133,7 @@ export function LogTab() {
   const { state, send } = useNugetManager();
   const { entries } = state.log;
   const recording = state.traceRecording;
+  const trace = traceButtonState(recording, state.tracePacking);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   useFocusSearchOnFind(searchRef);
@@ -212,25 +214,15 @@ export function LogTab() {
   return (
     <div className="log-tab" role="log" aria-label="Operation log">
       <div className="pkg-toolbar">
-        {recording ? (
-          <button
-            type="button"
-            className="log-trace-btn log-trace-btn--recording"
-            onClick={() => send({ type: 'STOP_TRACE' })}
-            title="Stop & save the trace zip"
-          >
-            <IconStopSquare /> Stop
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="log-trace-btn"
-            onClick={() => send({ type: 'START_TRACE' })}
-            title="Start a diagnostic trace"
-          >
-            <IconRecordDot /> Trace
-          </button>
-        )}
+        <button
+          type="button"
+          className={`log-trace-btn${trace.mode === 'stop' ? ' log-trace-btn--recording' : ''}`}
+          onClick={() => send({ type: trace.mode === 'stop' ? 'STOP_TRACE' : 'START_TRACE' })}
+          disabled={trace.disabled}
+          title={trace.title}
+        >
+          {trace.mode === 'stop' ? <IconStopSquare /> : <IconRecordDot />} {trace.label}
+        </button>
         <input
           ref={searchRef}
           type="search"

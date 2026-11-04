@@ -45,6 +45,27 @@ describe('resolveConfigSources', () => {
     expect(resolved.hasNonHttpSource).toBe(true);
   });
 
+  it('carries the mapping the file itself declares, for the catalog to narrow by (#136)', async () => {
+    await fs.writeFile(file, `<configuration>
+  <packageSources>
+    <clear />
+    <add key="release" value="https://feed.example/release/index.json" />
+    <add key="snapshot" value="https://feed.example/snapshot/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="release"><package pattern="Example.*" /></packageSource>
+    <packageSource key="snapshot"><package pattern="Example.Core" /></packageSource>
+  </packageSourceMapping>
+</configuration>`, 'utf8');
+
+    const resolved = await resolveConfigSources(file);
+
+    expect(resolved.packageSourceMapping).toEqual([
+      { sourceName: 'release', patterns: ['Example.*'] },
+      { sourceName: 'snapshot', patterns: ['Example.Core'] },
+    ]);
+  });
+
   it('registers the credential the file declares for a feed', async () => {
     const registry = new CredentialRegistry();
 

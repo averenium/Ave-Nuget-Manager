@@ -252,6 +252,14 @@ interface CacheEntry {
   fetchedAt: number;
   /** Full sorted version list — cached for instant detail panel population */
   versions: string[];
+  /**
+   * What `versions` covers (#136). `false` is a list built from only part of
+   * the configured sources — the CLI search stopping at the first file that
+   * answered — which may be missing a version published to another one. Such an
+   * entry is shown while the full answer is fetched, never served as the whole
+   * of it. Absent means nothing is claimed against it.
+   */
+  coversAllSources?: boolean;
   /** Per-version description/projectUrl/etc. from the same detailed search that built `versions` (#86) — absent when this entry only came from the lighter `getAllVersions` path. */
   metadataByVersion?: Record<string, import('./types').SearchedVersionMetadata>;
   /**
@@ -1764,7 +1772,11 @@ export class WebviewMessageBroker {
     const key = packageId.toLowerCase();
     const cached = this._cache.get(key);
     const ttl = getConfig().cacheTtlMs;
-    const cacheIsFresh = !!(cached?.versions?.length && (Date.now() - cached.fetchedAt < ttl));
+    // An entry that does not cover every source is shown below but not trusted
+    // to be the answer: serving it for the whole TTL was how a version held only
+    // by a later source never reached the picker (#136).
+    const cacheIsFresh = !!(cached?.versions?.length && cached.coversAllSources !== false
+      && (Date.now() - cached.fetchedAt < ttl));
 
     if (cached?.versions?.length) {
       this.provider.postMessage({
@@ -1791,6 +1803,7 @@ export class WebviewMessageBroker {
 
       if (cached) {
         cached.versions = versions;
+        cached.coversAllSources = true;
         cached.fetchedAt = Date.now();
         // Only enrich a version's metadata this call already has a richer
         // entry for (from `enrichPackage`) — never fabricate a flags-only
@@ -1814,6 +1827,7 @@ export class WebviewMessageBroker {
           latestVersion: versions[0] ?? '',
           sourceName: '',
           versions,
+          coversAllSources: true,
           versionFlags,
           fetchedAt: Date.now(),
         });
@@ -3910,22 +3924,31 @@ export class WebviewMessageBroker {
     resolvedVersions: readonly string[],
   ): Promise<boolean> {
     try {
-      const { latestVersion, sourceName, versions, metadataByVersion } = await this.backend.enrichPackage(
-        id, configFiles, getConfig().includePrerelease, signal,
-      );
+      const { latestVersion, sourceName, versions, metadataByVersion, coversAllSources } =
+        await this.backend.enrichPackage(id, configFiles, getConfig().includePrerelease, signal);
       if (signal.aborted) return false;
       if (!latestVersion && !sourceName) return false;
 
-      const cached: CacheEntry = { latestVersion, sourceName, versions, metadataByVersion, fetchedAt: Date.now() };
-      this._cache.set(id.toLowerCase(), cached);
+      // One rule for who writes `versions` (#136): an answer never replaces a
+      // fresh list that covers more than it does. Without it a full list that a
+      // panel visit had just built was put back to the narrow one by the next
+      // enrich wave, and the picker showed a different list minutes apart.
+      const key = id.toLowerCase();
+      const held = this._cache.get(key);
+      const keepHeld = !!held && held.coversAllSources === true && coversAllSources === false
+        && held.versions.length > 0 && Date.now() - held.fetchedAt < getConfig().cacheTtlMs;
+      const cached: CacheEntry = keepHeld
+        ? { ...held, sourceName: sourceName || held.sourceName, metadataByVersion: { ...held.metadataByVersion, ...metadataByVersion } }
+        : { latestVersion, sourceName, versions, metadataByVersion, coversAllSources, fetchedAt: Date.now() };
+      this._cache.set(key, cached);
       this.provider.postMessage({
         type: 'PACKAGE_INFO_UPDATE',
         packageId: id,
         latestVersion: this._compatibleLatestForTfms(cached, tfms, resolvedVersions),
         latestVersionByProject: this._latestVersionByProject(id, cached),
-        sourceName,
-        versions,
-        versionFlags: feedFlags(metadataByVersion),
+        sourceName: cached.sourceName,
+        versions: cached.versions,
+        versionFlags: feedFlags(cached.metadataByVersion),
       });
       return true;
     } catch {

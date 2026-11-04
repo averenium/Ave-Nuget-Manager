@@ -142,6 +142,9 @@ async function readConfigFile(
       // acceptable: NuGet refuses those outright, and the user should see its
       // refusal rather than have this quietly do what the CLI would not.
       hasNonHttpSource: packageSources.length > servable.length,
+      // This file's own, not the chain's merge: `--configfile` makes NuGet use
+      // only that file's settings, and the targets above are only its sources.
+      packageSourceMapping: parsed.packageSourceMapping,
     },
     credentials: rememberCredentials(xml, servable, credentials),
     proxy: xml ? proxyFromConfigXml(xml) : undefined,

@@ -535,6 +535,225 @@ describe('HttpCatalogBackend filling the details panel', () => {
   });
 });
 
+describe('HttpCatalogBackend enriching from every source that holds the package (#136)', () => {
+  // A release repository and a snapshot one on the same server, each holding
+  // versions the other lacks; packageSourceMapping names both for the package.
+  const RELEASE = FEED_A;
+  const SNAPSHOT = FEED_B;
+
+  function twoSources(
+    catalog: Record<string, CatalogVersionEntry[] | undefined>,
+    options: { inner?: INuGetBackend; asked?: string[]; honourPrerelease?: boolean } = {},
+  ) {
+    const ladder = {
+      catalogFromSource: async (target: { url: string }, query: { includePrerelease?: boolean }) => {
+        options.asked?.push(target.url);
+        const entries = catalog[target.url];
+        if (!entries || !options.honourPrerelease) return entries;
+        // The filter itself lives in the real ladder; here only what the
+        // backend hands it is under test.
+        return entries.filter((e) => query.includePrerelease === true || !e.version.includes('-'));
+      },
+      versionsFromSource: async () => undefined,
+    } as unknown as VersionLadder;
+    return new HttpCatalogBackend(
+      options.inner ?? cliStub({}).backend,
+      ladder,
+      capabilityStub([RELEASE, SNAPSHOT]),
+      resolverFor({
+        'a.config': {
+          targets: [{ url: RELEASE, name: 'release' }, { url: SNAPSHOT, name: 'snapshot' }],
+          hasNonHttpSource: false,
+        },
+      }),
+      { isEnabled: () => true },
+    );
+  }
+
+  it('lists the versions of both sources, newest first, rather than only the first one\'s', async () => {
+    const backend = twoSources({
+      [RELEASE]: [entry('2.0.0'), entry('2.0.1')],
+      [SNAPSHOT]: [entry('2.0.2-preview-01')],
+    });
+
+    const enriched = await backend.enrichPackage('Example.Core', ['a.config'], true);
+
+    expect(enriched.versions).toEqual(['2.0.2-preview-01', '2.0.1', '2.0.0']);
+    expect(enriched.latestVersion).toBe('2.0.2-preview-01');
+    expect(enriched.coversAllSources).toBe(true);
+  });
+
+  it('reports the source holding the newest version, and takes a shared version\'s details from the first source', async () => {
+    const backend = twoSources({
+      [RELEASE]: [entry('2.0.1', { description: 'From the release repository.' })],
+      [SNAPSHOT]: [
+        entry('2.0.1', { description: 'From the snapshot repository.' }),
+        entry('2.0.2-preview-01', { description: 'Only on snapshots.' }),
+      ],
+    });
+
+    const enriched = await backend.enrichPackage('Example.Core', ['a.config'], true);
+
+    expect(enriched.sourceName).toBe('snapshot');
+    expect(enriched.metadataByVersion?.['2.0.1']?.description).toBe('From the release repository.');
+    expect(enriched.metadataByVersion?.['2.0.2-preview-01']?.description).toBe('Only on snapshots.');
+  });
+
+  it('lists one version once when two sources spell it differently, keeping the first source\'s spelling and details', async () => {
+    const backend = twoSources({
+      [RELEASE]: [entry('2.0.2-Preview-01', { description: 'From the release repository.' })],
+      [SNAPSHOT]: [entry('2.0.2-preview-01', { description: 'From the snapshot repository.' })],
+    });
+
+    const enriched = await backend.enrichPackage('Example.Core', ['a.config'], true);
+
+    expect(enriched.versions).toEqual(['2.0.2-Preview-01']);
+    expect(enriched.metadataByVersion?.['2.0.2-Preview-01']?.description).toBe('From the release repository.');
+  });
+
+  it('asks every source instead of stopping at the first that answered', async () => {
+    const asked: string[] = [];
+    const backend = twoSources({ [RELEASE]: [entry('1.0.0')], [SNAPSHOT]: [entry('1.1.0')] }, { asked });
+
+    await backend.enrichPackage('Example.Core', ['a.config']);
+
+    expect(asked.sort()).toEqual([RELEASE, SNAPSHOT]);
+  });
+
+  it('lets a withdrawn version on one source stand if another source still lists it', async () => {
+    const backend = twoSources({
+      [RELEASE]: [entry('1.0.0', { listed: false })],
+      [SNAPSHOT]: [entry('1.0.0')],
+    });
+
+    expect((await backend.enrichPackage('Example.Core', ['a.config'])).versions).toEqual(['1.0.0']);
+  });
+
+  it('with prereleases off, a source holding only prereleases contributes nothing', async () => {
+    const backend = twoSources({
+      [RELEASE]: [entry('2.0.1')],
+      [SNAPSHOT]: [entry('2.0.2-preview-01')],
+    }, { honourPrerelease: true });
+
+    const off = await backend.enrichPackage('Example.Core', ['a.config'], false);
+    const on = await backend.enrichPackage('Example.Core', ['a.config'], true);
+
+    expect(off.versions).toEqual(['2.0.1']);
+    expect(on.versions).toEqual(['2.0.2-preview-01', '2.0.1']);
+  });
+
+  it('keeps what the others said when one source did not answer, marked as not covering them all', async () => {
+    // A feed that is down, or refusing its credential, must not send every
+    // package of every enrich wave to a `dotnet` process of its own.
+    const inner = {
+      enrichPackage: async () => { throw new Error('the CLI should not be asked'); },
+    } as unknown as INuGetBackend;
+    const backend = twoSources({ [RELEASE]: [entry('2.0.1')], [SNAPSHOT]: undefined }, { inner });
+
+    const enriched = await backend.enrichPackage('Example.Core', ['a.config']);
+
+    expect(enriched.versions).toEqual(['2.0.1']);
+    expect(enriched.coversAllSources).toBe(false);
+  });
+
+  it('hands the question to the CLI when no source gave any entry, since an empty answer beside a failed one proves nothing', async () => {
+    const inner = {
+      enrichPackage: async () => ({ latestVersion: 'cli', sourceName: '', versions: ['cli'] }),
+    } as unknown as INuGetBackend;
+    const backend = twoSources({ [RELEASE]: [], [SNAPSHOT]: undefined }, { inner });
+
+    expect((await backend.enrichPackage('Example.Core', ['a.config'])).latestVersion).toBe('cli');
+  });
+});
+
+describe('HttpCatalogBackend asks only the sources a packageSourceMapping names (#136)', () => {
+  const RELEASE = FEED_A;
+  const SNAPSHOT = FEED_B;
+  const OTHER = 'https://c.example/v3/index.json';
+
+  function mapped(mappings: Array<{ sourceName: string; patterns: string[] }>, asked: string[]) {
+    const ladder = {
+      catalogFromSource: async (target: { url: string }) => {
+        asked.push(target.url);
+        return [entry(target.url === SNAPSHOT ? '2.0.2-preview-01' : '2.0.1')];
+      },
+      versionsFromSource: async () => undefined,
+    } as unknown as VersionLadder;
+    return new HttpCatalogBackend(
+      cliStub({}).backend,
+      ladder,
+      capabilityStub([RELEASE, SNAPSHOT, OTHER]),
+      resolverFor({
+        'a.config': {
+          targets: [
+            { url: RELEASE, name: 'release' },
+            { url: SNAPSHOT, name: 'snapshot' },
+            { url: OTHER, name: 'other' },
+          ],
+          hasNonHttpSource: false,
+          packageSourceMapping: mappings,
+        },
+      }),
+      { isEnabled: () => true },
+    );
+  }
+
+  it('leaves unmapped sources unasked when the version list is built', async () => {
+    const asked: string[] = [];
+    const backend = mapped([
+      { sourceName: 'Release', patterns: ['Example.*'] },
+      { sourceName: 'Snapshot', patterns: ['Example.*'] },
+    ], asked);
+
+    await backend.getAllVersions('Example.Core', ['a.config'], true);
+
+    expect(asked.sort()).toEqual([RELEASE, SNAPSHOT]);
+  });
+
+  it('does the same when enriching, and still joins the mapped sources into one list', async () => {
+    const asked: string[] = [];
+    const backend = mapped([
+      { sourceName: 'Release', patterns: ['Example.*'] },
+      { sourceName: 'Snapshot', patterns: ['Example.*'] },
+    ], asked);
+
+    const enriched = await backend.enrichPackage('Example.Core', ['a.config'], true);
+
+    expect(asked.sort()).toEqual([RELEASE, SNAPSHOT]);
+    expect(enriched.versions).toEqual(['2.0.2-preview-01', '2.0.1']);
+  });
+
+  it('asks only the one source an exact mapping names', async () => {
+    const asked: string[] = [];
+    const backend = mapped([
+      { sourceName: 'Release', patterns: ['Example.*'] },
+      { sourceName: 'Snapshot', patterns: ['Example.Core'] },
+    ], asked);
+
+    await backend.enrichPackage('Example.Core', ['a.config'], true);
+
+    expect(asked).toEqual([SNAPSHOT]);
+  });
+
+  it('asks every source when no mapping is in effect', async () => {
+    const asked: string[] = [];
+    await mapped([], asked).enrichPackage('Example.Core', ['a.config'], true);
+    expect(asked.sort()).toEqual([RELEASE, SNAPSHOT, OTHER]);
+  });
+
+  it('asks every source for an id the mapping does not match, rather than none', async () => {
+    const asked: string[] = [];
+    await mapped([{ sourceName: 'Release', patterns: ['Other.*'] }], asked).enrichPackage('Example.Core', ['a.config'], true);
+    expect(asked.sort()).toEqual([RELEASE, SNAPSHOT, OTHER]);
+  });
+
+  it('asks every source when the mapping names none this file serves over HTTP', async () => {
+    const asked: string[] = [];
+    await mapped([{ sourceName: 'A folder', patterns: ['Example.*'] }], asked).enrichPackage('Example.Core', ['a.config'], true);
+    expect(asked.sort()).toEqual([RELEASE, SNAPSHOT, OTHER]);
+  });
+});
+
 describe('HttpCatalogBackend searching', () => {
   function searchStub(options: {
     hits?: Record<string, { id: string; latestVersion: string; description?: string }[] | undefined>;

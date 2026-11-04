@@ -2457,6 +2457,113 @@ describe('WebviewMessageBroker', () => {
     expect(msg?.versions).toEqual(['13.0.3', '13.0.1']);
   });
 
+  it('GET_ALL_VERSIONS does not serve a cached list that covers only part of the sources as the whole of it (#136)', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Example.Core', '/p/App.csproj')],
+      implicit: [],
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '2.0.1',
+      sourceName: 'release',
+      versions: ['2.0.1', '2.0.0'],
+      coversAllSources: false,
+    });
+    backend.getAllVersions.mockResolvedValue({ versions: ['2.0.2-preview-01', '2.0.1', '2.0.0'], versionFlags: {} });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{ name: 'release', url: 'https://nexus.example/repository/release/index.json', enabled: true, configFilePath: '/p/nuget.config' }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    posted.length = 0;
+    simulateMessage({
+      type: 'GET_ALL_VERSIONS', packageId: 'Example.Core', configFiles: ['/p/nuget.config'], prerelease: true,
+    });
+    await waitFor(() => backend.getAllVersions.mock.calls.length > 0);
+    await waitFor(() => posted.filter((m) => m.type === 'ALL_VERSIONS').length >= 2);
+
+    const lists = posted.filter((m) => m.type === 'ALL_VERSIONS') as Array<{ versions?: string[] }>;
+    expect(lists[0].versions).toEqual(['2.0.1', '2.0.0']); // shown at once, not trusted
+    expect(lists[lists.length - 1].versions).toEqual(['2.0.2-preview-01', '2.0.1', '2.0.0']);
+  });
+
+  it('GET_ALL_VERSIONS serves a cached list that covers every source without asking again (#136)', async () => {
+    const { stub, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Example.Core', '/p/App.csproj')],
+      implicit: [],
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '2.0.2-preview-01',
+      sourceName: 'snapshot',
+      versions: ['2.0.2-preview-01', '2.0.1'],
+      coversAllSources: true,
+    });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{ name: 'release', url: 'https://nexus.example/repository/release/index.json', enabled: true, configFilePath: '/p/nuget.config' }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    simulateMessage({
+      type: 'GET_ALL_VERSIONS', packageId: 'Example.Core', configFiles: ['/p/nuget.config'], prerelease: true,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(backend.getAllVersions).not.toHaveBeenCalled();
+  });
+
+  it('a narrower enrich answer does not put back the full list a panel visit had just built (#136)', async () => {
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Example.Core', '/p/App.csproj')],
+      implicit: [],
+    });
+    backend.enrichPackage.mockResolvedValue({
+      latestVersion: '2.0.1', sourceName: 'release', versions: ['2.0.1', '2.0.0'], coversAllSources: false,
+    });
+    backend.getAllVersions.mockResolvedValue({ versions: ['2.0.2-preview-01', '2.0.1', '2.0.0'], versionFlags: {} });
+    const resolver = makeConfigResolver();
+    resolver.resolve.mockResolvedValue([{
+      filePath: '/p/nuget.config',
+      sources: [{ name: 'release', url: 'https://nexus.example/repository/release/index.json', enabled: true, configFilePath: '/p/nuget.config' }],
+    }]);
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), resolver, logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await new Promise((r) => setTimeout(r, 30));
+    simulateMessage({
+      type: 'GET_ALL_VERSIONS', packageId: 'Example.Core', configFiles: ['/p/nuget.config'], prerelease: true,
+    });
+    await waitFor(() => backend.getAllVersions.mock.calls.length > 0);
+    await new Promise((r) => setTimeout(r, 20));
+
+    posted.length = 0;
+    const ok = await (broker as any)._tryEnrichPackage(
+      'Example.Core', ['/p/nuget.config'], new AbortController().signal, [], [],
+    );
+
+    expect(ok).toBe(true);
+    const update = posted.find((m) => m.type === 'PACKAGE_INFO_UPDATE') as { versions?: string[] } | undefined;
+    expect(update?.versions).toEqual(['2.0.2-preview-01', '2.0.1', '2.0.0']);
+    expect((broker as any)._cache.get('example.core').versions).toEqual(['2.0.2-preview-01', '2.0.1', '2.0.0']);
+  });
+
   it('GET_ALL_VERSIONS fetches when the cache is empty', async () => {
     const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
     const backend = makeBackend();

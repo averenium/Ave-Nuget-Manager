@@ -16,6 +16,12 @@ describe('versionsEqual', () => {
     expect(versionsEqual('2.0.0-alpha.1+sha.abc', '2.0.0-alpha.1')).toBe(true);
   });
 
+  it('does not tell two spellings of a pre-release label apart by case (#136)', () => {
+    expect(versionsEqual('2.0.2-Preview-01', '2.0.2-preview-01')).toBe(true);
+    expect(versionsEqual('2.0.2-RC.1', '2.0.2-rc.1')).toBe(true);
+    expect(versionsEqual('2.0.2-preview-01', '2.0.2-preview-02')).toBe(false);
+  });
+
   it('keeps a pre-release apart from its release', () => {
     expect(versionsEqual('2.0.0-rc.1', '2.0.0')).toBe(false);
     expect(versionsEqual('1.0.1', '1.0.0')).toBe(false);

@@ -218,6 +218,13 @@ export interface EnrichedPackageInfo {
   versions: string[];
   /** Keyed by exact version string — `--verbosity detailed` returns these per version at no extra round trip, since `enrichPackage` already fetches the version list this way (#86). Optional so existing callers/mocks that only care about the version list need not construct it. */
   metadataByVersion?: Record<string, SearchedVersionMetadata>;
+  /**
+   * `versions` is the union over every source, not what the first one that
+   * answered held (#136). Only a backend that knows says `false`; absent means
+   * nothing is claimed against it. A list that is not complete must not be
+   * served as the whole of one.
+   */
+  coversAllSources?: boolean;
 }
 
 /** One row in the Dependencies section (#86), resolved from `project.assets.json` — declared range plus what actually resolved, recursively. */

@@ -31,10 +31,12 @@ import type {
   InstalledPackage,
   PackageListResult,
   PackageMetadata,
+  PackageSourceMapping,
   SearchedVersionMetadata,
   VulnerabilityFinding,
 } from '../types';
 import type { INuGetBackend } from './INuGetBackend';
+import { mappedSourceNames } from '../packageSourceMapping';
 import { getConfig } from '../config';
 import { compareSemVer, isPrerelease, versionsEqual } from '../semver';
 import { severityFromInt } from '../nugetHttpCacheVdb';
@@ -49,6 +51,23 @@ export interface ResolvedConfigSources {
   targets: ProbeTarget[];
   /** True when the file also enables something HTTP cannot serve — a folder, a share. */
   hasNonHttpSource: boolean;
+  /** This file's own `<packageSourceMapping>`, when it has one (#136). */
+  packageSourceMapping?: PackageSourceMapping[];
+}
+
+/**
+ * The sources of one file a package is worth asking about (#136). With a
+ * mapping in effect, NuGet will only restore the package from the sources it
+ * names, so a version held by any other source could be listed but never
+ * installed; those are left unasked. A mapping that names none of this file's
+ * HTTP sources, or no mapping at all, leaves every source in — an empty answer
+ * from over-narrowing would be worse than the extra requests.
+ */
+function sourcesToAsk(resolved: ResolvedConfigSources, packageId: string): ProbeTarget[] {
+  const allowed = mappedSourceNames(packageId, resolved.packageSourceMapping ?? []);
+  if (!allowed) return resolved.targets;
+  const narrowed = resolved.targets.filter((target) => target.name !== undefined && allowed.has(target.name.toLowerCase()));
+  return narrowed.length > 0 ? narrowed : resolved.targets;
 }
 
 export type ConfigSourceResolver = (configFile: string) => Promise<ResolvedConfigSources>;
@@ -206,7 +225,7 @@ export class HttpCatalogBackend implements INuGetBackend {
     // at once: this answer is a union and the order sources are visited in does
     // not affect it. (Where order *is* the semantics — the first source holding
     // a package wins — the walk stays sequential; see `_firstCatalog`.)
-    const fresh = resolved.targets.filter((target) => {
+    const fresh = sourcesToAsk(resolved, packageId).filter((target) => {
       const key = normalizeSourceKey(target.url);
       if (asked.has(key)) return false;
       asked.add(key);
@@ -487,10 +506,18 @@ export class HttpCatalogBackend implements INuGetBackend {
   }
 
   /**
-   * The version list plus per-version fields for the picker. Follows the CLI's
-   * own rule of stopping at the first source that holds the package rather than
-   * unioning every feed — that is what makes the reported source name mean
-   * something.
+   * The version list plus per-version fields for the picker, from every source
+   * that holds the package (#136). The same union `getAllVersions` makes, and
+   * for the same reason: one package routinely lives on several feeds of one
+   * server with different version sets (a release repository and a snapshot
+   * one). Stopping at the first source that answered left the others never
+   * asked, so a version published only to a later one never reached the list.
+   * Where a `packageSourceMapping` names the sources a package may come from,
+   * only those are asked (see `sourcesToAsk`).
+   *
+   * Where one version is on several sources, the first in configuration order
+   * supplies its details, and the reported source is the one holding the newest
+   * version — the answer to "where does the update come from".
    */
   async enrichPackage(
     packageId: string,
@@ -500,13 +527,22 @@ export class HttpCatalogBackend implements INuGetBackend {
   ): Promise<EnrichedPackageInfo> {
     if (!this._isEnabled()) return this._inner.enrichPackage(packageId, configFiles, prerelease, signal);
 
-    const found = await this._firstCatalog(packageId, configFiles, prerelease, undefined, undefined, signal);
-    if (!found) return this._inner.enrichPackage(packageId, configFiles, prerelease, signal);
+    const every = await this._everyCatalog(packageId, configFiles, prerelease, signal);
+    if (!every || every.found.length === 0) return this._inner.enrichPackage(packageId, configFiles, prerelease, signal);
+    const { found, complete } = every;
 
-    const listed = found.entries.filter((e) => e.listed !== false);
-    const versions = [...new Set(listed.map((e) => e.version))].sort((a, b) => compareSemVer(b, a));
+    // Two sources can spell one version differently (`-Preview` and
+    // `-preview`), and a spelling used as an object key or compared with `===`
+    // would list it twice. So every listed entry goes into one sequence in
+    // configuration order, is sorted (the sort is stable, so the first source
+    // stays first among equals) and the equal neighbours are dropped through
+    // `versionsEqual`: the first source's spelling and details win.
+    const listed = found
+      .flatMap(({ entries }) => entries.filter((e) => e.listed !== false))
+      .sort((a, b) => compareSemVer(b.version, a.version));
+    const kept = listed.filter((entry, i) => i === 0 || !versionsEqual(listed[i - 1].version, entry.version));
     const metadataByVersion: Record<string, SearchedVersionMetadata> = {};
-    for (const entry of listed) {
+    for (const entry of kept) {
       metadataByVersion[entry.version] = {
         description: entry.description,
         projectUrl: entry.projectUrl,
@@ -519,12 +555,71 @@ export class HttpCatalogBackend implements INuGetBackend {
         ...flagsFrom(entry),
       };
     }
+    const versions = kept.map((entry) => entry.version);
+    const newest = versions[0];
+    const holder = found.find(({ entries }) => entries.some((e) => e.listed !== false && versionsEqual(e.version, newest)))
+      ?? found[0];
     return {
-      latestVersion: versions[0] ?? '',
-      sourceName: found.sourceName,
+      latestVersion: newest ?? '',
+      sourceName: holder.sourceName,
       versions,
       metadataByVersion,
+      coversAllSources: complete,
     };
+  }
+
+  /**
+   * What every source that holds this package says about it, in configuration
+   * order (#136). `undefined` means the CLI must answer: a file that could not
+   * be read, a source type HTTP does not serve, or no source that gave any
+   * entry (an empty answer beside a failed one proves nothing about absence).
+   * Sources are asked together; the order only decides whose details win for a
+   * version they share.
+   *
+   * A source that did not answer does not send the whole question to the CLI:
+   * one feed that is down, or refusing its credential, would otherwise start a
+   * `dotnet` process for every package of every enrich wave. What the others
+   * said is returned, marked `complete: false`, so the caller shows it without
+   * serving it as the whole list.
+   */
+  private async _everyCatalog(
+    packageId: string,
+    configFiles: string[],
+    prerelease: boolean,
+    signal?: AbortSignal,
+  ): Promise<{ found: Array<{ entries: CatalogVersionEntry[]; sourceName: string }>; complete: boolean } | undefined> {
+    const query = { packageId, includePrerelease: prerelease };
+    const asked = new Set<string>();
+    const targets: ProbeTarget[] = [];
+    for (const configFile of configFiles) {
+      let resolved: ResolvedConfigSources;
+      try {
+        resolved = await this._resolveSources(configFile);
+      } catch {
+        return undefined;
+      }
+      if (resolved.hasNonHttpSource) return undefined;
+      for (const target of sourcesToAsk(resolved, packageId)) {
+        const key = normalizeSourceKey(target.url);
+        if (asked.has(key)) continue;
+        asked.add(key);
+        targets.push(target);
+      }
+    }
+
+    const answers = await Promise.all(targets.map((target) => this._ladder.catalogFromSource(target, query, signal)));
+    const found: Array<{ entries: CatalogVersionEntry[]; sourceName: string }> = [];
+    let complete = true;
+    for (let i = 0; i < targets.length; i += 1) {
+      const entries = answers[i];
+      if (!entries) {
+        complete = false;
+        continue;
+      }
+      if (entries.length === 0) continue;
+      found.push({ entries, sourceName: targets[i].name ?? targets[i].url });
+    }
+    return { found, complete };
   }
 
   /**
@@ -558,7 +653,7 @@ export class HttpCatalogBackend implements INuGetBackend {
       }
       if (resolved.hasNonHttpSource) return undefined;
 
-      for (const target of resolved.targets) {
+      for (const target of sourcesToAsk(resolved, packageId)) {
         const key = normalizeSourceKey(target.url);
         if (asked.has(key)) continue;
         asked.add(key);

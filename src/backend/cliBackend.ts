@@ -442,7 +442,15 @@ export class CliBackend implements INuGetBackend {
         deprecation: e.deprecation,
       };
     }
-    return { latestVersion: versions[0] ?? '', sourceName: result.sourceName, versions, metadataByVersion };
+    return {
+      latestVersion: versions[0] ?? '',
+      sourceName: result.sourceName,
+      versions,
+      metadataByVersion,
+      // The search stops at the first config file that answered. With one file
+      // that is every source it lists; with several it may not be (#136).
+      coversAllSources: configFiles.length <= 1,
+    };
   }
 
   // ── installPackage ─────────────────────────────────────────────────────────

@@ -30,11 +30,15 @@ export function compareSemVer(a: string, b: string): number {
     const diff = (pa[i] as number) - (pb[i] as number);
     if (diff !== 0) return diff;
   }
-  // Pre-release: no suffix (stable) > has suffix (pre-release)
-  if (pa[4] === pb[4]) return 0;
-  if (pa[4] === '') return 1;
-  if (pb[4] === '') return -1;
-  return pa[4] < pb[4] ? -1 : 1;
+  // Pre-release: no suffix (stable) > has suffix (pre-release). Labels are
+  // compared without regard to case, as NuGet does: `-Preview` and `-preview`
+  // are one version, and two feeds can spell it either way (#136).
+  const labelA = pa[4].toLowerCase();
+  const labelB = pb[4].toLowerCase();
+  if (labelA === labelB) return 0;
+  if (labelA === '') return 1;
+  if (labelB === '') return -1;
+  return labelA < labelB ? -1 : 1;
 }
 
 function parseSemVer(v: string): [number, number, number, number, string] {

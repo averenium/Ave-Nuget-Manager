@@ -39,6 +39,7 @@
 - Experimental HTTP catalog: credentials configured for one source are no longer sent to the other sources on the same host, which refused them with 403 (#133)
 - **Log**: `trace.jsonl` in a saved trace is valid JSON Lines again, and the response bodies and `dotnet` output inside it still parse as JSON (#134)
 - **Log**: a saved trace no longer keeps the host name of a feed whose address has the credentials written into it (#135)
+- Experimental HTTP catalog: a package's version list joins every source that holds it, limited to the sources its `packageSourceMapping` names, instead of stopping at the first one (#136)
 
 ## 0.8.0
 

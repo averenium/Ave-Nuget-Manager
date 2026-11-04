@@ -1,4 +1,4 @@
-import { packageMatchesAnyMapping } from '../../packageSourceMapping';
+import { mappedSourceNames, packageMatchesAnyMapping } from '../../packageSourceMapping';
 import type { PackageSourceMapping } from '../../types';
 
 function mapping(sourceName: string, ...patterns: string[]): PackageSourceMapping {
@@ -38,5 +38,38 @@ describe('packageMatchesAnyMapping', () => {
   it('does not let a bare "*" in one pattern swallow unrelated ids beyond its prefix', () => {
     // Sanity check on the "*" semantics: it is a prefix match, not "matches everything".
     expect(packageMatchesAnyMapping('OtherCompany.Lib', [mapping('nuget.org', 'Contoso.*')])).toBe(false);
+  });
+});
+
+describe('mappedSourceNames (#136)', () => {
+  const release = mapping('Release', 'Example.*');
+  const snapshot = mapping('Snapshot', 'Example.Core', 'Example.Core.*');
+
+  it('is unrestricted when mapping is off', () => {
+    expect(mappedSourceNames('Example.Core', [])).toBeUndefined();
+  });
+
+  it('names every source that maps the id with equal weight', () => {
+    expect(mappedSourceNames('Example.Core', [mapping('Release', 'Example.Core'), mapping('Snapshot', 'example.core')]))
+      .toEqual(new Set(['release', 'snapshot']));
+  });
+
+  it('prefers an exact id over a prefix', () => {
+    expect(mappedSourceNames('Example.Core', [release, snapshot])).toEqual(new Set(['snapshot']));
+  });
+
+  it('prefers the longer prefix', () => {
+    expect(mappedSourceNames('Example.Core.Extras', [release, snapshot])).toEqual(new Set(['snapshot']));
+    expect(mappedSourceNames('Example.Other', [release, snapshot])).toEqual(new Set(['release']));
+  });
+
+  it('takes a lone * only when nothing more specific matches', () => {
+    const everything = mapping('Everything', '*');
+    expect(mappedSourceNames('Example.Other', [everything, release])).toEqual(new Set(['release']));
+    expect(mappedSourceNames('Another.Thing', [everything, release])).toEqual(new Set(['everything']));
+  });
+
+  it('is unrestricted for an id nothing in the mapping matches, rather than naming no source', () => {
+    expect(mappedSourceNames('Another.Thing', [release, snapshot])).toBeUndefined();
   });
 });

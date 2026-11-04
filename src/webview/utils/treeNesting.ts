@@ -2,10 +2,10 @@
  * How a nested dependency tree is indented (#137).
  *
  * A level below the top draws a guide line and steps in by `TREE_STEP_PX`, for
- * at most `TREE_MAX_STEPS` levels. Past that the step stops growing: every
- * further level adds only its own guide line, `TREE_CAPPED_STEP_PX` apart, so
- * the nesting stays legible while one pathological graph cannot eat a details
- * pane that can be dragged down to 180px.
+ * at most `TREE_MAX_STEPS` levels. Past that a level steps in only
+ * `TREE_CAPPED_STEP_PX` and draws no line, so one pathological graph cannot eat
+ * a details pane that can be dragged down to 180px. Stacked lines were tried
+ * and dropped — two pixels apart they merge into one thick stroke.
  *
  * `depth` is the number of ancestors a row has: 0 for a top-level row (no
  * guide, no step), 1 for its children, and so on. The CSS in `global.css`
@@ -14,10 +14,10 @@
  */
 export const TREE_STEP_PX = 14;
 export const TREE_MAX_STEPS = 3;
-/** One guide line plus the pixel that keeps it apart from the one before. */
-export const TREE_CAPPED_STEP_PX = 2;
+/** What a level past the cap adds: a small step, no line. */
+export const TREE_CAPPED_STEP_PX = 4;
 
-/** True when this depth no longer indents — only its guide line is added. */
+/** True when this depth takes the small step and draws no line of its own. */
 export function isTreeDepthCapped(depth: number): boolean {
   return depth > TREE_MAX_STEPS;
 }
@@ -35,7 +35,7 @@ export function treeIndentPx(depth: number): number {
   return total;
 }
 
-/** Guide lines that run beside a row at `depth` — one per ancestor. */
+/** Guide lines that run beside a row at `depth` — one per ancestor, up to the cap. */
 export function treeGuideCount(depth: number): number {
-  return Math.max(0, depth);
+  return Math.min(Math.max(0, depth), TREE_MAX_STEPS);
 }

@@ -10,10 +10,17 @@
    * The guide line of a nested tree (#137). `panel.border` is a divider meant
    * to vanish — about 1.2:1 — and past the indentation cap the stacked lines are
    * the only thing that carries depth, so a tree takes the editor's own
-   * tree-guide token (about 2.2:1 in Light+ and Dark+) and falls back to the
-   * border where a theme defines none.
+   * tree-guide token and falls back to the border where a theme defines none.
+   * The token alone (about 2.2:1 in Light+ and Dark+) proved too bright beside
+   * the rows it frames, so it is let through at 55% on dark themes and at 40%
+   * on light ones, where the same grey on white glares more (see the
+   * `body.vscode-light` override at the tree rules). Chosen by eye, and
+   * deliberately quiet: in Light+ and Dark+ the result is about as faint as the
+   * panel border, or fainter; only a theme with a stronger tree-guide token
+   * (the Modern themes) keeps it clearly above the border. The line is a hint
+   * of nesting — the stub and the corner at the last row carry the structure.
    */
-  --color-tree-guide:   var(--vscode-tree-indentGuidesStroke, var(--color-border));
+  --color-tree-guide:   color-mix(in srgb, var(--vscode-tree-indentGuidesStroke, var(--color-border)) 55%, transparent);
   --color-input-bg:     var(--vscode-input-background, #3c3c3c);
   --color-input-fg:     var(--vscode-input-foreground, #d4d4d4);
   /*
@@ -1181,15 +1188,26 @@ a.badge:hover { text-decoration: underline; }
 }
 /* A nested tree (#137): the child list sits inside its parent's node behind a
    guide line. A step is 6px margin + 7px padding + the 1px line = 14px, for
-   three levels; a capped level adds only its line, 1px margin + 1px line. */
+   three levels; a capped level steps in a further 4px and draws no line, so
+   depth stays readable without the lines (stacked 2px apart they merged into
+   one thick stroke) and one deep graph still costs the pane little. */
+body.vscode-light { --color-tree-guide: color-mix(in srgb, var(--vscode-tree-indentGuidesStroke, var(--color-border)) 40%, transparent); }
 .dep-tree__node { position: relative; }
-.dep-tree__children { margin-left: 6px; padding-left: 7px; border-left: 1px solid var(--color-tree-guide); }
+/* The 1px border only keeps the step at 14px; the line itself is drawn by each
+   child, so the last one can end it at the middle of its row (an L, not a T). */
+.dep-tree__children { margin-left: 6px; padding-left: 7px; border-left: 1px solid transparent; }
 .dep-tree__children > .dep-tree__node::before {
   content: ''; position: absolute; left: -7px; top: 11px; width: 5px; height: 1px;
   background: var(--color-tree-guide);
 }
-.dep-tree__children--capped { margin-left: 1px; padding-left: 0; }
-.dep-tree__children--capped > .dep-tree__node::before { display: none; }
+.dep-tree__children > .dep-tree__node::after {
+  content: ''; position: absolute; left: -8px; top: 0; bottom: 0; width: 1px;
+  background: var(--color-tree-guide);
+}
+.dep-tree__children > .dep-tree__node:last-child::after { bottom: auto; height: 12px; }
+.dep-tree__children--capped { margin-left: 4px; padding-left: 0; border-left: 0; }
+.dep-tree__children--capped > .dep-tree__node::before,
+.dep-tree__children--capped > .dep-tree__node::after { display: none; }
 .dep-row--dim { color: var(--color-tab-inactive); }
 .dep-row__id { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dep-row__meta { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }

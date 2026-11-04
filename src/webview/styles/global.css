@@ -6,6 +6,14 @@
   --color-bg:           var(--vscode-editor-background, #1e1e1e);
   --color-fg:           var(--vscode-editor-foreground, #d4d4d4);
   --color-border:       var(--vscode-panel-border, #3c3c3c);
+  /*
+   * The guide line of a nested tree (#137). `panel.border` is a divider meant
+   * to vanish — about 1.2:1 — and past the indentation cap the stacked lines are
+   * the only thing that carries depth, so a tree takes the editor's own
+   * tree-guide token (about 2.2:1 in Light+ and Dark+) and falls back to the
+   * border where a theme defines none.
+   */
+  --color-tree-guide:   var(--vscode-tree-indentGuidesStroke, var(--color-border));
   --color-input-bg:     var(--vscode-input-background, #3c3c3c);
   --color-input-fg:     var(--vscode-input-foreground, #d4d4d4);
   /*
@@ -1171,8 +1179,18 @@ a.badge:hover { text-decoration: underline; }
   display: flex; justify-content: space-between; align-items: center; gap: var(--spacing-sm);
   font-size: 12px; padding: 3px 0; min-width: 0;
 }
-.dep-row--nested { padding-left: 14px; color: var(--color-tab-inactive); }
-.dep-row--nested .dep-row__id::before { content: '↳ '; }
+/* A nested tree (#137): the child list sits inside its parent's node behind a
+   guide line. A step is 6px margin + 7px padding + the 1px line = 14px, for
+   three levels; a capped level adds only its line, 1px margin + 1px line. */
+.dep-tree__node { position: relative; }
+.dep-tree__children { margin-left: 6px; padding-left: 7px; border-left: 1px solid var(--color-tree-guide); }
+.dep-tree__children > .dep-tree__node::before {
+  content: ''; position: absolute; left: -7px; top: 11px; width: 5px; height: 1px;
+  background: var(--color-tree-guide);
+}
+.dep-tree__children--capped { margin-left: 1px; padding-left: 0; }
+.dep-tree__children--capped > .dep-tree__node::before { display: none; }
+.dep-row--dim { color: var(--color-tab-inactive); }
 .dep-row__id { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dep-row__meta { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .dep-row__hint { color: var(--color-warning); font-size: 11px; }

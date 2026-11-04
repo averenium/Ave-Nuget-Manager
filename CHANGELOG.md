@@ -40,6 +40,7 @@
 - **Log**: `trace.jsonl` in a saved trace is valid JSON Lines again, and the response bodies and `dotnet` output inside it still parse as JSON (#134)
 - **Log**: a saved trace no longer keeps the host name of a feed whose address has the credentials written into it (#135)
 - Experimental HTTP catalog: a package's version list joins every source that holds it, limited to the sources its `packageSourceMapping` names, instead of stopping at the first one (#136)
+- **Package details**: the **Dependencies** tree shows how deep each dependency sits, with indentation and guide lines (#137)
 
 ## 0.8.0
 

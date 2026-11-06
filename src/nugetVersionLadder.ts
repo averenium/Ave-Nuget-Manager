@@ -119,7 +119,7 @@ const UNPROVEN_MISS: RungOutcome = { kind: 'unproven-miss' };
  * number of requests: a truncated version list would be a wrong answer, so it
  * gives none and lets the CLI answer.
  */
-const MAX_REGISTRATION_PAGES = 64;
+export const MAX_REGISTRATION_PAGES = 64;
 
 /** Ids are lowercased by invariant rules for every predictable path. */
 function lowerId(packageId: string): string {
@@ -198,6 +198,21 @@ function stringArray(value: unknown): string[] | undefined {
   return out;
 }
 
+/**
+ * Why the registration rung gave no catalog for a package (#109). The CLI then
+ * answers with no dependency data, and a caller that needs it (the dependents
+ * proposal) must say *why* it could not establish something, not only that.
+ */
+export interface LadderDecline {
+  code: 'registration-too-large' | 'credential-refused' | 'feed-error';
+  /** The source's name, or its address when it has none. */
+  source: string;
+  rung: 'metadata';
+  detail: string;
+  /** The HTTP status the feed answered with, when it answered. */
+  status?: number;
+}
+
 export interface LadderOptions {
   isEnabled?: () => boolean;
   log?: HttpLogSink;
@@ -222,6 +237,8 @@ export class VersionLadder {
    */
   private readonly _walks = new Map<string, Promise<CatalogVersionEntry[] | undefined>>();
   private readonly _entries = new WeakMap<object, CatalogVersionEntry[]>();
+  /** The latest decline per package, cleared by the next walk that succeeds. */
+  private readonly _declines = new Map<string, LadderDecline>();
 
   /** The experimental flag; while it is off the ladder makes no request. */
   private readonly _isEnabled: () => boolean;
@@ -235,6 +252,17 @@ export class VersionLadder {
   ) {
     this._isEnabled = options.isEnabled ?? (() => getConfig().experimentalHttpCatalog);
     this._log = options.log ?? SILENT_HTTP_LOG;
+  }
+
+  /** Why the last catalog walk for this package declined, if it did and nothing since has succeeded. */
+  declineFor(packageId: string): LadderDecline | undefined {
+    return this._declines.get(lowerId(packageId));
+  }
+
+  private _decline(target: ProbeTarget, packageId: string, code: LadderDecline['code'], detail: string, status?: number): void {
+    const source = target.name ?? target.url;
+    this._declines.set(lowerId(packageId), { code, source, rung: 'metadata', detail, status });
+    this._log.note(`registration rung declined for ${packageId}: ${detail}`, `metadata · ${source}`);
   }
 
   /**
@@ -385,17 +413,32 @@ export class VersionLadder {
     signal?: AbortSignal,
   ): Promise<RungOutcome | { kind: 'entries'; entries: CatalogVersionEntry[] }> {
     let collected: CatalogVersionEntry[] = [];
+    this._declines.delete(lowerId(query.packageId));
     const outcome = await this._walk(target, 'RegistrationsBaseUrl', signal, async (base, proven) => {
       const url = joinUrl(base, `${lowerId(query.packageId)}/index.json`);
       const response = await this._fetchJson(url, signal);
       if (response.status === 404 || response.status === 410) return proven ? ABSENT : UNPROVEN_MISS;
-      if (response.status !== 200) return INCONCLUSIVE;
+      if (response.status !== 200) {
+        this._decline(
+          target, query.packageId,
+          response.status === 401 || response.status === 403 ? 'credential-refused' : 'feed-error',
+          `the registration index answered ${response.status}`,
+          response.status,
+        );
+        return INCONCLUSIVE;
+      }
 
       const pages = this._indexPages(response.json);
       if (!pages) return { kind: 'malformed', preview: response.preview };
       // A truncated version list is a wrong answer, so past this many pages the
       // rung declines and the CLI answers instead.
-      if (pages.length > MAX_REGISTRATION_PAGES) return INCONCLUSIVE;
+      if (pages.length > MAX_REGISTRATION_PAGES) {
+        this._decline(
+          target, query.packageId, 'registration-too-large',
+          `its registration lists ${pages.length} pages, more than the ${MAX_REGISTRATION_PAGES} the walk reads`,
+        );
+        return INCONCLUSIVE;
+      }
 
       const entries: CatalogVersionEntry[] = [];
       const wanted = query.version?.trim();
@@ -416,9 +459,20 @@ export class VersionLadder {
         // in the document is the only legitimate way to a page.
         if (!page.url) continue;
         const pageResponse = await this._fetchJson(page.url, signal);
-        if (pageResponse.status !== 200) return INCONCLUSIVE;
+        if (pageResponse.status !== 200) {
+          this._decline(
+            target, query.packageId,
+            pageResponse.status === 401 || pageResponse.status === 403 ? 'credential-refused' : 'feed-error',
+            `a registration page answered ${pageResponse.status}`,
+            pageResponse.status,
+          );
+          return INCONCLUSIVE;
+        }
         const pageEntries = this._pageEntries(pageResponse.json);
-        if (!pageEntries) return INCONCLUSIVE;
+        if (!pageEntries) {
+          this._decline(target, query.packageId, 'feed-error', 'a registration page was not a registration page');
+          return INCONCLUSIVE;
+        }
         entries.push(...pageEntries);
       }
       // With no version named, an empty catalog means the document was not one.

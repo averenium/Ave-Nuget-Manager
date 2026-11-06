@@ -18,6 +18,10 @@ import type {
 } from './types';
 import type { SkillFamily, SkillInstallRow } from './agentSkillInstall';
 import type { RoslynCap } from './roslynSdkCap';
+import type { CascadeMode, CascadeResult } from './cascadeResult';
+
+/** What a person can do with a dependents proposal, on either surface that shows it (#109). */
+export type CascadeAction = 'take-all' | 'update-only' | 'update-anyway' | 'block' | 'cancel' | 'never-offer';
 
 // ─────────────────────────────────────────────
 // Webview → Extension Host
@@ -84,6 +88,40 @@ export type WebviewMessage =
       items: Array<{ packageId: string; fromVersion: string; toVersion: string }>;
     }
 
+  /**
+   * Which other installed packages have to move with this bump (#109). Sent
+   * while an apply waits (`apply`, cases 1–2: a resolved version outside a
+   * declared range) or when the person asks about a row (`asked`, case 3).
+   * Echoed back so an answer to a click the person has moved past is ignored.
+   */
+  | {
+      type: 'CHECK_DEPENDENTS';
+      requestId: string;
+      packageId: string;
+      fromVersion: string;
+      toVersion: string;
+      projectPath: string;
+      /** Every framework the project references this package under. */
+      frameworks: string[];
+      mode: CascadeMode;
+      prerelease: boolean;
+      configFiles: string[];
+    }
+  /**
+   * Open (or reveal) the page that reviews the closure `requestId` answered
+   * with (#109). `waiting` says a write is held for the answer, which decides
+   * the actions the page offers and what closing it means.
+   */
+  | { type: 'CASCADE_OPEN_PAGE'; requestId: string; waiting: boolean }
+  /**
+   * Sent from the page itself, never from the panel. `recompute` asks for the
+   * closure again with the same question; every other action is passed on to
+   * the panel, which is where every write runs, and closes the page.
+   */
+  | { type: 'CASCADE_PAGE_ACTION'; requestId: string; action: CascadeAction | 'recompute' | 'close' }
+  /** The panel has moved on from what the open page was computed for (#109). */
+  | { type: 'CASCADE_PAGE_STALE'; requestId: string }
+
   // Install / Remove — Project scope (single project)
   // `framework` confines the write to one conditional PackageReference group,
   // for a project that pins this package per target framework (#82).
@@ -132,6 +170,9 @@ export type WebviewMessage =
     }
   | { type: 'REMOVE_PACKAGE_MULTI'; projects: string[]; packageId: string }
 
+  /** Switch the check before a write on or off (#109); written to the user's settings, or the workspace's when it already has a value. */
+  | { type: 'SET_OFFER_DEPENDENT_UPDATES'; enabled: boolean }
+
   /** Restore project files snapshotted before a failed add (`onFailedUpdate: keep`). */
   | { type: 'ROLLBACK_FAILED_UPDATE' }
 
@@ -142,6 +183,13 @@ export type WebviewMessage =
       family?: string;
       includePrerelease: boolean;
       items: BatchUpdateItem[];
+      /**
+       * The items only make sense as one change (#109): each is written without
+       * restoring, and the project is restored once when all are in. Written one
+       * by one, the first is refused by NuGet for disagreeing with a package that
+       * has not moved yet — a downgrade of a package its dependent still needs.
+       */
+      together?: boolean;
     }
   | { type: 'CANCEL_BATCH_UPDATE' }
 
@@ -287,6 +335,10 @@ export type ExtensionMessage =
       roslynCap: RoslynCap | null;
       /** Host OS is Windows — `<apikeys>` DPAPI works; Copy / `<clearTextApiKeys>` UI is hidden. */
       isWindows: boolean;
+      /** The experimental HTTP catalog is on — the dependents proposal exists only then (#109). */
+      httpCatalog: boolean;
+      /** The check before a write is switched on (`offerDependentUpdates`, #109). */
+      offerDependentUpdates: boolean;
     }
 
   /**
@@ -388,6 +440,61 @@ export type ExtensionMessage =
     versions: string[];
     versionFlags?: Record<string, VersionFlag>;
   }
+
+  /**
+   * The experimental HTTP catalog is switched on or off (#109). The dependents
+   * proposal needs the registration data only that path reads, so what it
+   * offers follows this flag; it is also sent with `INIT_STATE`.
+   */
+  | { type: 'HTTP_CATALOG_STATE'; enabled: boolean }
+  /** `offerDependentUpdates` changed — from the popup's menu or from Settings (#109). */
+  | { type: 'DEPENDENTS_OFFER_STATE'; enabled: boolean }
+  /**
+   * The answer to `CHECK_DEPENDENTS` (#109). `result` is `null` when there was
+   * no restore graph to walk, and `unavailable` says so in the extension's words.
+   */
+  | { type: 'DEPENDENT_CASCADE'; requestId: string; result: CascadeResult | null; unavailable?: string }
+  /**
+   * The page the panel asked for is open, or has closed (#109). `requestId` is
+   * the closure it shows; `acted` is true when the page closed because a
+   * decision was taken on it, false when it was simply closed.
+   */
+  | {
+      type: 'CASCADE_PAGE_STATE';
+      requestId: string;
+      open: boolean;
+      acted?: boolean;
+      /**
+       * Sent when the page was recomputed (#109): the version the closure now
+       * starts from. The panel measures "has moved on" against it, not against
+       * the version the page was first opened with.
+       */
+      fromVersion?: string;
+    }
+  /**
+   * A decision taken on the page, handed to the panel to carry out (#109). The
+   * moves travel with it: the page may have recomputed since the panel last
+   * heard an answer, and what is written is what the person was shown.
+   */
+  | {
+      type: 'CASCADE_DECISION';
+      requestId: string;
+      action: CascadeAction;
+      packageId: string;
+      projectPath: string;
+      framework: string;
+      moves: Array<{ packageId: string; fromVersion: string; toVersion: string; writeIn?: string }>;
+    }
+  /** To the page: what to show (#109). Sent on open and again on every recompute. */
+  | {
+      type: 'CASCADE_PAGE_SNAPSHOT';
+      requestId: string;
+      result: CascadeResult;
+      waiting: boolean;
+      stale: boolean;
+    }
+  /** To the page: the panel moved on; keep the snapshot, mark it (#109). */
+  | { type: 'CASCADE_PAGE_MARK_STALE'; requestId: string }
 
   /** Restore / Force refresh re-read of the SDK compiler. */
   | { type: 'ROSLYN_CAP'; cap: RoslynCap | null }

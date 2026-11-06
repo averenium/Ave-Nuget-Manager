@@ -35,7 +35,7 @@ import type {
   SearchedVersionMetadata,
   VulnerabilityFinding,
 } from '../types';
-import type { INuGetBackend } from './INuGetBackend';
+import type { CatalogDecline, INuGetBackend } from './INuGetBackend';
 import { mappedSourceNames } from '../packageSourceMapping';
 import { getConfig } from '../config';
 import { compareSemVer, isPrerelease, versionsEqual } from '../semver';
@@ -169,6 +169,10 @@ export class HttpCatalogBackend implements INuGetBackend {
   }
 
   // ── the one method answered over HTTP ──────────────────────────────────────
+
+  catalogDecline(packageId: string): CatalogDecline | undefined {
+    return this._ladder.declineFor(packageId);
+  }
 
   async getAllVersions(
     packageId: string,

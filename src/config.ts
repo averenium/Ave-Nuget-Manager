@@ -73,6 +73,12 @@ export function getConfig() {
      * this off returns the extension to exactly its previous behaviour.
      */
     experimentalHttpCatalog: cfg.get<boolean>('experimentalHttpCatalog', false),
+    /**
+     * Whether a write is checked for the dependents that have to move with it
+     * before it goes ahead (#109). Only meaningful with the HTTP catalog on,
+     * which is what produces the data; the right-click question is not gated.
+     */
+    offerDependentUpdates: cfg.get<boolean>('offerDependentUpdates', true),
     /** Workspace-only block list (not User settings). */
     blockedPackages: getBlockedPackages(),
   };
@@ -103,6 +109,24 @@ export async function setPackageBlocked(packageId: string, blocked: boolean): Pr
     vscode.ConfigurationTarget.Workspace,
   );
   return normalizeBlockedIds(next);
+}
+
+/**
+ * Persist the "offer dependents" choice (#109). A standing personal preference,
+ * so it goes to the user's settings — unless the key already has a value closer
+ * to the workspace, which would win over it: writing the user's setting under a
+ * workspace `true` would leave the person having said "never" and being
+ * interrupted again.
+ */
+export async function setOfferDependentUpdates(value: boolean): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration(SECTION);
+  const inspected = cfg.inspect<boolean>('offerDependentUpdates');
+  const target = inspected?.workspaceFolderValue !== undefined
+    ? vscode.ConfigurationTarget.WorkspaceFolder
+    : inspected?.workspaceValue !== undefined
+      ? vscode.ConfigurationTarget.Workspace
+      : vscode.ConfigurationTarget.Global;
+  await cfg.update('offerDependentUpdates', value, target);
 }
 
 /** Persist the prerelease flag to user settings. */

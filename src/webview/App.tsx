@@ -6,6 +6,7 @@ import { UpdatesTab } from './components/UpdatesTab';
 import { LogTab } from './components/LogTab';
 import { AgentsTab } from './components/AgentsTab';
 import { ScopeChooserBody } from './components/ScopeChooserBody';
+import { DependentCascadeLayer } from './components/DependentCascadeLayer';
 import type { ScopePickTarget } from './components/ScopeChooser';
 import { scopeLabel, scopeIcon, scopeIdentityPath, scopeChooserRenderState } from './utils/scope';
 import { snapshotNeedsSourcesWarn } from '../vulnerabilityScanPolicy';
@@ -219,6 +220,7 @@ function Shell() {
           {state.activeTab === 'agents' && (reopenedChooser ?? <AgentsTab />)}
         </div>
       </main>
+      <DependentCascadeLayer />
     </div>
   );
 }

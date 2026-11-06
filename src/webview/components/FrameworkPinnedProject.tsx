@@ -7,6 +7,8 @@ import { BLOCKED_UPDATES_TOOLTIP } from '../../blockedPackages';
 import { compareSemVer } from '../../semver';
 import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { RoslynCapPopup } from './RoslynCapPopup';
+import { useDependentsGate } from '../context/useDependentsGate';
+import { dependentsRequestFor } from '../utils/dependentsRequest';
 import { CrossLinePopup } from './CrossLinePopup';
 import { sameMajorLine } from '../../frameworkPins';
 import { highestCompatibleVersion, stayingVersion } from '../../frameworkCompatibility';
@@ -154,6 +156,7 @@ function FrameworkRow({
   packageId, project, row, sharedWith, allVersions, resolvedVersions, updatesBlocked, isLoading, state, dispatch, send,
 }: RowProps) {
   const p = project.absolutePath;
+  const gateDependents = useDependentsGate();
   const referenced = row.resolvedVersion !== undefined;
   // Not yet referenced from this framework: the version offered by default is
   // the newest one it can actually use (#107), not the feed's raw latest —
@@ -180,6 +183,21 @@ function FrameworkRow({
     if (updatesBlocked) return;
     if (!localVersion) return;
     if (referenced && compareSemVer(localVersion, row.resolvedVersion as string) === 0) return;
+    // Which other packages have to move with it is asked before the write (#109),
+    // for this framework alone — the reference is confined to it. A shared
+    // reference being rebuilt per framework is a different write (a split), which
+    // a batch cannot make, so it is not asked about here.
+    const request = referenced && !sharedWith?.length
+      ? dependentsRequestFor({
+        installed: state.packages.installed, packageId, projectPath: p, toVersion: localVersion,
+        onlyFramework: row.framework,
+      })
+      : undefined;
+    if (request) gateDependents(request, write);
+    else write();
+  };
+
+  const write = () => {
     dispatch({ type: 'START_PROJECT_OPERATION', operation: 'install', total: 1 });
     dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
     dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });

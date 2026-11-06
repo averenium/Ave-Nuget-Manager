@@ -1216,6 +1216,146 @@ body.vscode-light { --color-tree-guide: color-mix(in srgb, var(--vscode-tree-ind
 .dep-row__bad { display: inline-flex; color: var(--color-error); }
 .dep-row__version--bad { color: var(--color-error); }
 
+/* ── Dependents that have to move with a bump (#109) ───────────────────────────
+   The tree is `DependencyTree` (#137); what is here is the right-hand slot, the
+   row that can be picked, and the page that hosts the tree beside a pane. */
+.cascade-row__meta { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.cascade-row__range { color: var(--color-tab-inactive); font-size: 11px; white-space: nowrap; }
+.cascade-row__why { color: var(--color-tab-inactive); font-size: 11px; white-space: nowrap; }
+/* Where a row comes from, under a central version: the project's name, or how many. */
+.cascade-row__in { color: var(--color-tab-inactive); font-size: 11px; white-space: nowrap; }
+/* The word on a row that goes against the root, in the slot a source name would have. */
+.cascade-row__src { color: var(--color-tab-inactive); font-size: 11px; white-space: nowrap; }
+.cascade-row__root { font-weight: 600; }
+.cascade-more { color: var(--color-tab-inactive); font-size: 12px; padding: 3px 0; }
+.cascade-tree--root > .dep-tree__node > .dep-tree__children { margin-top: 0; }
+
+/* A row that can be picked bleeds to the left edge of the tree, so the highlight
+   spans the whole line whatever its depth, and keeps a 2px edge for the state. */
+.cascade-tree--pick .dep-row {
+  position: relative;
+  margin-left: calc(var(--bleed, 0px) * -1);
+  padding-left: max(0px, calc(var(--bleed, 0px) - 2px));
+  border-left: 2px solid transparent;
+  gap: 10px;
+}
+.dep-row--pick { cursor: pointer; }
+.cascade-tree--pick .dep-row--pick:not(.dep-row--selected):hover { background: var(--color-list-hover); }
+.dep-row--selected {
+  background: var(--color-list-active);
+  color: var(--color-list-active-fg);
+  border-left-color: var(--color-btn-bg);
+  outline: 1px solid var(--color-contrast-border);
+  outline-offset: -1px;
+}
+/* The chain up to the header reads without a second selected row. */
+.dep-row--onpath { border-left-color: color-mix(in srgb, var(--color-btn-bg) 45%, transparent); }
+
+/* The stale banner. `.sources-warn` is the Sources tab's, and its raw gold is
+   for a dark list; on a light theme it glares, so this banner alone is deepened
+   — the Sources tab keeps its look. */
+body.vscode-light .sources-warn--stale {
+  color: color-mix(in srgb, var(--color-warning) 55%, var(--color-fg));
+}
+
+/* Shown while a write waits for the dependents answer, after a beat — the answer
+   usually comes from the restore file alone and needs no announcement. */
+.cascade-checking {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 150;
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-md);
+  background: var(--color-bg); border-top: 1px solid var(--color-border);
+  font-size: 12px; color: var(--color-tab-inactive);
+}
+
+.cascade-checking__actions { display: inline-flex; gap: var(--spacing-md); flex: 0 0 auto; }
+.cascade-checking--ok { color: var(--color-fg); }
+.cascade-checking--failed { color: var(--color-fg); border-top-color: var(--color-error, var(--color-border)); }
+
+.cascade-page { display: flex; flex-direction: column; height: 100vh; min-height: 0; background: var(--color-bg); color: var(--color-fg); }
+.cascade-page__head {
+  flex-shrink: 0; padding: 14px 20px 12px; border-bottom: 1px solid var(--color-border);
+  display: flex; flex-direction: column; gap: 5px;
+}
+.cascade-page__titlerow { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.cascade-page__title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1; }
+.cascade-page__name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cascade-page__actions { display: flex; gap: 8px; flex-shrink: 0; }
+.cascade-page__title .popup__ver { margin-left: 0; font-size: 12px; }
+.cascade-page__ctx { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cascade-page__waiting { font-size: 11px; color: var(--color-tab-inactive); }
+.cascade-page__lead { font-size: 12px; margin-top: 4px; }
+.cascade-page__lead strong { font-weight: 600; }
+.cascade-page__notice { padding: 8px 20px 0; flex-shrink: 0; }
+.cascade-page__notice .sources-warn { margin: 0; }
+.cascade-page__body { flex: 1; min-height: 0; display: flex; }
+.cascade-page__tree {
+  flex: 0 0 58%; max-width: 760px; min-width: 0; padding: 10px 20px; overflow: auto;
+  border-right: 1px solid var(--color-border);
+}
+.cascade-page--stale .cascade-page__tree { opacity: 0.6; }
+.cascade-page__pane { flex: 1; min-width: 0; padding: 12px 20px 12px 18px; overflow: auto; }
+.cascade-page__bar {
+  flex-shrink: 0; display: flex; align-items: center; gap: var(--spacing-sm);
+  padding: 8px 20px; border-top: 1px solid var(--color-border); background: var(--color-bg);
+}
+.cascade-page__sum { flex: 1; font-size: 11px; color: var(--color-tab-inactive); }
+.cascade-page__cap {
+  display: flex; align-items: baseline; gap: 10px; padding-bottom: 5px; margin-bottom: 3px;
+  border-bottom: 1px solid var(--color-border); flex-shrink: 0;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-tab-inactive); font-weight: 600;
+}
+.cascade-page__cap .sp { flex: 1; }
+.cascade-page__cap .col { flex: 0 0 96px; }
+.cascade-page__cap-count { text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+.cascade-pane { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cascade-pane__top { display: flex; align-items: baseline; gap: 10px; }
+.cascade-pane__title { display: flex; align-items: baseline; gap: 10px; flex: 1; min-width: 0; }
+.cascade-pane__name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cascade-pane__title .popup__ver { margin-left: 0; }
+.cascade-pane__why { font-size: 12px; line-height: 1.5; margin: 0; }
+.cascade-pane__why strong, .cascade-pane__why b { font-weight: 600; }
+.cascade-pane__why--dim { color: var(--color-tab-inactive); }
+.cascade-pane__hint { font-size: 12px; line-height: 1.5; color: var(--color-tab-inactive); margin: 0; }
+.cascade-pane__cols { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.cascade-pane__col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cascade-pane__back { display: none; }
+.cascade-kvs { display: grid; grid-template-columns: 84px 1fr; row-gap: 8px; column-gap: 12px; font-size: 12px; margin: 0; }
+.cascade-kvs dt {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--color-tab-inactive); font-weight: 600; padding-top: 1px;
+}
+.cascade-kvs dd { margin: 0; line-height: 1.45; }
+
+/* The versions of one dependent, with the range each declares for its parent.
+   The green edge marks the ones that admit the new version of that parent. */
+.cascade-ladder { display: flex; flex-direction: column; }
+.cascade-ladder__row {
+  display: flex; align-items: baseline; gap: 12px; font-size: 12px;
+  padding: 2px 0 2px 8px; border-left: 2px solid transparent;
+}
+.cascade-ladder__row--admits { border-left-color: var(--color-success); }
+.cascade-ladder__v { flex: 0 0 56px; font-family: var(--font-mono); font-size: 11px; }
+.cascade-ladder__row--proposed .cascade-ladder__v { font-weight: 600; }
+.cascade-ladder__range { flex: 1; color: var(--color-tab-inactive); font-size: 11px; font-family: var(--font-mono); }
+.cascade-ladder__tag { flex: 0 0 auto; font-size: 11px; color: var(--color-tab-inactive); }
+.cascade-ladder__row--proposed .cascade-ladder__tag { color: var(--color-success); }
+.cascade-ladder__more { padding: 2px 0 2px 10px; font-size: 11px; color: var(--color-tab-inactive); }
+
+/* Below about 720px the pane replaces the tree and "‹ This closure" is the way
+   back; in a window of its own the pane lays its sections in two columns. */
+@media (max-width: 719px) {
+  .cascade-page__body--picked .cascade-page__tree { display: none; }
+  .cascade-page__body:not(.cascade-page__body--picked) .cascade-page__pane { display: none; }
+  .cascade-page__tree { flex: 1 1 auto; max-width: none; border-right: none; }
+  .cascade-pane__back { display: inline-block; }
+  .cascade-pane__cols { grid-template-columns: 1fr; }
+}
+@media (min-width: 720px) {
+  .cascade-pane__back--only-narrow { display: none; }
+}
+
 /* ── Project list section ───────────────────────────────────────────────────── */
 .project-list { display: flex; flex-direction: column; gap: 2px; }
 /* No rule between rows (#82). Once the open project stopped being a table, a
@@ -2082,6 +2222,23 @@ body.vscode-light { --color-tree-guide: color-mix(in srgb, var(--vscode-tree-ind
   display: flex; gap: var(--spacing-sm); justify-content: flex-end;
   flex-shrink: 0;
 }
+/* The cascade's row can hold four buttons, wider than a narrow popup: it
+   wraps, and no other popup's row changes. */
+.popup__actions--wrap { flex-wrap: wrap; }
+/* The control that switches the proposal off: a header control on a popup, the
+   right-click menu's own look for what it opens (#109). */
+.popup__head { display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0; }
+.popup__head .popup__title { flex: 1; min-width: 0; }
+.popup__more {
+  width: 24px; height: 24px; padding: 0; border: none; border-radius: var(--radius);
+  background: transparent; color: var(--color-tab-inactive);
+  font-size: 16px; line-height: 1; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; cursor: pointer;
+}
+.popup__head .popup__more { margin: -3px -4px 0 0; }
+.popup__more:hover, .popup__more--open { background: var(--color-list-hover); color: var(--color-fg); }
+.never-offer { position: relative; flex-shrink: 0; }
+.never-offer__menu { position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: 5; }
 .popup--narrow { width: min(420px, 100%); }
 .popup__body {
   font-size: 12px;

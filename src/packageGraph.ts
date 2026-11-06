@@ -4,20 +4,10 @@
  */
 
 import { compareSemVer } from './semver';
+import { parseEdgeTable } from './assetsEdgeTable';
+import { packageIdKey } from './pathCompare';
 
-/** Split `PackageId/1.2.3` library keys used in assets `targets`. */
-export function assetsLibraryId(libKey: string): string | null {
-  const slash = libKey.lastIndexOf('/');
-  if (slash <= 0) return null;
-  return libKey.slice(0, slash);
-}
-
-/** The version half of an `Id/1.2.3` assets library key. */
-export function assetsLibraryVersion(libKey: string): string | null {
-  const slash = libKey.lastIndexOf('/');
-  if (slash < 0 || slash === libKey.length - 1) return null;
-  return libKey.slice(slash + 1);
-}
+export { assetsLibraryId, assetsLibraryVersion } from './assetsEdgeTable';
 
 /**
  * Direct package → dependency ids from NuGet `project.assets.json`.
@@ -25,21 +15,12 @@ export function assetsLibraryVersion(libKey: string): string | null {
  */
 export function parseAssetsDependencies(json: unknown): Map<string, string[]> {
   const result = new Map<string, string[]>();
-  if (!json || typeof json !== 'object') return result;
-  const targets = (json as { targets?: Record<string, Record<string, unknown>> }).targets;
-  if (!targets || typeof targets !== 'object') return result;
-
-  for (const tfm of Object.values(targets)) {
-    if (!tfm || typeof tfm !== 'object') continue;
-    for (const [libKey, lib] of Object.entries(tfm)) {
-      if (!lib || typeof lib !== 'object') continue;
-      const rec = lib as { type?: string; dependencies?: Record<string, string> };
-      if (rec.type && rec.type !== 'package') continue;
-      const id = assetsLibraryId(libKey);
-      if (!id) continue;
-      const deps = Object.keys(rec.dependencies ?? {});
+  for (const target of parseEdgeTable(json).targets) {
+    for (const library of target.libraries) {
+      if (library.type !== 'package') continue;
+      const deps = library.edges.map((e) => e.id);
       if (deps.length === 0) continue;
-      const key = id.toLowerCase();
+      const key = packageIdKey(library.id);
       result.set(key, [...new Set([...(result.get(key) ?? []), ...deps])]);
     }
   }
@@ -58,19 +39,12 @@ export function parseAssetsDependencies(json: unknown): Map<string, string[]> {
  */
 export function parseAssetsFloors(json: unknown): Map<string, string> {
   const result = new Map<string, string>();
-  if (!json || typeof json !== 'object') return result;
-  const targets = (json as { targets?: Record<string, Record<string, unknown>> }).targets;
-  if (!targets || typeof targets !== 'object') return result;
-
-  for (const tfm of Object.values(targets)) {
-    if (!tfm || typeof tfm !== 'object') continue;
-    for (const lib of Object.values(tfm)) {
-      if (!lib || typeof lib !== 'object') continue;
-      const rec = lib as { type?: string; dependencies?: Record<string, string> };
-      if (rec.type !== 'project') continue;
-      for (const [depId, depVersion] of Object.entries(rec.dependencies ?? {})) {
+  for (const target of parseEdgeTable(json).targets) {
+    for (const library of target.libraries) {
+      if (library.type !== 'project') continue;
+      for (const { id: depId, range: depVersion } of library.edges) {
         if (!depVersion) continue;
-        const key = depId.toLowerCase();
+        const key = packageIdKey(depId);
         const existing = result.get(key);
         if (!existing || compareSemVer(depVersion, existing) > 0) {
           result.set(key, depVersion);

@@ -7,7 +7,15 @@
  * plus the full supported-framework list and which asset was selected.
  */
 
-import { assetsLibraryId } from './packageGraph';
+import {
+  findLibrary,
+  findTarget,
+  parseEdgeTable,
+  type AssetsEdge,
+  type AssetsLibrary,
+  type AssetsTarget,
+} from './assetsEdgeTable';
+import { packageIdKey } from './pathCompare';
 import { classifyDependencyRow } from './packageVersionRanges';
 import { sortTargetFrameworksDesc } from './targetFrameworks';
 import type { DependencyRow, PackageDependencyInfo } from './types';
@@ -25,47 +33,18 @@ export function supportedFrameworksFromFiles(files: string[] | undefined): strin
   return sortTargetFrameworksDesc([...seen]);
 }
 
-interface AssetsTargetLib {
-  type?: string;
-  dependencies?: Record<string, string>;
-  compile?: Record<string, unknown>;
-  runtime?: Record<string, unknown>;
-}
-
 interface AssetsJson {
-  targets?: Record<string, Record<string, AssetsTargetLib>>;
   libraries?: Record<string, { files?: string[] }>;
-}
-
-function findLibKey(target: Record<string, AssetsTargetLib>, id: string): string | undefined {
-  const wantLower = id.toLowerCase();
-  return Object.keys(target).find((k) => assetsLibraryId(k)?.toLowerCase() === wantLower);
-}
-
-/** The version half of an `Id/1.2.3` assets library key — `assetsLibraryId` already strips it off to get the id half. */
-function versionFromLibKey(libKey: string): string | undefined {
-  const slash = libKey.lastIndexOf('/');
-  return slash >= 0 ? libKey.slice(slash + 1) : undefined;
-}
-
-function selectedAssetFolder(lib: AssetsTargetLib): string | undefined {
-  const path = Object.keys(lib.compile ?? {})[0] ?? Object.keys(lib.runtime ?? {})[0];
-  return path ? /^lib\/([^/]+)\//.exec(path)?.[1] : undefined;
 }
 
 interface PendingRow {
   row: DependencyRow;
-  lib?: AssetsTargetLib;
+  lib?: AssetsLibrary;
 }
 
-function makeRow(
-  target: Record<string, AssetsTargetLib>,
-  depId: string,
-  declaredRange: string,
-): PendingRow {
-  const libKey = findLibKey(target, depId);
-  const lib = libKey ? target[libKey] : undefined;
-  const resolvedVersion = libKey ? versionFromLibKey(libKey) : undefined;
+function makeRow(target: AssetsTarget, depId: string, declaredRange: string): PendingRow {
+  const lib = findLibrary(target, depId);
+  const resolvedVersion = lib?.version;
   if (!resolvedVersion) {
     return { row: { id: depId, resolvedVersion, declaredRange, status: 'ok', showDeclared: false, children: [] } };
   }
@@ -83,17 +62,17 @@ function makeRow(
  * from the parent that reaches it first.
  */
 function buildRows(
-  target: Record<string, AssetsTargetLib>,
+  target: AssetsTarget,
   rootId: string,
-  directDependencies: Record<string, string>,
+  directDependencies: AssetsEdge[],
 ): DependencyRow[] {
-  const seen = new Set<string>([rootId.toLowerCase()]);
+  const seen = new Set<string>([packageIdKey(rootId)]);
   const roots: DependencyRow[] = [];
   let frontier: PendingRow[] = [];
 
-  for (const [depId, range] of Object.entries(directDependencies)) {
-    if (seen.has(depId.toLowerCase())) continue;
-    seen.add(depId.toLowerCase());
+  for (const { id: depId, range } of directDependencies) {
+    if (seen.has(packageIdKey(depId))) continue;
+    seen.add(packageIdKey(depId));
     const pending = makeRow(target, depId, range);
     roots.push(pending.row);
     frontier.push(pending);
@@ -102,9 +81,9 @@ function buildRows(
   while (frontier.length > 0) {
     const next: PendingRow[] = [];
     for (const { row, lib } of frontier) {
-      for (const [childId, childRange] of Object.entries(lib?.dependencies ?? {})) {
-        if (seen.has(childId.toLowerCase())) continue;
-        seen.add(childId.toLowerCase());
+      for (const { id: childId, range: childRange } of lib?.edges ?? []) {
+        if (seen.has(packageIdKey(childId))) continue;
+        seen.add(packageIdKey(childId));
         const pending = makeRow(target, childId, childRange);
         row.children.push(pending.row);
         next.push(pending);
@@ -126,21 +105,19 @@ export function resolvePackageDependencyTree(
   resolvedVersion: string,
   framework: string,
 ): PackageDependencyInfo | undefined {
-  const json = assetsJson as AssetsJson;
-  const target = json.targets?.[framework];
+  const target = findTarget(parseEdgeTable(assetsJson), framework);
   if (!target) return undefined;
-  const libKey = findLibKey(target, packageId);
-  if (!libKey) return undefined;
+  const lib = findLibrary(target, packageId);
+  if (!lib) return undefined;
   // Guard against a stale caller-supplied version: assets.json only ever
   // resolves one version per package per target, so a mismatch means the
   // caller's `resolvedVersion` no longer matches what was actually restored.
-  if (versionFromLibKey(libKey) !== resolvedVersion) return undefined;
-  const lib = target[libKey];
+  if (lib.version !== resolvedVersion) return undefined;
 
   return {
     framework,
-    selectedAsset: selectedAssetFolder(lib),
-    rows: buildRows(target, packageId, lib.dependencies ?? {}),
+    selectedAsset: lib.selectedAsset,
+    rows: buildRows(target, packageId, lib.edges),
   };
 }
 

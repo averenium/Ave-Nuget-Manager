@@ -18,7 +18,24 @@ import type {
  * All consumer code (NugetManagerViewProvider, WebviewMessageBroker) depends
  * exclusively on this interface — never on CliBackend directly.
  */
+/** Why a catalog walk gave no dependency data for a package — see `VersionLadder.declineFor` (#109). */
+export interface CatalogDecline {
+  code: 'registration-too-large' | 'credential-refused' | 'feed-error';
+  source: string;
+  rung: string;
+  detail: string;
+  /** The HTTP status the feed answered with, when it answered. */
+  status?: number;
+}
+
 export interface INuGetBackend {
+  /**
+   * Why the last catalog walk for `packageId` gave no dependency data, when it
+   * declined and nothing since has succeeded. Only a backend that reads the
+   * catalog itself can say; the CLI backend has no such notion.
+   */
+  catalogDecline?(packageId: string): CatalogDecline | undefined;
+
   /**
    * List all installed AND transitive packages for a solution in one CLI call.
    * CLI: `dotnet list <solutionPath> package --include-transitive --format json --no-restore`

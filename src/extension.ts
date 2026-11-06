@@ -283,6 +283,7 @@ async function activateCore(context: vscode.ExtensionContext, log: Logger): Prom
       },
     },
   );
+  broker.enableCascadePage(context.extensionUri);
   broker.attach();
   log.info('broker attached');
 

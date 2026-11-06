@@ -338,6 +338,92 @@ describe('VersionLadder reading the per-version catalog', () => {
   });
 });
 
+describe('VersionLadder saying why the registration rung declined (#109)', () => {
+  const REG = serviceIndex(['RegistrationsBaseUrl/3.6.0', REGISTRATION]);
+  const pages = (count: number) => Array.from({ length: count }, (_, i) => ({
+    '@id': `${REGISTRATION}a/page/${i}.json`, lower: `${i}.0.0`, upper: `${i}.9.9`,
+  }));
+
+  it('records a registration index past the page cap and still declines', async () => {
+    const { ladder } = ladderOver({
+      [SOURCE]: ok(REG),
+      [`${REGISTRATION}a/index.json`]: ok({ items: pages(65) }),
+    });
+
+    expect(await ladder.catalogFromSource(target, { packageId: 'A' })).toBeUndefined();
+    expect(ladder.declineFor('A')).toMatchObject({
+      code: 'registration-too-large', rung: 'metadata', source: SOURCE,
+    });
+    expect(ladder.declineFor('A')!.detail).toContain('65 pages');
+  });
+
+  it('reads exactly 64 pages without declining', async () => {
+    const routes: Record<string, HttpJsonResponse> = {
+      [SOURCE]: ok(REG),
+      [`${REGISTRATION}a/index.json`]: ok({ items: pages(64) }),
+    };
+    pages(64).forEach((page, i) => { routes[page['@id']] = ok({ items: [{ catalogEntry: { version: `${i}.0.0` } }] }); });
+    const { ladder } = ladderOver(routes);
+
+    expect(await ladder.catalogFromSource(target, { packageId: 'A' })).toHaveLength(64);
+    expect(ladder.declineFor('A')).toBeUndefined();
+  });
+
+  it('records a refused credential as that, not as a broken feed', async () => {
+    const { ladder } = ladderOver({
+      [SOURCE]: ok(REG),
+      [`${REGISTRATION}a/index.json`]: { status: 401 },
+    });
+
+    await ladder.catalogFromSource(target, { packageId: 'A' });
+
+    expect(ladder.declineFor('A')).toMatchObject({ code: 'credential-refused', status: 401 });
+  });
+
+  it('records a registration page that fails mid-walk', async () => {
+    const { ladder } = ladderOver({
+      [SOURCE]: ok(REG),
+      [`${REGISTRATION}a/index.json`]: ok({ items: pages(2) }),
+      [`${REGISTRATION}a/page/0.json`]: ok({ items: [{ catalogEntry: { version: '0.1.0' } }] }),
+      [`${REGISTRATION}a/page/1.json`]: { status: 503 },
+    });
+
+    expect(await ladder.catalogFromSource(target, { packageId: 'A' })).toBeUndefined();
+    expect(ladder.declineFor('A')).toMatchObject({ code: 'feed-error', status: 503 });
+    expect(ladder.declineFor('A')!.detail).toContain('503');
+  });
+
+  it('forgets a decline once the package is read in full', async () => {
+    let failing = true;
+    const routes: Record<string, HttpJsonResponse> = {
+      [SOURCE]: ok(REG),
+      [`${REGISTRATION}a/index.json`]: { status: 503 },
+    };
+    const { ladder } = ladderOver(new Proxy(routes, {
+      get: (target2, key: string) => (key === `${REGISTRATION}a/index.json` && !failing
+        ? ok({ items: [{ items: [{ catalogEntry: { version: '1.0.0' } }] }] })
+        : target2[key]),
+    }));
+
+    await ladder.catalogFromSource(target, { packageId: 'A' });
+    expect(ladder.declineFor('A')).toBeDefined();
+    failing = false;
+    await ladder.catalogFromSource(target, { packageId: 'A' });
+    expect(ladder.declineFor('A')).toBeUndefined();
+  });
+
+  it('matches the package id without regard to case', async () => {
+    const { ladder } = ladderOver({
+      [SOURCE]: ok(REG),
+      [`${REGISTRATION}example.core/index.json`]: { status: 503 },
+    });
+
+    await ladder.catalogFromSource(target, { packageId: 'Example.Core' });
+
+    expect(ladder.declineFor('example.CORE')).toMatchObject({ code: 'feed-error' });
+  });
+});
+
 describe('VersionLadder last rung', () => {
   const autocompleteOnly = serviceIndex(['SearchAutocompleteService/3.5.0', AUTOCOMPLETE]);
 

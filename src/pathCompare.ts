@@ -23,3 +23,13 @@ export function pathsEqual(a: string, b: string): boolean {
 export function packageIdsEqual(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
+
+/**
+ * The key to file a package under in a `Map` or `Set`, so that two ids
+ * `packageIdsEqual` calls equal land on one entry. Use this instead of
+ * lower-casing an id in place: it keeps the definition of "the same id" in
+ * this file (#109).
+ */
+export function packageIdKey(id: string): string {
+  return id.toLowerCase();
+}

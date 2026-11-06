@@ -8,6 +8,7 @@ import { findingsAffectingPackage, vulnerabilityAffectRank } from '../../vulnera
 import { packageMatchesAnyMapping } from '../../packageSourceMapping';
 import { compareSemVer } from '../../semver';
 import { isPackageBlocked } from '../../blockedPackages';
+import { dependentsRequestFor } from '../utils/dependentsRequest';
 
 /** Shared with UpdatesTab — same loading placeholder shape for the Packages and Groups lists (#43). */
 export function PackagesSkeleton() {
@@ -48,8 +49,23 @@ export function InstalledList() {
   const { state, dispatch } = useNugetManager();
   const { installed, implicit, searchQuery, isLoadingPackages, vulnerabilities, blockedPackages } = state.packages;
   const packageSourceMapping = state.sources.snapshot?.packageSourceMapping ?? [];
-  const [menu, setMenu] = useState<{ packageId: string; blocked: boolean; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{
+    packageId: string; blocked: boolean; x: number; y: number; entries: InstalledPackage[];
+  } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
+
+  /** The update this row offers, as the question "what else has to move" (#109). */
+  const checkFor = (entries: InstalledPackage[]) => {
+    const updating = entries.find(packageHasUpdate);
+    if (!updating?.latestVersion) return undefined;
+    return dependentsRequestFor({
+      installed: entries,
+      packageId: updating.id,
+      projectPath: updating.projectPath,
+      toVersion: updating.latestVersion,
+      projectFrameworks: state.packages.projectFrameworks[updating.projectPath],
+    });
+  };
 
   // implicit versions by parent package id
   const implicitByParent: Record<string, string[]> = {};
@@ -124,7 +140,7 @@ export function InstalledList() {
                 packageSourceMapping={packageSourceMapping}
                 versionFlags={state.updates.flagsByPackageId[pkg.id.toLowerCase()]}
                 onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
-                onContextMenu={(e) => setMenu({ packageId: pkg.id, blocked, x: e.clientX, y: e.clientY })}
+                onContextMenu={(e) => setMenu({ packageId: pkg.id, blocked, x: e.clientX, y: e.clientY, entries: allEntries })}
               />
             );
           })}
@@ -136,6 +152,7 @@ export function InstalledList() {
           blocked={menu.blocked}
           x={menu.x}
           y={menu.y}
+          check={checkFor(menu.entries)}
           onClose={closeMenu}
         />
       ) : null}

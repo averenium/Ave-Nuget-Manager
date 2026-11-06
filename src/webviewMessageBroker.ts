@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { createConcurrencyGate, runWithConcurrency, type ConcurrencyGate } from './concurrency';
-import { getConfig, setIncludePrerelease, getBlockedPackages, setPackageBlocked } from './config';
+import { getConfig, setIncludePrerelease, getBlockedPackages, setPackageBlocked, setOfferDependentUpdates } from './config';
 import type { NugetManagerViewProvider } from './nugetManagerViewProvider';
 import type { INuGetBackend } from './backend/INuGetBackend';
 import type { SolutionParser } from './solutionParser';
@@ -55,6 +55,9 @@ import { releaseNotesLinkFor, type ReleaseNotesLink } from './packageLinks';
 import { searchedMetadataToPackageMetadata } from './searchMetadataMapping';
 import { resolvePackageDependencyTree, packageSupportedFrameworks } from './packageDependencyTree';
 import { promises as fs } from 'fs';
+import { DependentCascadeService } from './dependentCascadeService';
+import { CascadePageHost, type CascadePageEntry } from './dependentCascadePage';
+import { movesOf } from './cascadeResult';
 
 /** Which target framework in `assetsJson` actually resolved `packageId`@`resolvedVersion` — a package can appear under only one TFM per project, but a multi-targeted project's assets.json has one `targets` entry per TFM. */
 function findFrameworkForPackage(assetsJson: unknown, packageId: string, resolvedVersion: string): string | undefined {
@@ -113,6 +116,7 @@ import {
   restoreFileSnapshots,
   readPackageVersionFromSnapshots,
   hasCentralPackageManagement,
+  findNearestPackagesProps,
   type FileSnapshot,
 } from './projectFileSnapshot';
 import {
@@ -475,6 +479,135 @@ export class WebviewMessageBroker {
   ) {
   }
 
+  /**
+   * The dependents proposal (#109): the walk and the answers it keeps for a
+   * page to be opened on. Built on first use, since most sessions never ask.
+   */
+  private _cascadeService?: DependentCascadeService;
+  private _cascadePage?: CascadePageHost;
+
+  private get _cascade(): DependentCascadeService {
+    this._cascadeService ??= new DependentCascadeService({
+      backend: this.backend,
+      log: (command, args, kind = 'info') => this.logger.logCliOperation({
+        timestamp: new Date(), kind, command, args, stdout: '', stderr: '', exitCode: 0, timedOut: false, durationMs: 0,
+      }),
+      readAssets: (projectPath) => readAssetsJson(projectPath),
+      installedVersionOf: (packageId, projectPath) => (this._lastListed?.installed ?? [])
+        .filter((p) => packageIdsEqual(p.id, packageId) && pathsEqual(p.projectPath, projectPath))
+        .map((p) => p.resolvedVersion)
+        .sort(compareSemVer)[0],
+      directIdsOf: (projectPath) => (this._lastListed?.installed ?? [])
+        .filter((p) => pathsEqual(p.projectPath, projectPath))
+        .map((p) => p.id),
+      isBlocked: (packageId) => isPackageBlocked(packageId, getBlockedPackages()),
+      centralSet: (projectPath, packageId) => this._centralSetOf(projectPath, packageId),
+      releaseNotesFor: (packageId, version, configFiles, signal) =>
+        this._releaseNotesFor(packageId, version, configFiles, signal),
+    });
+    return this._cascadeService;
+  }
+
+  /**
+   * Under central package management, the props file that holds the version and
+   * the projects beneath it that reference the package; `null` without one. A
+   * monorepo with per-area props files lists only the projects a write reaches.
+   */
+  private async _centralSetOf(projectPath: string, packageId: string): Promise<{ propsFile: string; projects: string[] } | null> {
+    const propsFile = await findNearestPackagesProps(projectPath);
+    if (!propsFile) return null;
+    const candidates = [...new Set(
+      (this._lastListed?.installed ?? [])
+        .filter((p) => packageIdsEqual(p.id, packageId))
+        .map((p) => p.projectPath),
+    )];
+    const projects: string[] = [];
+    for (const candidate of candidates) {
+      const props = pathsEqual(candidate, projectPath) ? propsFile : await findNearestPackagesProps(candidate);
+      if (props && pathsEqual(props, propsFile)) projects.push(candidate);
+    }
+    return { propsFile, projects };
+  }
+
+  /** Called once by the extension with the place the page's bundle lives; tests that do not exercise the page never call it. */
+  enableCascadePage(extensionUri: vscode.Uri): void {
+    this._cascadePage ??= new CascadePageHost(extensionUri, {
+      onDecision: (entry, action) => this.provider.postMessage({
+        type: 'CASCADE_DECISION',
+        requestId: entry.requestId,
+        action,
+        packageId: entry.result.packageId,
+        projectPath: entry.result.projectPath,
+        framework: entry.result.framework,
+        moves: movesOf(entry.result),
+      }),
+      onClosed: (entry, acted) => {
+        this.provider.postMessage({ type: 'CASCADE_PAGE_STATE', requestId: entry.requestId, open: false, acted });
+        // Closing the tab of a page a write was waiting on cancels the write:
+        // the other reading leaves one nobody can see.
+        if (!acted && entry.waiting) {
+          this.provider.postMessage({
+            type: 'CASCADE_DECISION',
+            requestId: entry.requestId,
+            action: 'cancel',
+            packageId: entry.result.packageId,
+            projectPath: entry.result.projectPath,
+            framework: entry.result.framework,
+            moves: [],
+          });
+        }
+      },
+      recompute: async (entry) => {
+        const answer = await this._cascade.recheck(entry.requestId);
+        if (!answer?.result) return undefined;
+        // The page just cleared its stale mark; the panel is the only one that
+        // knows whether it has really caught up, so it is told to look again.
+        this.provider.postMessage({
+          type: 'CASCADE_PAGE_STATE',
+          requestId: entry.requestId,
+          open: true,
+          fromVersion: answer.result.fromVersion,
+        });
+        void this._attachReleaseNotes(entry.requestId);
+        return answer.result;
+      },
+    }, this.logger);
+  }
+
+  private async _handleCheckDependents(msg: Extract<WebviewMessage, { type: 'CHECK_DEPENDENTS' }>): Promise<void> {
+    if (!getConfig().experimentalHttpCatalog) {
+      this.provider.postMessage({
+        type: 'DEPENDENT_CASCADE', requestId: msg.requestId, result: null,
+        unavailable: 'the dependents check reads the HTTP catalog, which is off',
+      });
+      return;
+    }
+    const { result, unavailable } = await this._cascade.check(msg);
+    this.provider.postMessage({ type: 'DEPENDENT_CASCADE', requestId: msg.requestId, result, unavailable });
+  }
+
+  private _handleOpenCascadePage(requestId: string, waiting: boolean): void {
+    const kept = this._cascade.recall(requestId);
+    if (!kept || !this._cascadePage) {
+      this.provider.postMessage({ type: 'ERROR', message: 'The dependents page could not be opened' });
+      return;
+    }
+    const entry: CascadePageEntry = { requestId, result: kept.result, waiting };
+    this._cascadePage.open(entry);
+    this.provider.postMessage({ type: 'CASCADE_PAGE_STATE', requestId, open: true });
+    void this._attachReleaseNotes(requestId);
+  }
+
+  /**
+   * Only the page shows the release-notes links, so they are read once it is
+   * open and pushed into it when they arrive — a popup that interrupts a write
+   * never waits for them.
+   */
+  private async _attachReleaseNotes(requestId: string): Promise<void> {
+    const result = await this._cascade.attachReleaseNotes(requestId);
+    if (result) this._cascadePage?.refresh(requestId, result);
+  }
+
   private async _skillFields(): Promise<SkillStatus> {
     if (!this.skill) return EMPTY_SKILL_STATUS;
     try {
@@ -519,6 +652,12 @@ export class WebviewMessageBroker {
     });
 
     this._configDisposable = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('averenium.nugetManager.experimentalHttpCatalog')) {
+        this.provider.postMessage({ type: 'HTTP_CATALOG_STATE', enabled: getConfig().experimentalHttpCatalog });
+      }
+      if (e.affectsConfiguration('averenium.nugetManager.offerDependentUpdates')) {
+        this.provider.postMessage({ type: 'DEPENDENTS_OFFER_STATE', enabled: getConfig().offerDependentUpdates });
+      }
       if (!e.affectsConfiguration('averenium.nugetManager.blockedPackages')) return;
       this._postBlockedPackages();
     });
@@ -539,6 +678,7 @@ export class WebviewMessageBroker {
   }
 
   detach(): void {
+    this._cascadePage?.dispose();
     this._cancelEnrich();
     this._cancelVulnScan();
     this._cancelLicenseLookup();
@@ -715,6 +855,23 @@ export class WebviewMessageBroker {
         break;
       }
 
+      case 'CHECK_DEPENDENTS':
+        await this._handleCheckDependents(msg);
+        break;
+
+      case 'CASCADE_OPEN_PAGE':
+        this._handleOpenCascadePage(msg.requestId, msg.waiting);
+        break;
+
+      case 'CASCADE_PAGE_STALE':
+        this._cascadePage?.markStale(msg.requestId);
+        break;
+
+      case 'CASCADE_PAGE_ACTION':
+        // Sent from the page's own webview, which the page host listens to; one
+        // that reaches the panel's channel is a leftover and is ignored.
+        break;
+
       case 'CHECK_BATCH_LICENSES':
         this.provider.postMessage({
           type: 'BATCH_LICENSE_CHANGES',
@@ -766,7 +923,7 @@ export class WebviewMessageBroker {
         break;
 
       case 'UPDATE_PACKAGES_BATCH':
-        await this._handleUpdateBatch(msg.kind, msg.items, msg.includePrerelease, msg.family);
+        await this._handleUpdateBatch(msg.kind, msg.items, msg.includePrerelease, msg.family, msg.together);
         break;
 
       case 'CANCEL_BATCH_UPDATE':
@@ -897,6 +1054,13 @@ export class WebviewMessageBroker {
         await this._handleSetPackageBlocked(msg.packageId, msg.blocked);
         break;
 
+      case 'SET_OFFER_DEPENDENT_UPDATES':
+        await setOfferDependentUpdates(msg.enabled);
+        // The change event follows on its own; the panel is told now as well, so
+        // the next update it holds is not checked in the meantime.
+        this.provider.postMessage({ type: 'DEPENDENTS_OFFER_STATE', enabled: msg.enabled });
+        break;
+
       case 'SHOW_TOAST':
         void vscode.window.showInformationMessage(msg.message);
         break;
@@ -982,6 +1146,8 @@ export class WebviewMessageBroker {
           tracePacking: this.trace?.isPacking() ?? false,
           roslynCap: this._roslynCap ?? null,
           isWindows: process.platform === 'win32',
+          httpCatalog: getConfig().experimentalHttpCatalog,
+          offerDependentUpdates: getConfig().offerDependentUpdates,
           ...(await this._skillFields()),
         });
       }
@@ -1209,6 +1375,8 @@ export class WebviewMessageBroker {
       tracePacking: this.trace?.isPacking() ?? false,
       roslynCap: this._roslynCap ?? null,
       isWindows: process.platform === 'win32',
+      httpCatalog: getConfig().experimentalHttpCatalog,
+      offerDependentUpdates: getConfig().offerDependentUpdates,
       ...(await this._skillFields()),
     });
 
@@ -1243,6 +1411,8 @@ export class WebviewMessageBroker {
       tracePacking: this.trace?.isPacking() ?? false,
       roslynCap: this._roslynCap ?? null,
       isWindows: process.platform === 'win32',
+      httpCatalog: getConfig().experimentalHttpCatalog,
+      offerDependentUpdates: getConfig().offerDependentUpdates,
       ...(await this._skillFields()),
     });
 
@@ -2551,6 +2721,7 @@ export class WebviewMessageBroker {
     items: BatchUpdateItem[],
     includePrerelease: boolean,
     family?: string,
+    together = false,
   ): Promise<void> {
     if (this._batchRunning) {
       this.provider.postMessage({
@@ -2609,7 +2780,7 @@ export class WebviewMessageBroker {
       // existing one-item-at-a-time flow below untouched.
       const clusterOutcomes = abort.signal.aborted
         ? new Map<string, BatchItemOutcome>()
-        : await this._computeClusterOutcomes(queued, abort.signal, keepFailures);
+        : await this._computeClusterOutcomes(queued, abort.signal, keepFailures, together);
 
       for (let i = 0; i < queued.length; i++) {
         const item = queued[i];
@@ -2719,6 +2890,7 @@ export class WebviewMessageBroker {
     queued: BatchUpdateItem[],
     signal: AbortSignal,
     keepFailures: InstallAttempt[],
+    together = false,
   ): Promise<Map<string, BatchItemOutcome>> {
     const outcomes = new Map<string, BatchItemOutcome>();
     const projectPaths = [...new Set(queued.flatMap((item) => item.projects))];
@@ -2747,7 +2919,12 @@ export class WebviewMessageBroker {
           if (version) currentVersions.set(packageId.toLowerCase(), version);
         }
 
-        const cluster = computeEntangledCluster({ currentVersions, floors, depsGraph, batchPackageIds });
+        // A batch that was asked for as one change (the dependents proposal,
+        // #109) is its own cluster: the members are entangled by construction,
+        // whether or not a ProjectReference floor shows it.
+        const cluster = together
+          ? (batchPackageIds.size > 1 ? batchPackageIds : new Set<string>())
+          : computeEntangledCluster({ currentVersions, floors, depsGraph, batchPackageIds });
         if (cluster.size === 0) return;
 
         const members = membersForProject.filter((m) => cluster.has(m.packageId.toLowerCase()));

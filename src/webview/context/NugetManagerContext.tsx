@@ -25,6 +25,7 @@ import type { SkillFamily, SkillInstallRow } from '../../agentSkillInstall';
 import type { ExtensionMessage } from '../../messages';
 import { sendMessage, onMessage, reportWebviewError } from '../vscodeApi';
 import type { RoslynCap } from '../../roslynSdkCap';
+import { INITIAL_CASCADE, reduceCascade, startsOurBatch, type CascadeAsk, type CascadeBatch, type CascadeSlice } from '../utils/cascadeState';
 
 /** Returns true only when latestVersion is strictly newer than installed version */
 function hasUpdate(pkg: InstalledPackage): boolean {
@@ -75,6 +76,8 @@ function setProjectVersion(
   const existing = Object.keys(versions).find((k) => pathsEqual(k, projectPath));
   return { ...versions, [existing ?? projectPath]: version };
 }
+
+export type { CascadeAsk, CascadeDecision } from '../utils/cascadeState';
 
 export interface AppState {
   /**
@@ -213,6 +216,12 @@ export interface AppState {
   tracePacking: boolean;
   roslynCap: RoslynCap | null;
   isWindows: boolean;
+  /**
+   * The dependents proposal (#109). `httpCatalog` is the experimental setting:
+   * the registration data the proposal reads exists only on that path, so
+   * without it nothing is offered at all.
+   */
+  cascade: CascadeSlice;
 }
 
 /** Mirrors Logger's own ring-buffer cap (#58). */
@@ -266,6 +275,7 @@ const initialState: AppState = {
   tracePacking: false,
   roslynCap: null,
   isWindows: true,
+  cascade: INITIAL_CASCADE,
 };
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
@@ -288,7 +298,20 @@ export type Action =
   | { type: 'SET_PROJECT_ERROR'; projectPath: string; error: string | null }
   | { type: 'DISMISS_GLOBAL_ERROR' }
   /** Back button / Esc / corner-control toggle while reopened over an existing scope (#113) — purely local, nothing to tell the host. */
-  | { type: 'CLOSE_SCOPE_CHOOSER' };
+  | { type: 'CLOSE_SCOPE_CHOOSER' }
+  /** A dependents question goes out, or is put on screen (#109). */
+  | { type: 'CASCADE_ASK'; ask: CascadeAsk }
+  /** The question is settled (or dropped). `requestId` guards against ending a newer one. */
+  | { type: 'CASCADE_END'; requestId: string }
+  | { type: 'CASCADE_DECISION_TAKEN' }
+  /** How many writes wait behind the dependents question in front of them (#109). */
+  | { type: 'CASCADE_QUEUE'; count: number }
+  /** The proposal's batch has gone out (#109): the panel follows it instead of moving to Groups. */
+  | { type: 'CASCADE_BATCH_SENT'; batch: CascadeBatch }
+  /** The status line is read, or the host would not start the batch. */
+  | { type: 'CASCADE_BATCH_DONE' }
+  /** The person switched the offer off from the popup; later writes need not wait for the host to say so (#109). */
+  | { type: 'CASCADE_OFFER'; enabled: boolean };
 
 function reducer(state: AppState, action: Action): AppState {
   try {
@@ -304,6 +327,27 @@ function reduceAppState(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_TAB':
       return { ...state, activeTab: action.tab };
+
+    case 'CASCADE_ASK':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'ask', ask: action.ask }) };
+
+    case 'CASCADE_END':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'end', requestId: action.requestId }) };
+
+    case 'CASCADE_QUEUE':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'queue', count: action.count }) };
+
+    case 'CASCADE_DECISION_TAKEN':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'decision-taken' }) };
+
+    case 'CASCADE_BATCH_SENT':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'batch-sent', batch: action.batch }) };
+
+    case 'CASCADE_BATCH_DONE':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'batch-done' }) };
+
+    case 'CASCADE_OFFER':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'offer', enabled: action.enabled }) };
 
     case 'SET_SEARCH_QUERY':
       return {
@@ -503,7 +547,28 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         },
         roslynCap: msg.roslynCap,
         isWindows: msg.isWindows,
+        cascade: reduceCascade(state.cascade, { kind: 'init', httpCatalog: !!msg.httpCatalog, offer: msg.offerDependentUpdates }),
       };
+
+    case 'DEPENDENTS_OFFER_STATE':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'offer', enabled: msg.enabled }) };
+
+    case 'HTTP_CATALOG_STATE':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'http', enabled: msg.enabled }) };
+
+    case 'DEPENDENT_CASCADE':
+      return {
+        ...state,
+        cascade: reduceCascade(state.cascade, {
+          kind: 'answer', requestId: msg.requestId, result: msg.result, unavailable: msg.unavailable,
+        }),
+      };
+
+    case 'CASCADE_PAGE_STATE':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'page', requestId: msg.requestId, open: msg.open, fromVersion: msg.fromVersion }) };
+
+    case 'CASCADE_DECISION':
+      return { ...state, cascade: reduceCascade(state.cascade, { kind: 'decision', decision: msg }) };
 
     case 'INSTALLED_PACKAGES': {
       let projectVersions = state.detail.projectVersions;
@@ -879,10 +944,14 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         detail: { ...state.detail, projectLoadingSet: new Set() },
       };
 
-    case 'BATCH_UPDATE_STARTED':
+    case 'BATCH_UPDATE_STARTED': {
+      // The proposal's own batch is followed from where the person is; any other
+      // batch is a Groups action and shows its progress there.
+      const ours = startsOurBatch(state.cascade);
       return {
         ...state,
-        activeTab: 'updates',
+        activeTab: ours ? state.activeTab : 'updates',
+        cascade: ours ? reduceCascade(state.cascade, { kind: 'batch-started', jobId: msg.job.id }) : state.cascade,
         globalError: null,
         updates: {
           ...state.updates,
@@ -890,6 +959,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           jobs: [msg.job, ...state.updates.jobs].slice(0, 10),
         },
       };
+    }
 
     case 'BATCH_UPDATE_ITEM':
       return {

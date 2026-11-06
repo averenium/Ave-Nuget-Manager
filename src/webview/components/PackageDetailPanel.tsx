@@ -31,12 +31,15 @@ import { effectiveVersionFor } from '../utils/effectiveVersion';
 import { nearestUnaffectedVersion } from '../utils/nearestUnaffected';
 import { flagsForVersion } from '../utils/versionFlags';
 import type { VulnerabilityFinding } from '../../types';
+import { useDependentsGate } from '../context/useDependentsGate';
+import { dependentsRequestFor } from '../utils/dependentsRequest';
 
 /** How long the version selection has to hold still before the question goes out (#89, #114). */
 const VERSION_DIFF_DEBOUNCE_MS = 500;
 
 export function PackageDetailPanel() {
   const { state, dispatch, send } = useNugetManager();
+  const gateDependents = useDependentsGate();
   const { selectedPackageId, metadata, allVersions, isLoading, error } = state.detail;
   const selectedDeps = selectedPackageId
     ? [...new Set(
@@ -348,8 +351,39 @@ export function PackageDetailPanel() {
     }
   };
 
-  /** Sends the install itself, once every question has been answered. */
+  /**
+   * Sends the install itself, once every question has been answered — the last
+   * of them being which other packages have to move with it (#109). That one is
+   * asked for a single project; an install into several at once is written as it
+   * always was.
+   */
   const startInstall = (
+    projects: string[],
+    frameworksByProject?: Record<string, string[]>,
+    acrossLines?: boolean,
+  ) => {
+    const write = () => sendInstall(projects, frameworksByProject, acrossLines);
+    if (projects.length !== 1) {
+      write();
+      return;
+    }
+    const narrowed = frameworksByProject?.[projects[0]];
+    const request = dependentsRequestFor({
+      installed: state.packages.installed,
+      packageId: selectedPackageId,
+      projectPath: projects[0],
+      toVersion: effectiveVersion,
+      projectFrameworks: state.packages.projectFrameworks[projects[0]],
+      onlyFramework: narrowed?.length === 1 ? narrowed[0] : undefined,
+    });
+    if (!request) {
+      write();
+      return;
+    }
+    gateDependents(request, write);
+  };
+
+  const sendInstall = (
     projects: string[],
     frameworksByProject?: Record<string, string[]>,
     acrossLines?: boolean,

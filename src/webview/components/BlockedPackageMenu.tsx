@@ -1,18 +1,27 @@
 import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNugetManager } from '../context/NugetManagerContext';
+import { useAskDependents } from '../context/useDependentsGate';
+import { showsCascadeCheck, type DependentsRequest } from '../utils/dependentsRequest';
 
 interface Props {
   packageId: string;
   blocked: boolean;
   x: number;
   y: number;
+  /**
+   * What "Check what else has to move" asks about (#109) — the update this row
+   * offers. Absent when the row has no update, or the project has no restore to
+   * read dependents from; the item is then not drawn.
+   */
+  check?: DependentsRequest;
   onClose: () => void;
 }
 
 /** Right-click menu on Installed / Groups preview rows. Portal + capture dismiss so it cannot stick. */
-export function BlockedPackageMenu({ packageId, blocked, x, y, onClose }: Props) {
-  const { send } = useNugetManager();
+export function BlockedPackageMenu({ packageId, blocked, x, y, check, onClose }: Props) {
+  const { state, send } = useNugetManager();
+  const askDependents = useAskDependents();
   const rootRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -73,6 +82,22 @@ export function BlockedPackageMenu({ packageId, blocked, x, y, onClose }: Props)
       >
         {blocked ? 'Unblock updates' : 'Block updates'}
       </button>
+      {/* The registration data the check reads exists only on the HTTP path, so
+          with the experimental catalog off the item is not drawn at all — an
+          entry point that can never do anything is not an entry point (#109). */}
+      {check && showsCascadeCheck(state.cascade.httpCatalog, check) ? (
+        <button
+          type="button"
+          className="pkg-ctx-menu__item"
+          role="menuitem"
+          onClick={() => {
+            askDependents(check);
+            onClose();
+          }}
+        >
+          Check what else has to move
+        </button>
+      ) : null}
     </div>,
     document.body,
   );

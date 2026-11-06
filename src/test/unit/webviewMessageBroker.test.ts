@@ -1802,6 +1802,7 @@ describe('WebviewMessageBroker', () => {
           includePrerelease: false,
           onFailedUpdate: 'keep',
           experimentalHttpCatalog: false,
+          offerDependentUpdates: true,
           vulnerabilityScript: '',
           blockedPackages: [],
         });
@@ -2918,6 +2919,7 @@ describe('WebviewMessageBroker', () => {
       includePrerelease: false,
       onFailedUpdate: 'rollback',
       experimentalHttpCatalog: false,
+      offerDependentUpdates: true,
       vulnerabilityScript: '',
       blockedPackages: [],
     } as any);
@@ -3161,6 +3163,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       includePrerelease: true,
       onFailedUpdate: 'keep',
       experimentalHttpCatalog: false,
+      offerDependentUpdates: true,
       vulnerabilityScript: '',
       blockedPackages: [],
     });
@@ -3989,6 +3992,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       includePrerelease: false,
       onFailedUpdate: 'rollback',
       experimentalHttpCatalog: false,
+      offerDependentUpdates: true,
       vulnerabilityScript: '',
       blockedPackages: [],
     });
@@ -4036,6 +4040,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       includePrerelease: false,
       onFailedUpdate: 'rollback',
       experimentalHttpCatalog: false,
+      offerDependentUpdates: true,
       vulnerabilityScript: '',
       blockedPackages: [],
     });
@@ -4871,6 +4876,79 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       expect(finals.every((m) => m.succeededProjects.includes('/p/App.csproj'))).toBe(true);
     });
 
+    it('writes a batch asked for as one change together even when no ProjectReference floor entangles it (#109)', async () => {
+      // A downgrade of a package whose dependent still wants the newer one: written
+      // alone, with a restore of its own, NuGet refuses it (NU1605).
+      jest.spyOn(projectAssets, 'readProjectAssets').mockResolvedValue({ dependencies: new Map(), floors: new Map() });
+      jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+        {
+          path: '/p/App.csproj',
+          content: '<PackageReference Include="Example.Messaging.Transport" Version="7.2.2" />'
+            + '<PackageReference Include="Example.Messaging.Bus" Version="8.1.7" />',
+        },
+      ]);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackageNoRestore.mockResolvedValue(makeCliResult());
+      backend.restoreProject.mockResolvedValue(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'other',
+        includePrerelease: false,
+        together: true,
+        items: [
+          { packageId: 'Example.Messaging.Transport', fromVersion: '7.2.2', toVersion: '6.8.1', projects: ['/p/App.csproj'] },
+          { packageId: 'Example.Messaging.Bus', fromVersion: '8.1.7', toVersion: '7.8.0', projects: ['/p/App.csproj'] },
+        ],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'BATCH_UPDATE_FINISHED'));
+
+      expect(backend.installPackageNoRestore).toHaveBeenCalledTimes(2);
+      expect(backend.restoreProject).toHaveBeenCalledTimes(1);
+      expect(backend.installPackage).not.toHaveBeenCalled();
+    });
+
+    it('still writes the items of an ordinary batch one at a time when nothing entangles them', async () => {
+      jest.spyOn(projectAssets, 'readProjectAssets').mockResolvedValue({ dependencies: new Map(), floors: new Map() });
+      jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
+        {
+          path: '/p/App.csproj',
+          content: '<PackageReference Include="Example.Messaging.Transport" Version="7.2.2" />'
+            + '<PackageReference Include="Example.Messaging.Bus" Version="8.1.7" />',
+        },
+      ]);
+
+      const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+      const backend = makeBackend();
+      backend.installPackage.mockResolvedValue(makeCliResult());
+      backend.installPackageNoRestore.mockResolvedValue(makeCliResult());
+      backend.restoreProject.mockResolvedValue(makeCliResult());
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+
+      simulateMessage({
+        type: 'UPDATE_PACKAGES_BATCH',
+        kind: 'other',
+        includePrerelease: false,
+        items: [
+          { packageId: 'Example.Messaging.Transport', fromVersion: '7.2.2', toVersion: '7.3.0', projects: ['/p/App.csproj'] },
+          { packageId: 'Example.Messaging.Bus', fromVersion: '8.1.7', toVersion: '8.2.0', projects: ['/p/App.csproj'] },
+        ],
+      });
+      await waitFor(() => posted.some((m) => m.type === 'BATCH_UPDATE_FINISHED'));
+
+      expect(backend.installPackageNoRestore).not.toHaveBeenCalled();
+      expect(backend.installPackage).toHaveBeenCalledTimes(2);
+    });
+
     it('rolls back both packages together when the shared restore still fails (onFailedUpdate: rollback)', async () => {
       mockFloors();
       jest.spyOn(projectFiles, 'snapshotProjectFiles').mockResolvedValue([
@@ -4915,6 +4993,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
         includePrerelease: false,
         onFailedUpdate: 'keep',
         experimentalHttpCatalog: false,
+        offerDependentUpdates: true,
         vulnerabilityScript: '',
         blockedPackages: [],
       });
@@ -5188,6 +5267,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
       includePrerelease: true,
       onFailedUpdate: 'keep',
       experimentalHttpCatalog: false,
+      offerDependentUpdates: true,
       vulnerabilityScript: '',
       blockedPackages: [],
     });
@@ -5719,6 +5799,20 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
     expect(setSpy).toHaveBeenCalledWith('Pkg', true);
     const msg = posted.find((m) => m.type === 'BLOCKED_PACKAGES') as { packageIds?: string[] } | undefined;
     expect(msg?.packageIds).toEqual(['Pkg']);
+    setSpy.mockRestore();
+  });
+
+  it('SET_OFFER_DEPENDENT_UPDATES stores the choice and tells the panel at once (#109)', async () => {
+    const setSpy = jest.spyOn(config, 'setOfferDependentUpdates').mockResolvedValue(undefined);
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const broker = new WebviewMessageBroker(stub, makeBackend(), makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+
+    simulateMessage({ type: 'SET_OFFER_DEPENDENT_UPDATES', enabled: false });
+    await waitFor(() => posted.some((m) => m.type === 'DEPENDENTS_OFFER_STATE'));
+
+    expect(setSpy).toHaveBeenCalledWith(false);
+    expect(posted.find((m) => m.type === 'DEPENDENTS_OFFER_STATE')).toMatchObject({ enabled: false });
     setSpy.mockRestore();
   });
 
@@ -6787,6 +6881,7 @@ log  : Failed to restore /p/Data.csproj (in 236 ms).`;
         includePrerelease: false,
         onFailedUpdate: 'rollback',
         experimentalHttpCatalog: false,
+        offerDependentUpdates: true,
         vulnerabilityScript: '',
         blockedPackages: [],
       } as any);

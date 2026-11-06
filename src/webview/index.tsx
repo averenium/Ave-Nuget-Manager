@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { App } from './App';
+import { CascadePageApp } from './CascadePageApp';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { reportWebviewError } from './vscodeApi';
 import './styles/global.css';
@@ -23,9 +24,12 @@ if (rootEl) {
   try {
     const root = window.__nugetReactRoot ?? createRoot(rootEl);
     window.__nugetReactRoot = root;
+    // The same bundle serves the panel and the dependents page (#109); the host
+    // says which by a flag on the body, so the page costs no second build.
+    const isCascadePage = document.body.dataset.route === 'cascade-page';
     root.render(
       <ErrorBoundary>
-        <App />
+        {isCascadePage ? <CascadePageApp /> : <App />}
       </ErrorBoundary>,
     );
   } catch (err) {

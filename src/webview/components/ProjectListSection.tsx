@@ -7,6 +7,8 @@ import { VersionSelect } from './VersionSelector';
 import { compareSemVer } from '../../semver';
 import { needsRoslynUpgradeConfirm } from '../../roslynSdkCap';
 import { RoslynCapPopup } from './RoslynCapPopup';
+import { useDependentsGate } from '../context/useDependentsGate';
+import { dependentsRequestFor } from '../utils/dependentsRequest';
 import { versionTone } from '../utils/versionTone';
 import { IconCheck, IconChevronRight, IconInstall, IconTrash } from '../utils/icons';
 import { frameworkRowsFor, needsFrameworkRows } from '../../frameworkPins';
@@ -216,6 +218,7 @@ function ProjectRow({
   state, dispatch, send,
 }: RowProps) {
   const p = project.absolutePath;
+  const gateDependents = useDependentsGate();
   const currentPkg = installed.find(
     (i) => packageIdsEqual(i.id, packageId) && pathsEqual(i.projectPath, p),
   );
@@ -266,10 +269,19 @@ function ProjectRow({
   const handleApply = async () => {
     if (updatesBlocked) return;
     if (installedVersion && compareSemVer(localVersion, installedVersion) === 0) return;
-    dispatch({ type: 'START_PROJECT_OPERATION', operation: 'install', total: 1 });
-    dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
-    dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
-    send({ type: 'INSTALL_PACKAGE', projectPath: p, packageId, version: localVersion });
+    const write = () => {
+      dispatch({ type: 'START_PROJECT_OPERATION', operation: 'install', total: 1 });
+      dispatch({ type: 'SET_PROJECT_LOADING', projectPath: p, loading: true });
+      dispatch({ type: 'SET_PROJECT_ERROR', projectPath: p, error: null });
+      send({ type: 'INSTALL_PACKAGE', projectPath: p, packageId, version: localVersion });
+    };
+    // Which other packages have to move with it is asked before the write (#109).
+    const request = dependentsRequestFor({
+      installed: state.packages.installed, packageId, projectPath: p, toVersion: localVersion,
+      projectFrameworks: frameworks,
+    });
+    if (request) gateDependents(request, write);
+    else write();
   };
 
   const requestApply = () => {

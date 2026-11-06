@@ -1,10 +1,8 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
-import { randomUUID } from 'crypto';
 import type { WorkspaceScope } from './types';
 import type { ExtensionMessage } from './messages';
 import type { Logger } from './logger';
+import { buildWebviewHtml } from './webviewHtml';
 
 /** Hides the panel WebviewView while the editor/new-window panel is the live UI. */
 export const EDITOR_OPEN_CONTEXT = 'averenium.nugetManager.editorOpen';
@@ -274,64 +272,6 @@ export class NugetManagerViewProvider implements vscode.WebviewViewProvider {
   // ─── HTML ─────────────────────────────────────────────────────────────────
 
   private _buildHtml(webview: vscode.Webview): string {
-    const nonce = randomUUID().replace(/-/g, '');
-    const cacheBust = Date.now().toString();
-    const bundleFs = path.join(this._extensionUri.fsPath, 'dist', 'webview', 'bundle.js');
-    const bundleOk = fs.existsSync(bundleFs);
-    if (!bundleOk) {
-      this._log?.error(`webview bundle missing: ${bundleFs}`);
-    }
-    const rootText = bundleOk
-      ? 'Loading NuGet…'
-      : 'UI bundle missing. Run npm run build:webview, then Reload Window.';
-
-    const scriptUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview', 'bundle.js'),
-    ).with({ query: `v=${cacheBust}` });
-    const styleUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview', 'bundle.css'),
-    ).with({ query: `v=${cacheBust}` });
-
-    const csp = [
-      `default-src 'none'`,
-      `style-src ${webview.cspSource} 'nonce-${nonce}'`,
-      `script-src ${webview.cspSource} 'nonce-${nonce}'`,
-      `font-src ${webview.cspSource}`,
-      `img-src ${webview.cspSource} https: data:`,
-    ].join('; ');
-
-    return /* html */ `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="stylesheet" nonce="${nonce}" href="${styleUri}" />
-  <title>NuGet Manager</title>
-</head>
-<body>
-  <div id="root">${rootText}</div>
-  <script nonce="${nonce}">
-    (function () {
-      var bundle = document.currentScript && document.currentScript.nextElementSibling;
-      if (!bundle) return;
-      bundle.addEventListener('error', function () {
-        var el = document.getElementById('root');
-        if (el) el.textContent = 'Failed to load UI bundle (dist/webview/bundle.js). Rebuild with npm run build:webview, then Reload Window.';
-        try {
-          var api = window.__nugetVsCodeApi || acquireVsCodeApi();
-          window.__nugetVsCodeApi = api;
-          api.postMessage({
-            type: 'WEBVIEW_ERROR',
-            source: 'bundle',
-            message: 'Failed to load bundle.js',
-          });
-        } catch (e) {}
-      });
-    })();
-  </script>
-  <script nonce="${nonce}" id="nuget-bundle" src="${scriptUri}"></script>
-</body>
-</html>`;
+    return buildWebviewHtml(webview, this._extensionUri, this._log);
   }
 }

@@ -44,6 +44,28 @@ export async function snapshotProjectFiles(projectPath: string): Promise<FileSna
   return snapshots;
 }
 
+/**
+ * The nearest `Directory.Packages.props` above a project, or `null`. Which props
+ * file a project's versions live in is what decides which other projects a
+ * central write moves — a monorepo with per-area files must not report projects
+ * a write cannot reach.
+ */
+export async function findNearestPackagesProps(projectPath: string): Promise<string | null> {
+  let dir = path.dirname(projectPath);
+  for (;;) {
+    const candidate = path.join(dir, 'Directory.Packages.props');
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      /* not here; try the parent */
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 export async function restoreFileSnapshots(snapshots: FileSnapshot[]): Promise<void> {
   for (const snapshot of snapshots) {
     await fs.writeFile(snapshot.path, snapshot.content, 'utf8');

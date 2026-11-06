@@ -20,6 +20,7 @@
 - **Package details**: installing across several projects starts with a project the target version can't use left unchecked, marked with why, rather than writing it there silently (#107)
 - **Package details**: the **What changes** band links the selected version's release notes, or the project's releases page, and opens the changelog the installed version shipped (#125)
 - Experimental HTTP catalog: enrich now stops mid-request on a scope switch or a force refresh instead of finishing a discarded answer, and search, the version list and package details each stop the same way when a newer request of their own kind replaces them; a new `httpConcurrencyPerOrigin` setting (default 6) caps parallel requests to one feed, separately from `dotnetConcurrency`; on the proxied path, a tunnelled connection is now reused across requests to the same target instead of opening a fresh one for each (#116)
+- **Package details**: before an update that would break the restore graph, the panel proposes the other installed packages that have to move with it, in a popup or on a page beside the panel; **Check what else has to move** on a row asks the same, and `offerDependentUpdates` turns the offer off (experimental HTTP catalog) (#109)
 
 ### Fixed
 

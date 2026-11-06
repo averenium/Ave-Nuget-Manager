@@ -69,17 +69,26 @@ export function showsCascadeCheck(httpCatalog: boolean, check: DependentsRequest
 
 /**
  * Whether the panel has moved on from what an open page was computed for
- * (#109): another package is selected, or the reference is no longer where the
- * page left it — a write landed, a refresh changed the version, the package was
- * removed. The page keeps its snapshot and says so rather than re-rendering
- * under the reader.
+ * (#109): the selection has changed since the page opened, or the reference is
+ * no longer where the page left it — a write landed, a refresh changed the
+ * version, the package was removed. The page keeps its snapshot and says so
+ * rather than re-rendering under the reader.
+ *
+ * The selection is measured against what it was *when the page opened*, not
+ * against the package the page is about. The check is asked from a right-click
+ * on a row, which does not select that package: comparing against the page's
+ * package would call every page from a right-click stale before it was read.
  */
 export function panelMovedOn(
   request: Pick<DependentsRequest, 'packageId' | 'fromVersion' | 'projectPath'>,
   installed: readonly InstalledPackage[],
   selectedPackageId: string | null,
+  selectedAtOpen: string | null,
 ): boolean {
-  if (!selectedPackageId || !packageIdsEqual(selectedPackageId, request.packageId)) return true;
+  const sameSelection = selectedPackageId === null || selectedAtOpen === null
+    ? selectedPackageId === selectedAtOpen
+    : packageIdsEqual(selectedPackageId, selectedAtOpen);
+  if (!sameSelection) return true;
   return !installed.some((p) =>
     packageIdsEqual(p.id, request.packageId)
     && pathsEqual(p.projectPath, request.projectPath)

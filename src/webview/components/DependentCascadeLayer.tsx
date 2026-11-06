@@ -25,6 +25,7 @@ export function DependentCascadeLayer() {
   const [reviewing, setReviewing] = useState<string | null>(null);
   const handled = useRef<string | null>(null);
   const staleSent = useRef<string | null>(null);
+  const openedWith = useRef<{ mark: string; selected: string | null } | null>(null);
   const begin = useBeginCascade();
   const [checking, setChecking] = useState(false);
 
@@ -187,8 +188,11 @@ export function DependentCascadeLayer() {
     // Once per time the host says the page is current: a recompute clears the
     // page's mark, and the panel has to be able to put it back.
     const mark = `${ask.requestId}:${ask.pageEpoch}`;
+    // What was selected when the page became current is what it is measured
+    // against: a right-click on a row asks about a package without selecting it.
+    if (openedWith.current?.mark !== mark) openedWith.current = { mark, selected };
     if (staleSent.current === mark) return;
-    if (!panelMovedOn(ask.request, installed, selected)) return;
+    if (!panelMovedOn(ask.request, installed, selected, openedWith.current.selected)) return;
     staleSent.current = mark;
     send({ type: 'CASCADE_PAGE_STALE', requestId: ask.requestId });
   }, [ask, installed, selected, send]);

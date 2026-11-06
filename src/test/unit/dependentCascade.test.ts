@@ -3,6 +3,7 @@ import {
   CASCADE_MAX_DEPTH,
   CASCADE_POPUP_ROWS,
   computeCascade,
+  impliedCount,
   isLargeClosure,
   movesOf,
   rangeForcesMove,
@@ -361,7 +362,7 @@ describe('asking the feed (#109)', () => {
     expect((await walking).root.children.map((c) => c.id)).toEqual(ids);
   });
 
-  it('does not ask about a package the walk would not propose anyway', async () => {
+  it('asks about a transitive only because a real restore warning reaches it', async () => {
     const asked: string[] = [];
     const lookup: VersionsLookup = async (id) => { asked.push(id); return answer(); };
 
@@ -371,8 +372,9 @@ describe('asking the feed (#109)', () => {
       lookup,
     }));
 
-    // the root's own entry is read for what its new version requires; the transitive is not asked about
-    expect(asked).toEqual([TRANSPORT, 'Example.A']);
+    // the root's own entry is read for what its new version requires; the transitive
+    // is read too, because its range really is broken (a bare minimum would not be)
+    expect([...asked].sort()).toEqual(['Example.A', TRANSPORT, 'Example.Transitive'].sort());
   });
 });
 
@@ -954,3 +956,156 @@ describe('one closure for every project under a central version (#109)', () => {
     expect(alone.root.children[0]).toMatchObject({ id: BUS, proposedVersion: '8.1.1' });
   });
 });
+
+describe('a transitive that moves with the packages above it (#109)', () => {
+  // A lockstep family, one lowered: the root P goes 2.0.0 -> 1.0.0. X is a transitive
+  // that holds P at 2.0.0, and two direct packages D1 and D2 bring X in.
+  const P = TRANSPORT;
+  const X = 'Example.Core.Abstractions';
+  const D1 = 'Example.Core.Hosting';
+  const D2 = 'Example.Core.Logging';
+  const direct = () => new Set([P, D1, D2].map((id) => id.toLowerCase()));
+  const family = () => target([
+    [P, '2.0.0'],
+    [X, '2.0.0', { [P]: '[2.0.0, )' }],
+    [D1, '2.0.0', { [X]: '[2.0.0, )' }],
+    [D2, '2.0.0', { [X]: '[2.0.0, )' }],
+  ]);
+  const history = (parent: string) => versionsOf({ '1.0.0': `[1.0.0, )`, '2.0.0': `[2.0.0, )` }, parent);
+  const lower = (over: Partial<CascadeInput> = {}) => input({
+    target: family(), directIds: direct(), fromVersion: '2.0.0', toVersion: '1.0.0', mode: 'apply',
+    lookup: lookupFrom({ [X]: history(P), [D1]: history(X), [D2]: history(X) }),
+    ...over,
+  });
+
+  it('follows a transitive whose range is broken to the direct packages that hold it', async () => {
+    const result = await computeCascade(lower());
+
+    expect(result.outcome).toBe('proposal');
+    const via = result.root.children[0];
+    expect(via).toMatchObject({ id: X, status: 'moves', virtual: true, installedVersion: '2.0.0', proposedVersion: '1.0.0' });
+    expect(via.children.map((c) => [c.id, c.status, c.proposedVersion])).toEqual([[D1, 'moves', '1.0.0'], [D2, 'moves', '1.0.0']]);
+  });
+
+  it('writes only the direct packages: there is no reference to write for the transitive', async () => {
+    const result = await computeCascade(lower());
+
+    expect(movesOf(result).map((m) => m.packageId)).toEqual([P, D1, D2]);
+    expect(result.moves).toBe(2);
+    expect(impliedCount(result)).toBe(1);
+  });
+
+  it('keeps the transitive when it forces only packages that were reached another way', async () => {
+    // D1 also depends on P directly, so it is listed under P first; X then forces nothing new.
+    const result = await computeCascade(lower({
+      target: target([
+        [P, '2.0.0'],
+        [D1, '2.0.0', { [P]: '[2.0.0, )', [X]: '[2.0.0, )' }],
+        [X, '2.0.0', { [P]: '[2.0.0, )' }],
+      ]),
+      directIds: new Set([P, D1].map((id) => id.toLowerCase())),
+      lookup: lookupFrom({ [X]: history(P), [D1]: versionsOf({ '1.0.0': '[1.0.0, )', '2.0.0': '[2.0.0, )' }, P) }),
+    }));
+
+    const x = result.root.children.find((c) => c.id === X);
+    expect(x).toMatchObject({ status: 'moves', virtual: true });
+  });
+
+  it('says which package to move when nothing below the transitive has to', async () => {
+    // Nobody holds X above what the lowered P allows: there is no direct package to follow.
+    const result = await computeCascade(lower({
+      target: target([[P, '2.0.0'], [X, '2.0.0', { [P]: '[2.0.0, )' }], [D1, '2.0.0', { [X]: '1.0.0' }]]),
+      directIds: new Set([P, D1].map((id) => id.toLowerCase())),
+      lookup: lookupFrom({ [X]: history(P) }),
+    }));
+
+    expect(result.root.children[0]).toMatchObject({ id: X, status: 'left-out', reason: { code: 'not-direct' } });
+    expect(result.root.children[0].virtual).toBeUndefined();
+    expect(result.root.children[0].reason!.detail).toContain(`comes in with ${D1}, so move ${D1}`);
+    expect(movesOf(result).map((m) => m.packageId)).toEqual([P]);
+  });
+
+  it('stays left out when the feed cannot say what versions the transitive has', async () => {
+    const result = await computeCascade(lower({ lookup: lookupFrom({ [X]: { code: 'unreachable', label: 'x', detail: 'x' } }) }));
+
+    expect(result.root.children[0]).toMatchObject({ id: X, status: 'left-out', reason: { code: 'not-direct' } });
+    expect(result.root.children[0].virtual).toBeUndefined();
+  });
+
+  it('is still no row for a bare minimum a major crosses: the transitive is not read for that', async () => {
+    let asked = false;
+    const result = await computeCascade(lower({
+      mode: 'asked', fromVersion: '1.0.0', toVersion: '2.0.0',
+      target: target([[P, '1.0.0'], [X, '1.0.0', { [P]: '1.0.0' }], [D1, '1.0.0', { [X]: '1.0.0' }]]),
+      directIds: new Set([P, D1].map((id) => id.toLowerCase())),
+      lookup: async (id) => { if (id !== P) asked = true; return { kind: 'unknown', reason: { code: 'unreachable', label: 'x', detail: 'x' } }; },
+    }));
+
+    expect(result.root.children).toEqual([]);
+    expect(asked).toBe(false);
+  });
+});
+
+describe('a family released in lockstep goes to the root\'s version (#109)', () => {
+  const P = 'Example.Core.Primitives';
+  const D = 'Example.Core.Hosting';
+  const family = (installed = '9.0.12') => target([[P, '9.0.12'], [D, installed, { [P]: '[9.0.12, 10.0.0)' }]]);
+  const history = (extra: Record<string, string | undefined> = {}) => versionsOf({
+    '9.0.12': '[9.0.12, 10.0.0)', '10.0.0': '[10.0.0, )', '10.0.5': '[10.0.5, )', '10.0.14': '[10.0.14, )', ...extra,
+  }, P);
+  const raise = (over: Partial<CascadeInput> = {}) => input({
+    target: family(), directIds: new Set([P, D].map((id) => id.toLowerCase())),
+    packageId: P, fromVersion: '9.0.12', toVersion: '10.0.14', mode: 'apply',
+    lookup: lookupFrom({ [D]: history() }),
+    ...over,
+  });
+
+  it('proposes the root\'s version for a package that sits where the root sits, not the first one that admits it', async () => {
+    const result = await computeCascade(raise());
+    expect(result.root.children[0]).toMatchObject({ id: D, proposedVersion: '10.0.14' });
+  });
+
+  it('leaves a package that does not sit where the root sits to the usual rule: the closest that admits', async () => {
+    const result = await computeCascade(raise({
+      target: target([[P, '9.0.12'], [D, '8.1.0', { [P]: '[9.0.12, 10.0.0)' }]]),
+      lookup: lookupFrom({ [D]: history({ '8.1.0': '[8.0.0, 9.0.0)' }) }),
+    }));
+    // 8.1.0 is not where the root sits, so the family reading does not apply.
+    expect(result.root.children[0].proposedVersion).toBe('10.0.0');
+  });
+
+  it('falls back to the closest that admits when the package has no such version', async () => {
+    const result = await computeCascade(raise({
+      lookup: lookupFrom({ [D]: versionsOf({ '9.0.12': '[9.0.12, 10.0.0)', '10.0.0': '[10.0.0, )', '10.0.5': '[10.0.5, )' }, P) }),
+    }));
+    expect(result.root.children[0].proposedVersion).toBe('10.0.0');
+  });
+
+  it('does not take a marked version of that number: an unmarked one beats it however it is chosen', async () => {
+    const flagged = history();
+    flagged.flags['10.0.14'] = { ...flagged.flags['10.0.14'], deprecation: 'withdrawn' };
+    const result = await computeCascade(raise({ lookup: lookupFrom({ [D]: flagged }) }));
+    expect(result.root.children[0].proposedVersion).toBe('10.0.0');
+  });
+
+  it('applies to a package the new version requires, too', async () => {
+    const result = await computeCascade(input({
+      target: target([[D, '9.0.12', { [P]: '9.0.12' }], [P, '9.0.12']]),
+      directIds: new Set([P, D].map((id) => id.toLowerCase())),
+      packageId: D, fromVersion: '9.0.12', toVersion: '10.0.14', mode: 'apply',
+      lookup: lookupFrom({
+        [D]: versionsWith2({ '9.0.12': [[P, '9.0.12']], '10.0.14': [[P, '[10.0.0, )']] }),
+        [P]: versionsOf({ '9.0.12': undefined, '10.0.0': undefined, '10.0.14': undefined }),
+      }),
+    }));
+    expect(result.root.children[0]).toMatchObject({ id: P, direction: 'forward', proposedVersion: '10.0.14' });
+  });
+});
+
+function versionsWith2(declares: Record<string, Array<[string, string]>>): PackageVersions {
+  const flags: PackageVersions['flags'] = {};
+  for (const [version, deps] of Object.entries(declares)) {
+    flags[version] = { declaredDependencies: [{ dependencies: deps.map(([id, range]) => ({ id, range })) }] };
+  }
+  return { versions: Object.keys(declares), flags, sourceName: 'example' };
+}

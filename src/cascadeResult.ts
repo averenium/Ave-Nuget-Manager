@@ -112,6 +112,13 @@ export interface CascadeNode {
   writeIn?: string;
   /** The row stands for a project that could not be judged, not for a package. */
   project?: boolean;
+  /**
+   * The row moves, but nothing is written for it: it is not a direct reference.
+   * NuGet lowers (or raises) a transitive by itself once every package that holds
+   * it has moved, so the walk follows it to find those packages, and the row says
+   * it moves with the ones above.
+   */
+  virtual?: boolean;
   /** Every range a package that moves declares for this row, the one from its parent first. */
   requirements?: Array<{ id: string; version: string; range: string }>;
   /** For a dead end between several constraints: all of them, so the reader sees what cannot both hold. */
@@ -191,7 +198,8 @@ export function movesOf(result: CascadeResult): Array<{ packageId: string; fromV
   const out: Array<{ packageId: string; fromVersion: string; toVersion: string; writeIn?: string }> = [];
   const walk = (node: CascadeNode): void => {
     if (result.outcome === 'dead-end' && node !== result.root) return;
-    if (node.status === 'moves' && node.proposedVersion) {
+    // A virtual row is a transitive: there is no reference to write.
+    if (node.status === 'moves' && node.proposedVersion && !node.virtual) {
       out.push({
         packageId: node.id, fromVersion: node.installedVersion, toVersion: node.proposedVersion,
         ...(node.writeIn ? { writeIn: node.writeIn } : {}),
@@ -203,7 +211,18 @@ export function movesOf(result: CascadeResult): Array<{ packageId: string; fromV
   return out;
 }
 
+/** How many rows of the closure move with the ones above them and are not written. */
+export function impliedCount(result: CascadeResult): number {
+  let n = 0;
+  const walk = (node: CascadeNode): void => {
+    if (node.virtual && node.status === 'moves') n += 1;
+    node.children.forEach(walk);
+  };
+  walk(result.root);
+  return n;
+}
+
 /** Whether the closure is too large to read in a popup. */
 export function isLargeClosure(result: CascadeResult): boolean {
-  return result.moves + result.unknowns + result.leftOut > CASCADE_POPUP_ROWS;
+  return result.moves + result.unknowns + result.leftOut + impliedCount(result) > CASCADE_POPUP_ROWS;
 }

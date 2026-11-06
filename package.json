@@ -102,6 +102,9 @@
         "averenium.nugetManager.httpConcurrencyPerOrigin": {
           "type": "number",
           "default": 6,
+          "tags": [
+            "experimental"
+          ],
           "minimum": 1,
           "maximum": 32,
           "markdownDescription": "**Experimental HTTP catalog only.** Maximum number of parallel requests to one feed (host). Separate from `#averenium.nugetManager.dotnetConcurrency#`, which governs `dotnet` processes and is unaffected by this setting. Lower it if a private feed throttles or rejects requests under load; 1 serialises every request to that host, which is also the easiest setting to read a trace under."
@@ -115,11 +118,6 @@
           "default": "rollback",
           "markdownDescription": "When a package update writes the project file but restore fails (e.g. NU1605):\n\n- **rollback**: restore the previous `PackageReference` (and `Directory.Packages.props` if it changed).\n- **keep**: leave the new version and show a **Rollback** button in the error banner."
         },
-        "averenium.nugetManager.offerDependentUpdates": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Before a package update is written, check which other installed packages have to move with it and offer to take them together. Turn it off to write updates exactly as they were asked for. The right-click item **Check what else has to move** is not affected and keeps working either way. Needs `#averenium.nugetManager.experimentalHttpCatalog#`."
-        },
         "averenium.nugetManager.experimentalHttpCatalog": {
           "type": "boolean",
           "default": false,
@@ -127,6 +125,14 @@
             "experimental"
           ],
           "markdownDescription": "**Experimental.** Read package versions and metadata over HTTP from the feeds in your `nuget.config`, instead of shelling out to `dotnet package search`. Faster on solutions with many packages, and it fills fields the CLI cannot return. Every step falls back to the CLI when a feed does not support it, so turning this off restores the current behaviour exactly. The extension only ever contacts hosts that appear among your configured package or audit sources."
+        },
+        "averenium.nugetManager.offerDependentUpdates": {
+          "type": "boolean",
+          "default": true,
+          "tags": [
+            "experimental"
+          ],
+          "markdownDescription": "Before a package update is written, check which other installed packages have to move with it and offer to take them together. Turn it off to write updates exactly as they were asked for. The right-click item **Check what else has to move** is not affected and keeps working either way. Needs `#averenium.nugetManager.experimentalHttpCatalog#`."
         },
         "averenium.nugetManager.vulnerabilityScript": {
           "type": "string",

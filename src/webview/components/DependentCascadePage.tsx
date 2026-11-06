@@ -18,6 +18,7 @@ import {
   projectLabel,
   rowCount,
   UNKNOWN_NOTE,
+  VIRTUAL_NOTE,
   whyLine,
 } from '../utils/cascadeView';
 import { CascadeTree } from './CascadeTree';
@@ -212,6 +213,12 @@ function ClosurePane({ result }: { result: CascadeResult }) {
             <dd>{makeup.unknown} could not be established — they stay in the list, dimmed.</dd>
           </>
         )}
+        {makeup.implied > 0 && (
+          <>
+            <dt>Moves with</dt>
+            <dd>{makeup.implied} not referenced directly — nothing is written for them. They stay in the list, dimmed.</dd>
+          </>
+        )}
         {makeup.leftOut > 0 && (
           <>
             <dt>Left out</dt>
@@ -230,7 +237,8 @@ function NodePane({ result, node, onBack }: { result: CascadeResult; node: Casca
   const { rows, older, newer } = ladderRows(node, parent?.proposedVersion);
   const forward = node.direction === 'forward';
   const leftOut = node.status === 'left-out';
-  const unknown = node.status === 'unknown' || leftOut;
+  const virtual = node.virtual === true;
+  const unknown = node.status === 'unknown' || leftOut || virtual;
 
   return (
     <div className="cascade-pane">
@@ -245,10 +253,10 @@ function NodePane({ result, node, onBack }: { result: CascadeResult; node: Casca
       {unknown ? (
         <div className="detail-section">
           <div className="dep-section__header">
-            <span className="detail-section__title">{leftOut ? 'Left out' : 'Could not establish'}</span>
+            <span className="detail-section__title">{virtual ? 'Moves with the packages above' : leftOut ? 'Left out' : 'Could not establish'}</span>
           </div>
           <p className="cascade-pane__why"><Lead segments={whyLine(node, parent)} /></p>
-          <p className="cascade-pane__why cascade-pane__why--dim">{leftOut ? LEFT_OUT_NOTE : node.project ? PROJECT_NOTE : UNKNOWN_NOTE}</p>
+          <p className="cascade-pane__why cascade-pane__why--dim">{virtual ? VIRTUAL_NOTE : leftOut ? LEFT_OUT_NOTE : node.project ? PROJECT_NOTE : UNKNOWN_NOTE}</p>
         </div>
       ) : (
         <p className="cascade-pane__why"><Lead segments={whyLine(node, parent)} /></p>

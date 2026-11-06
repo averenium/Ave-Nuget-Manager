@@ -1,5 +1,6 @@
 import {
   CASCADE_POPUP_ROWS,
+  impliedCount,
   type CascadeMode,
   type CascadeNode,
   type CascadeResult,
@@ -43,8 +44,12 @@ const seg = (text: string, flags: Omit<Segment, 'text'> = {}): Segment => ({ tex
 
 /** Dependents the closure proposes to move, plus those it could not judge — the rows below the root. */
 export function rowCount(result: CascadeResult): number {
-  return result.moves + result.unknowns + result.leftOut;
+  // Every row that is drawn, the ones that move with the packages above included.
+  return result.moves + result.unknowns + result.leftOut + impliedCount(result);
 }
+
+/** What a row that moves with the ones above prints where a range would be. */
+export const VIRTUAL_LABEL = 'moves with those above';
 
 export function containerFor(result: CascadeResult, mode: CascadeMode): CascadeContainer {
   if (result.outcome === 'clear') return 'none';
@@ -494,6 +499,8 @@ export interface ClosureMakeup {
   sources: Array<{ name: string; count: number }>;
   unknown: number;
   leftOut: number;
+  /** Rows that move with the ones above and are not written. */
+  implied: number;
 }
 
 /** What kind of set the closure is — the pane's first frame, before any row is picked. */
@@ -501,9 +508,11 @@ export function closureMakeup(result: CascadeResult): ClosureMakeup {
   const moving: CascadeNode[] = [];
   let unknown = 0;
   let leftOut = 0;
+  let implied = 0;
   const walk = (node: CascadeNode): void => {
     if (node !== result.root) {
-      if (node.status === 'moves') moving.push(node);
+      if (node.status === 'moves' && node.virtual) implied += 1;
+      else if (node.status === 'moves') moving.push(node);
       else if (node.status === 'unknown') unknown += 1;
       else if (node.status === 'left-out') leftOut += 1;
     }
@@ -531,6 +540,7 @@ export function closureMakeup(result: CascadeResult): ClosureMakeup {
     sources,
     unknown,
     leftOut,
+    implied,
   };
 }
 
@@ -552,6 +562,14 @@ export function whyLine(node: CascadeNode, parent: CascadeNode | undefined): Seg
     ];
   }
   const declared = node.installedRange;
+  if (node.virtual && node.proposedVersion) {
+    return [
+      seg(node.id, { code: true }),
+      seg(' is not referenced by this project, so nothing is written for it. It moves to '),
+      seg(node.proposedVersion, { strong: true }),
+      seg(' once the packages above it do.'),
+    ];
+  }
   if (node.project && node.reason) {
     return [seg('We do not know what '), seg(node.id, { code: true }), seg(' needs of '), seg(parentId, { code: true }), seg(`: ${node.reason.detail}.`)];
   }
@@ -613,6 +631,9 @@ function inProjects(node: CascadeNode): Segment[] {
 export const PROJECT_NOTE = 'Nothing is proposed for it. The rest of the answer stands.';
 
 export const UNKNOWN_NOTE = 'Nothing is proposed for it. The package, the source and the step that gave up are in the Log tab.';
+
+/** Under a row that moves with the ones above: why it is a row at all. */
+export const VIRTUAL_NOTE = 'The packages that hold it are in the list below it; they are what is written.';
 
 /** Under a left-out row's sentence: it was judged, and taking the proposal leaves it as it is. */
 export const LEFT_OUT_NOTE = 'Nothing is proposed for it, and taking the proposal leaves it as it is.';

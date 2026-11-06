@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import type { CascadeNode } from '../../cascadeResult';
 import { packageIdKey } from '../../pathCompare';
-import { pairOf, rangeLabel, rangeTooltip } from '../utils/cascadeView';
+import { pairOf, rangeLabel, rangeTooltip, VIRTUAL_LABEL } from '../utils/cascadeView';
 import { DependencyTree } from './DependencyTree';
 
 interface Props {
@@ -49,7 +49,7 @@ export function CascadeTree({ rows, rootId, selectedId, onSelect, bleed, against
         bleed={bleed}
         onRowClick={onSelect}
         rowClass={(node) => [
-          node.status === 'unknown' || node.status === 'left-out' ? 'popup__item--incompatible' : '',
+          node.status === 'unknown' || node.status === 'left-out' || node.virtual ? 'popup__item--incompatible' : '',
           node.id === selectedId ? 'dep-row--selected' : '',
           onPath.has(node.id) ? 'dep-row--onpath' : '',
         ].filter(Boolean).join(' ')}
@@ -70,7 +70,9 @@ export function CascadeTree({ rows, rootId, selectedId, onSelect, bleed, against
                   <span className="cascade-row__src">{against.get(packageIdKey(node.id))}</span>
                 )}
                 {inOf?.(node) && <span className="cascade-row__in">{inOf(node)}</span>}
-                {unknown
+                {node.virtual
+                  ? <span className="cascade-row__why">{VIRTUAL_LABEL}</span>
+                  : unknown
                   ? <span className="cascade-row__why">{node.reason?.label}</span>
                   : node.range && !isRoot
                     ? <span className="cascade-row__range" title={rangeTooltip(node)}>{rangeLabel(node)}</span>

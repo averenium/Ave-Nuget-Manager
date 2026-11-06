@@ -1,5 +1,5 @@
 import type { CascadeNode, CascadeResult, UnknownReason } from '../../cascadeResult';
-import { CASCADE_POPUP_ROWS } from '../../cascadeResult';
+import { CASCADE_POPUP_ROWS, movesOf } from '../../cascadeResult';
 import {
   actionsFor,
   consequenceLine,
@@ -10,11 +10,13 @@ import {
   movesAgainstRoot,
   offersPage,
   pairOf,
+  rowCount,
   previewOf,
   rangeLabel,
   rangeTooltip,
   unknownGroups,
   UNKNOWN_NOTE,
+  VIRTUAL_LABEL,
   LEFT_OUT_NOTE,
   overrideNote,
   PROJECT_NOTE,
@@ -234,6 +236,40 @@ describe('a member that moves against the root (#109)', () => {
   });
 });
 
+describe('rows that move with the ones above (#109)', () => {
+  const via = (over: Partial<CascadeNode> = {}): CascadeNode => ({
+    ...moves('Example.Core.Abstractions', '9.0.22', '9.0.13'), virtual: true, ...over,
+  });
+
+  it('counts them among the rows that are drawn, but not among the packages that move', () => {
+    const result = closure([via({ children: [moves('Example.Core.Hosting', '9.0.22', '9.0.13', [], 'Example.Core.Abstractions')] })]);
+    expect(result.moves).toBe(2);
+    expect(rowCount(result)).toBe(3);
+  });
+
+  it('is not written: only the direct packages go to the batch', () => {
+    const child = moves('Example.Core.Hosting', '9.0.22', '9.0.13', [], 'Example.Core.Abstractions');
+    expect(movesOf(closure([via({ children: [child] })])).map((m) => m.packageId)).toEqual([TRANSPORT, 'Example.Core.Hosting']);
+  });
+
+  it('is counted in the makeup apart from what moves', () => {
+    expect(closureMakeup(closure([via(), moves('Example.A', '1.0.0', '2.0.0')]))).toMatchObject({ total: 1, implied: 1 });
+  });
+
+  it('says in the pane that nothing is written for it, and where it moves once the packages above do', () => {
+    const node = via();
+    expect(text(whyLine(node, closure([node]).root))).toBe(
+      'Example.Core.Abstractions is not referenced by this project, so nothing is written for it. It moves to 9.0.13 once the packages above it do.',
+    );
+    expect(VIRTUAL_LABEL).toBe('moves with those above');
+  });
+
+  it('does not make the set incomplete: the proposal is the packages that hold it', () => {
+    const result = closure([via({ children: [moves('Example.Core.Hosting', '9.0.22', '9.0.13', [], 'Example.Core.Abstractions')] })]);
+    expect(actionsFor(result, 'apply').map((b) => b.label)).toEqual(['Cancel', 'Update only this package', 'Take all 2']);
+  });
+});
+
 describe('rows left out on purpose (#109)', () => {
   it('says in the lead that part of the set is left out, apart from what could not be judged', () => {
     const onlyLeft = closure([...many(2), leftOut('Example.A')]);
@@ -354,7 +390,7 @@ describe('the detail pane of the page (#109)', () => {
     const result = closure([sql, inLine, unknown('Example.Cached')]);
 
     expect(closureMakeup(result)).toEqual({
-      total: 3, direct: 2, indirect: 1, crossMajor: 2, sameLine: 1, unknown: 1, leftOut: 0,
+      total: 3, direct: 2, indirect: 1, crossMajor: 2, sameLine: 1, unknown: 1, leftOut: 0, implied: 0,
       sources: [{ name: 'nuget.org', count: 2 }, { name: 'Example.Internal', count: 1 }],
     });
   });

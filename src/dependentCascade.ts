@@ -36,6 +36,7 @@ import {
 
 export {
   CASCADE_POPUP_ROWS,
+  impliedCount,
   isLargeClosure,
   movesOf,
   type CascadeMode,
@@ -220,6 +221,12 @@ interface Spec {
   fixed: Array<{ id: string; version: string }>;
   /** What referenced projects require of it: a candidate must not be below one. */
   floors: Array<{ project: string; range: string; in?: string[] }>;
+  /**
+   * The step the person asked for, for a family that moves in lockstep: a package
+   * sitting at the version the root leaves goes to the version the root goes to,
+   * when that version exists and stands.
+   */
+  align?: { from: string; to: string };
 }
 
 interface Candidate {
@@ -348,7 +355,15 @@ function searchWindow(
     const db = Math.abs(b.index - installedIndex);
     return da !== db ? da - db : compareSemVer(b.version, a.version);
   })[0];
-  const pick = closest(admitting.filter((e) => !e.flagged)) ?? closest(admitting);
+  // A family released in lockstep — every member shares the root's version
+  // numbers — is taken to the root's version when that member has it: nobody
+  // wants 10.0.0 of a package whose siblings are on 10.0.14. It is an exception to
+  // "closest", not the rule: only a package that sits exactly where the root sits,
+  // only the exact version the root goes to, and never a marked one.
+  const aligned = spec.align && versionsEqual(installedVersion, spec.align.from)
+    ? admitting.find((e) => !e.flagged && versionsEqual(e.version, spec.align!.to))
+    : undefined;
+  const pick = aligned ?? closest(admitting.filter((e) => !e.flagged)) ?? closest(admitting);
 
   const usable = entries.filter((e) => e.usable);
   const deadEndRanges = pick || !spec.parent ? [] : distinctRanges(usable);
@@ -525,6 +540,8 @@ async function walk(input: CascadeInput, lookup: VersionsLookup, req: Requiremen
 
   const listed = new Set<string>([packageIdKey(packageId)]);
   const byKey = new Map<string, CascadeNode>();
+  /** Virtual rows that force at least one package to move, listed already or not. */
+  const drives = new Set<CascadeNode>();
   const emitted: Requirement[] = [];
   const all: CascadeNode[] = [root];
   let frontier: Array<{ node: CascadeNode; depth: number }> = [{ node: root, depth: 0 }];
@@ -567,8 +584,11 @@ async function walk(input: CascadeInput, lookup: VersionsLookup, req: Requiremen
       for (const dependent of dependentsAcross(scopes, node.id)) {
         const key = packageIdKey(dependent.library.id);
         if (budget <= 0) break;
-        if (listed.has(key) || !isDirect(scopes, key)) continue;
+        if (listed.has(key)) continue;
         if (!dependent.edges.some((e) => rangeForcesMove(e.range, node.proposedVersion!, mode))) continue;
+        // A transitive is read only when a real restore warning reaches it: that is
+        // when its version decides which direct packages have to move.
+        if (!isDirect(scopes, key) && dependent.edges.every((e) => versionSatisfiesRange(node.proposedVersion!, parseNuGetVersionRange(e.range)))) continue;
         budget -= 1;
         void lookup(dependent.library.id);
       }
@@ -598,6 +618,7 @@ async function walk(input: CascadeInput, lookup: VersionsLookup, req: Requiremen
         // Forced when any project's graph holds a range the new version leaves out.
         const forcing = dependent.edges.find((e) => rangeForcesMove(e.range, newVersion, mode));
         if (!forcing) continue;
+        if (node.virtual) drives.add(node);
         const key = packageIdKey(dependent.library.id);
         if (listed.has(key)) continue;
 
@@ -659,9 +680,10 @@ async function walk(input: CascadeInput, lookup: VersionsLookup, req: Requiremen
     frontier = next;
   }
 
+  settleVirtual(root, scopes, drives);
   noteSharedEdges(root, all, input.target);
 
-  const moves = all.filter((n) => n !== root && n.status === 'moves').length;
+  const moves = all.filter((n) => n !== root && n.status === 'moves' && !n.virtual).length;
   const unknowns = all.filter((n) => n.status === 'unknown').length;
   const leftOut = all.filter((n) => n.status === 'left-out').length;
   const dependents = all.length - 1;
@@ -679,6 +701,42 @@ async function walk(input: CascadeInput, lookup: VersionsLookup, req: Requiremen
     emitted,
     byKey,
   };
+}
+
+/**
+ * A transitive that moves is only worth a row when some package has to move
+ * because of it. When nothing below it does — a ceiling NuGet answers with a
+ * warning, a floor every holder already satisfies — there is nothing to follow
+ * and nobody to move, and the row says what it said before the walk went through
+ * transitives: the package that brings it in is the one to move.
+ */
+function settleVirtual(root: CascadeNode, scopes: CascadeScope[], drives: ReadonlySet<CascadeNode>): void {
+  const actionable = (node: CascadeNode): boolean => {
+    let found = false;
+    for (const child of node.children) {
+      // Children first, so a virtual row that turns out to be empty is not counted.
+      const childActionable = actionable(child);
+      if (child.status === 'dead-end' || child.status === 'unknown') found = true;
+      else if (child.status === 'moves' && (!child.virtual || childActionable)) found = true;
+    }
+    if (node.virtual && node.status === 'moves' && !found && !drives.has(node)) {
+      const bringer = bringerOf(scopes, node.id);
+      node.status = 'left-out';
+      node.virtual = undefined;
+      node.proposedVersion = undefined;
+      node.range = undefined;
+      node.window = undefined;
+      node.diff = undefined;
+      node.reason = reason(
+        'not-direct', 'not a direct reference',
+        bringer
+          ? `${node.id} is not referenced by this project; it comes in with ${bringer}, so move ${bringer}`
+          : `${node.id} is not referenced by this project; it moves with the package that brings it in`,
+      );
+    }
+    return found;
+  };
+  actionable(root);
 }
 
 function capMarker(node: CascadeNode, depth: number, packageId: string): CascadeNode {
@@ -733,13 +791,17 @@ async function judgeDependent(
   // Only a direct reference can be proposed for update. A transitive can only
   // be moved by moving its parent, or by adding a direct reference — a
   // different decision, and not one to make silently.
-  if (!isDirect(scopes, dependentId)) {
-    // A bare minimum crossed by a major (case 3) gives no row for a package that
-    // cannot be moved on its own. It is a heuristic that needs the feed to be
-    // confirmed, and the feed is not read for a package nobody can act on: a
-    // transitive with a bare `[2.0.0, )` would otherwise put a row on every
-    // major bump of a lockstep family. A real restore warning keeps its row.
-    if (versionSatisfiesRange(parentVersion, parseNuGetVersionRange(installedRange))) return null;
+  const direct = isDirect(scopes, dependentId);
+  // A bare minimum crossed by a major (case 3) gives no row for a package that
+  // cannot be moved on its own. It is a heuristic that needs the feed to be
+  // confirmed, and the feed is not read for a package nobody can act on: a
+  // transitive with a bare `[2.0.0, )` would otherwise put a row on every
+  // major bump of a lockstep family. A real restore warning keeps its row.
+  if (!direct && versionSatisfiesRange(parentVersion, parseNuGetVersionRange(installedRange))) return null;
+
+  // What a transitive says when no version can be found for it, or the walk
+  // below it finds nothing to move: the package that brings it in is the one to move.
+  const leftOutTransitive = (): CascadeNode => {
     const bringer = bringerOf(scopes, dependentId);
     return {
       ...base, status: 'left-out',
@@ -750,9 +812,10 @@ async function judgeDependent(
           : `${dependentId} is not referenced by this project; it moves with the package that brings it in`,
       ),
     };
-  }
+  };
 
   const answer = await lookup(dependentId);
+  if (!direct && answer.kind === 'unknown') return leftOutTransitive();
   if (answer.kind === 'unknown') {
     // A blocked package was judged and is left out; any other reason is that the
     // feed could not say.
@@ -762,6 +825,7 @@ async function judgeDependent(
   const { info } = answer;
   const anyDeclared = info.versions.some((v) => info.flags[v]?.declaredDependencies);
   if (!anyDeclared) {
+    if (!direct) return leftOutTransitive();
     return {
       ...base, status: 'unknown', sourceName: info.sourceName,
       reason: reason('no-dependency-data', 'no dependency data', `its feed did not say what any version of ${dependentId} depends on`),
@@ -771,6 +835,7 @@ async function judgeDependent(
   const spec: Spec = {
     parent: { id: parent.id, version: parentVersion, projects: base.projects }, requirements, fixed,
     floors: floorsAcross(scopes, dependentId),
+    align: { from: input.fromVersion, to: input.toVersion },
   };
   const found = searchWindow(info, installedVersion, spec, frameworks, input.mode, input.includePrerelease);
   const constrained = requirements.length > 0 || found.rejectedByFixed > 0 || found.rejectingFloors.length > 0;
@@ -781,6 +846,7 @@ async function judgeDependent(
   // block an update on the strength of an absence. The edge is clear. Not when
   // something else binds this row: that is a conflict, not an absence.
   if (!found.proposed && !constrained && versionSatisfiesRange(parentVersion, parseNuGetVersionRange(installedRange))) return null;
+  if (!direct && !found.proposed) return leftOutTransitive();
   if (!found.proposed && found.unstated > 0) {
     // Nothing that stated its dependencies admits the target, but some versions
     // stated nothing, and a dead end claims every version was checked. It
@@ -816,6 +882,9 @@ async function judgeDependent(
     sourceName: info.sourceName,
     requirements: requirements.length > 0 ? requirementsView(requirements) : undefined,
     diff: versionDependencyDiff(group(installedVersion), group(found.proposed.version), frameworks),
+    // A transitive moves so that the walk can find the direct packages that hold
+    // it; nothing is written for it.
+    ...(direct ? {} : { virtual: true }),
   };
 }
 
@@ -852,7 +921,7 @@ async function judgeRequired(
     return { ...base, status: answer.reason.code === 'blocked' ? 'left-out' : 'unknown', reason: answer.reason };
   }
   const { info } = answer;
-  const spec: Spec = { requirements, fixed, floors: floorsAcross(scopes, id) };
+  const spec: Spec = { requirements, fixed, floors: floorsAcross(scopes, id), align: { from: input.fromVersion, to: input.toVersion } };
   const found = searchWindow(info, installedVersion, spec, frameworks, input.mode, input.includePrerelease);
   if (!found.proposed) {
     return {

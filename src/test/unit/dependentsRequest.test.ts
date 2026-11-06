@@ -61,22 +61,31 @@ describe('the panel moving on from an open page (#109)', () => {
   const request = { packageId: 'Example.Messaging.Transport', fromVersion: '6.8.1', projectPath: 'D:/src/Example.Shop.csproj' };
   const installed = [entry({})];
 
-  it('is not moved on while the same package is selected and still where the page left it', () => {
-    expect(panelMovedOn(request, installed, 'example.messaging.transport')).toBe(false);
+  it('is not moved on while the selection is what it was when the page opened and the reference is where it was left', () => {
+    expect(panelMovedOn(request, installed, 'example.messaging.transport', 'Example.Messaging.Transport')).toBe(false);
   });
 
-  it('has moved on once another package is selected, or none', () => {
-    expect(panelMovedOn(request, installed, 'Example.Core')).toBe(true);
-    expect(panelMovedOn(request, installed, null)).toBe(true);
+  it('is not moved on when the page was asked from a right-click on a package that was never selected', () => {
+    // Another package is selected, and was before the page opened: nothing has moved.
+    expect(panelMovedOn(request, installed, 'Example.Core', 'Example.Core')).toBe(false);
+    expect(panelMovedOn(request, installed, null, null)).toBe(false);
+  });
+
+  it('has moved on once the selection changes after the page opened, to another package or to none', () => {
+    expect(panelMovedOn(request, installed, 'Example.Core', 'Example.Messaging.Transport')).toBe(true);
+    expect(panelMovedOn(request, installed, null, 'Example.Messaging.Transport')).toBe(true);
+    expect(panelMovedOn(request, installed, 'Example.Core', null)).toBe(true);
   });
 
   it('has moved on once the reference is on another version, or gone', () => {
-    expect(panelMovedOn(request, [entry({ resolvedVersion: '7.2.2' })], request.packageId)).toBe(true);
-    expect(panelMovedOn(request, [], request.packageId)).toBe(true);
-    expect(panelMovedOn(request, [entry({ projectPath: 'D:/src/Other.csproj' })], request.packageId)).toBe(true);
+    const was = request.packageId;
+    expect(panelMovedOn(request, [entry({ resolvedVersion: '7.2.2' })], was, was)).toBe(true);
+    expect(panelMovedOn(request, [], was, was)).toBe(true);
+    expect(panelMovedOn(request, [entry({ projectPath: 'D:/src/Other.csproj' })], was, was)).toBe(true);
   });
 
   it('does not take a different spelling of the same version for a move', () => {
-    expect(panelMovedOn(request, [entry({ resolvedVersion: '6.8.1.0' })], request.packageId)).toBe(false);
+    const was = request.packageId;
+    expect(panelMovedOn(request, [entry({ resolvedVersion: '6.8.1.0' })], was, was)).toBe(false);
   });
 });

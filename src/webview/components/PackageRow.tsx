@@ -5,6 +5,7 @@ import { findingsAffectingPackage } from '../../vulnerabilities';
 import { packageMatchesAnyMapping } from '../../packageSourceMapping';
 import { resolveVersionSpread } from '../../packageResolvedVersions';
 import { versionCellFor, versionSpreadTooltip } from '../utils/versionSpreadDisplay';
+import { unresolvedLabel, isNeutral } from '../utils/unresolvedView';
 import { PkgListRow } from './PkgListRow';
 
 interface Props {
@@ -41,11 +42,16 @@ export function PackageRow({
   const implicit  = kind === 'implicit'  ? (pkg as ImplicitPackage)  : undefined;
   const available = kind === 'available' ? (pkg as AvailablePackage) : undefined;
 
+  // A reference restore could not resolve (#138) has no latest version of its
+  // own to wait for: the cell says why instead, and never falls through to the
+  // `…` an installed row without one shows — which for a package no feed has
+  // would be there for ever.
+  const unresolved = installed?.unresolved;
   const sourceName = (installed?.sourceName ?? available?.sourceName ?? '').toLowerCase();
-  const latestVersion = installed?.latestVersion ?? available?.latestVersion;
+  const latestVersion = unresolved ? undefined : (installed?.latestVersion ?? available?.latestVersion);
   const hasUpdate = !!(installed && latestVersion &&
     compareSemVer(latestVersion, installed.resolvedVersion) > 0);
-  const latestDisplay = latestVersion ?? (kind === 'installed' ? '…' : '—');
+  const latestDisplay = unresolved ? unresolvedLabel(unresolved) : latestVersion ?? (kind === 'installed' ? '…' : '—');
 
   const highestImplicit = implicitVersions?.length
     ? implicitVersions.reduce((max, v) => (v > max ? v : max))
@@ -92,12 +98,19 @@ export function PackageRow({
   const deprecationTitle = deprecation ? `Deprecated: ${deprecation}` : undefined;
 
   const mappingActive = kind === 'installed' && !!packageSourceMapping?.length;
-  const hasNoMappingSource = mappingActive && !packageMatchesAnyMapping(pkg.id, packageSourceMapping!);
-  const unmappedTitle = hasNoMappingSource
+  const unmappedByConfig = mappingActive && !packageMatchesAnyMapping(pkg.id, packageSourceMapping!);
+  // The same slash in the same colour: for a reference restore failed on it says
+  // the package resolves to no source, and its tooltip is restore's own message.
+  const failed = !!unresolved && !isNeutral(unresolved);
+  const hasNoMappingSource = unmappedByConfig || failed;
+  const unmappedMessage = unmappedByConfig
     ? `No packageSourceMapping source matches "${pkg.id}" — restore will not be able to find it.\nMapped sources: ${
       packageSourceMapping!.map((m) => m.sourceName).join(', ')
     }`
     : undefined;
+  const unmappedTitle = failed
+    ? [unresolved!.code, unresolved!.message].filter(Boolean).join(': ') || undefined
+    : unmappedMessage;
 
   return (
     <PkgListRow
@@ -150,8 +163,8 @@ export function PackageRow({
           )}
         </span>
         <span
-          className={`pkg-row__latest${hasUpdate ? ' pkg-row__latest--update' : ''}`}
-          title={latestVersion ? `Available: ${latestVersion}` : undefined}
+          className={`pkg-row__latest${hasUpdate ? ' pkg-row__latest--update' : ''}${failed ? ' pkg-row__latest--fail' : ''}`}
+          title={unresolved ? unresolved.message : latestVersion ? `Available: ${latestVersion}` : undefined}
         >
           {kind === 'implicit' && !latestVersion ? '' : latestDisplay}
         </span>

@@ -102,6 +102,12 @@ export interface AppState {
   activeTab: 'packages' | 'sources' | 'updates' | 'log' | 'agents';
   packages: {
     installed: InstalledPackage[];
+    /**
+     * References the projects declare that restore could not resolve (#138). Kept
+     * apart from `installed`: they are not installed, and nothing that reads the
+     * installed list — updates, groups, the dependents check — is meant to see them.
+     */
+    unresolved: InstalledPackage[];
     implicit: ImplicitPackage[];
     /**
      * Every target framework each project declares, keyed by project path (#82).
@@ -235,6 +241,7 @@ const initialState: AppState = {
   activeTab: 'packages',
   packages: {
     installed: [],
+    unresolved: [],
     implicit: [],
     projectFrameworks: {},
     available: [],
@@ -526,6 +533,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
           // Clear lists and set loading while new scope initialises — nothing
           // is loading yet when there is no scope at all (#113).
           installed: [],
+          unresolved: [],
           implicit: [],
           available: [],
           isLoadingPackages: msg.scope !== null,
@@ -573,7 +581,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
     case 'INSTALLED_PACKAGES': {
       let projectVersions = state.detail.projectVersions;
       if (state.detail.selectedPackageId) {
-        for (const pkg of msg.packages) {
+        for (const pkg of [...msg.packages, ...(msg.unresolved ?? [])]) {
           if (packageIdsEqual(pkg.id, state.detail.selectedPackageId)) {
             projectVersions = setProjectVersion(projectVersions, pkg.projectPath, pkg.resolvedVersion);
           }
@@ -589,6 +597,7 @@ function applyExtensionMessage(state: AppState, msg: ExtensionMessage): AppState
         packages: {
           ...state.packages,
           installed,
+          unresolved: msg.unresolved ?? [],
           // A refresh that could not read the frameworks keeps the last set it
           // did read, rather than blanking the rows that depend on it.
           projectFrameworks: msg.projectFrameworks ?? state.packages.projectFrameworks,

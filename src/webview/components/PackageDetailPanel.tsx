@@ -24,6 +24,7 @@ import { IconCheck, IconInstall, IconTrash } from '../utils/icons';
 import { buildPackageProblems } from '../utils/packageProblems';
 import { resolveVersionSpread } from '../../packageResolvedVersions';
 import { ProblemsBand } from './ProblemsBand';
+import { NOT_RESTORED_NOTE, restoreBandFor, unresolvedOf } from '../utils/unresolvedView';
 import { VersionChangesBand } from './VersionChangesBand';
 import { versionBandFor } from '../utils/versionBand';
 import { sortTargetFrameworksDesc } from '../../targetFrameworks';
@@ -118,7 +119,13 @@ export function PackageDetailPanel() {
   // order depends on where they sit; the early return further down is what
   // guards a missing package for everything that renders.
   const scope = state.scope;
-  const installedEntries = state.packages.installed.filter((p) => packageIdsEqual(p.id, selectedPackageId ?? ''));
+  // A reference restore could not resolve is declared, so it is a reference the
+  // panel can pick a version for and remove, though it is not in the restore
+  // graph (#138). It lives in its own list so nothing else reading the installed
+  // one has to know; here it counts.
+  const referenced = [...state.packages.installed, ...state.packages.unresolved];
+  const installedEntries = referenced.filter((p) => packageIdsEqual(p.id, selectedPackageId ?? ''));
+  const unresolved = unresolvedOf(installedEntries);
   const installedVersions = installedEntries.map((p) => p.resolvedVersion);
   const frameworksOf = (projectPath: string): string[] => state.packages.projectFrameworks[projectPath]
     ?? Object.entries(state.packages.projectFrameworks)
@@ -207,7 +214,10 @@ export function PackageDetailPanel() {
 
   /** Solution/folder scopes list multiple projects and need the project-picker popup. */
   const isMultiProject = scope?.kind === 'solution' || scope?.kind === 'folder';
-  const isInstalled = state.packages.installed.some((p) => packageIdsEqual(p.id, selectedPackageId));
+  const isInstalled = referenced.some((p) => packageIdsEqual(p.id, selectedPackageId));
+  // With several projects the message belongs to the row of the project that
+  // failed, not to a band that would speak for whichever failed first (#138).
+  const restoreBand = isMultiProject ? undefined : restoreBandFor(unresolved);
   const updatesBlocked = isInstalled && isPackageBlocked(selectedPackageId, state.packages.blockedPackages);
 
   // The local .nuspec and the restore graph (#86) are readable for anything the
@@ -624,11 +634,33 @@ export function PackageDetailPanel() {
           ><IconTrash /></button>
         )}
         </div>
+        {/* A reference restore has not run on is not broken, only waiting: the
+            picker and the button are the ordinary ones, and one muted line says why
+            there is nothing resolved to show (#138). */}
+        {!isMultiProject && unresolved?.notRestored && <div className="muted-note" style={{ marginTop: 2 }}>{NOT_RESTORED_NOTE}</div>}
       </DetailHeader>
+
+      {/* What restore said, whatever the feed knows: standing outside the block
+          that holds the Problems band, because a package no feed has produces no
+          metadata and that block is then not drawn at all (#138). */}
+      {restoreBand && (
+        <div className="problems-band">
+          <div className="problems-band__group">
+            <ul className="vuln-list">
+              <li className="vuln-item">
+                <span className="vuln-item__sev">{restoreBand.code}</span>
+                <span className="vuln-item__body">{restoreBand.message}{restoreBand.frameworks}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      )}
 
       {(error || isLoading || !metadataSettled) && (
         <div className="detail-panel__status">
-          {error && <span className="detail-panel__error" role="alert">{error}</span>}
+          {/* The band above is the answer for a reference restore failed on; a
+              metadata error about the same missing package would say it twice. */}
+          {error && !restoreBand && <span className="detail-panel__error" role="alert">{error}</span>}
           {(isLoading || !metadataSettled) && (
             <span style={{ color: 'var(--color-tab-inactive)', fontSize: 11 }}>Loading…</span>
           )}
@@ -712,7 +744,7 @@ export function PackageDetailPanel() {
           <ProjectListSection
             packageId={selectedPackageId}
             projects={scope.projects}
-            installed={state.packages.installed}
+            installed={referenced}
             allVersions={allVersions}
           />
         </div>

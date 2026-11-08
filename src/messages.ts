@@ -356,6 +356,12 @@ export type ExtensionMessage =
       type: 'INSTALLED_PACKAGES';
       packages: InstalledPackage[];
       projectFrameworks?: Record<string, string[]>;
+      /**
+       * References the projects declare that restore could not resolve (#138).
+       * Apart from `packages` on purpose: they are not installed, and nothing that
+       * reads the installed list is meant to see them.
+       */
+      unresolved?: InstalledPackage[];
     }
   | { type: 'IMPLICIT_PACKAGES'; packages: ImplicitPackage[] }
   | { type: 'INSTALLED_PACKAGES_PATCH'; packages: InstalledPackage[] }

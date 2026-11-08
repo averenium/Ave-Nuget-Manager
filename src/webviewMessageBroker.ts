@@ -58,6 +58,7 @@ import { promises as fs } from 'fs';
 import { DependentCascadeService } from './dependentCascadeService';
 import { CascadePageHost, type CascadePageEntry } from './dependentCascadePage';
 import { movesOf } from './cascadeResult';
+import { unresolvedReferences } from './unresolvedReferences';
 
 /** Which target framework in `assetsJson` actually resolved `packageId`@`resolvedVersion` — a package can appear under only one TFM per project, but a multi-targeted project's assets.json has one `targets` entry per TFM. */
 function findFrameworkForPackage(assetsJson: unknown, packageId: string, resolvedVersion: string): string | undefined {
@@ -1422,6 +1423,7 @@ export class WebviewMessageBroker {
       type: 'INSTALLED_PACKAGES',
       packages: installed,
       projectFrameworks: listed.projectFrameworks,
+      unresolved: await this._unresolvedOf(listed),
     });
     this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
 
@@ -3435,6 +3437,30 @@ export class WebviewMessageBroker {
   }
 
   /**
+   * The references the projects declare that restore could not resolve (#138).
+   * The listing is the restore graph, so it cannot name them; the declared set
+   * and the restore log beside the assets file can. Never throws: the list is
+   * not worth losing over this.
+   */
+  private async _unresolvedOf(listed: PackageListResult): Promise<InstalledPackage[]> {
+    try {
+      // The scope is the one list that names a project in which nothing restored:
+      // `dotnet list` answers such a project with exit 0 and no packages, and the
+      // CLI backend drops `projectFrameworks` when there are none, so neither the
+      // listing nor its frameworks say the project exists.
+      const scope = this.provider.getCurrentScope();
+      const projects = [
+        ...(scope ? scopeProjectPaths(scope) : []),
+        ...Object.keys(listed.projectFrameworks ?? {}),
+        ...listed.installed.map((p) => p.projectPath),
+      ];
+      return await unresolvedReferences(projects, listed.installed);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Push new lists only when we actually parsed packages. A failed restore makes
    * `dotnet list` return `{ problems: [...] }` with no projects — posting that
    * as INSTALLED_PACKAGES: [] wipes the UI.
@@ -3466,6 +3492,7 @@ export class WebviewMessageBroker {
       type: 'INSTALLED_PACKAGES',
       packages: installed,
       projectFrameworks: listed.projectFrameworks,
+      unresolved: await this._unresolvedOf(listed),
     });
     this.provider.postMessage({ type: 'IMPLICIT_PACKAGES', packages: listed.implicit });
 

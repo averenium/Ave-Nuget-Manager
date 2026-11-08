@@ -518,6 +518,7 @@ body.is-resizing-split { cursor: col-resize; user-select: none; }
   overflow-wrap: anywhere; white-space: normal;
 }
 .pkg-row__latest--update { color: var(--color-success); }
+.muted-note { font-size: 11px; color: var(--color-tab-inactive); }
 .pkg-row__latest--fail { color: var(--color-error); font-weight: 600; }
 /* The versions this cell could not show. Plain until the spread crosses a
    major line — a patch apart between projects is housekeeping, a major apart

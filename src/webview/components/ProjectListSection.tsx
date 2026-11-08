@@ -14,6 +14,7 @@ import { IconCheck, IconChevronRight, IconInstall, IconTrash } from '../utils/ic
 import { frameworkRowsFor, needsFrameworkRows } from '../../frameworkPins';
 import { highestCompatibleVersion } from '../../frameworkCompatibility';
 import { FrameworkPinnedProject } from './FrameworkPinnedProject';
+import { restoreBandFor } from '../utils/unresolvedView';
 
 interface Props {
   packageId: string;
@@ -238,7 +239,12 @@ function ProjectRow({
   const currentVersion = installedVersion || compatibleVersion || allVersions[0] || '';
   const isLoading = [...state.detail.projectLoadingSet].some((k) => pathsEqual(k, p));
   const errorKey = Object.keys(state.detail.projectErrors).find((k) => pathsEqual(k, p));
-  const error = errorKey ? state.detail.projectErrors[errorKey] : undefined;
+  // What the last operation on this project said, else what restore said about
+  // this reference (#138): the message sits under the row it is about, so no
+  // project name has to be repeated. A write on the row replaces it.
+  const restoreMessage = restoreBandFor(currentPkg?.unresolved);
+  const error = (errorKey ? state.detail.projectErrors[errorKey] : undefined)
+    ?? (restoreMessage ? `${restoreMessage.code}: ${restoreMessage.message}${restoreMessage.frameworks}` : undefined);
 
   const [localVersion, setLocalVersion] = useState(currentVersion);
   const [showRoslynWarning, setShowRoslynWarning] = useState(false);

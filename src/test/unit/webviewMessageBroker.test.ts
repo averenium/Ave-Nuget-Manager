@@ -6,9 +6,12 @@ import * as projectAssets from '../../projectAssets';
 import * as nuspecLocator from '../../nuspecLocator';
 import * as nugetHttpCacheVdb from '../../nugetHttpCacheVdb';
 import { promises as fsPromises } from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import * as config from '../../config';
 import * as legacyPr from '../../legacyPackageReference';
 import * as projectStyle from '../../projectPackageStyle';
+import * as unresolvedModule from '../../unresolvedReferences';
 import type { INuGetBackend } from '../../backend/INuGetBackend';
 import { DOTNET_PROJECT_EXCLUDE_GLOB } from '../../dotnetWorkspace';
 import type { NuGetConfigChainResolver } from '../../nugetConfigChainResolver';
@@ -404,6 +407,79 @@ describe('WebviewMessageBroker', () => {
     const implicit = posted.find((m) => m.type === 'IMPLICIT_PACKAGES') as any;
     expect(installed?.packages[0].id).toBe('Newtonsoft.Json');
     expect(implicit?.packages[0].id).toBe('Microsoft.Extensions.Logging');
+  });
+
+  it('sends the references restore could not resolve beside the installed list, not inside it (#138)', async () => {
+    const ghost = { ...makeInstalledPkg('Example.NoSuchPackage.Ghost', '/p/App.csproj'), resolvedVersion: '1.0.0', unresolved: { code: 'NU1101', message: 'Unable to find package' } };
+    const spy = jest.spyOn(unresolvedModule, 'unresolvedReferences').mockResolvedValue([ghost]);
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({
+      installed: [makeInstalledPkg('Serilog', '/p/App.csproj')],
+      implicit: [],
+    });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await waitFor(() => posted.some((m) => m.type === 'INSTALLED_PACKAGES'));
+
+    const msg = posted.find((m) => m.type === 'INSTALLED_PACKAGES') as any;
+    expect(msg.packages.map((p: any) => p.id)).toEqual(['Serilog']);
+    expect(msg.unresolved.map((p: any) => p.id)).toEqual(['Example.NoSuchPackage.Ghost']);
+    // asked about the installed list it was given and the projects of the scope
+    expect(spy).toHaveBeenCalledWith(expect.arrayContaining(['/p/App.csproj']), expect.arrayContaining([expect.objectContaining({ id: 'Serilog' })]));
+    spy.mockRestore();
+  });
+
+  it('names a reference in a project where nothing restored at all, from the scope: the listing has no packages and no frameworks to name it by (#138)', async () => {
+    // Measured: restore fails with NU1101 and writes the cache; `dotnet list --no-restore`
+    // answers exit 0 and one project with no packages, and the CLI backend then
+    // returns the result without `projectFrameworks`.
+    const dir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'ghost-'));
+    try {
+      const projectPath = path.join(dir, 'Ghost.csproj');
+      await fsPromises.writeFile(projectPath, '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Example.NoSuchPackage.Ghost" Version="1.0.0" /></ItemGroup></Project>', 'utf8');
+      await fsPromises.mkdir(path.join(dir, 'obj'));
+      await fsPromises.writeFile(path.join(dir, 'obj', 'project.nuget.cache'), JSON.stringify({
+        success: false,
+        logs: [{ code: 'NU1101', level: 'Error', libraryId: 'Example.NoSuchPackage.Ghost', targetGraphs: ['net8.0'], message: 'Unable to find package Example.NoSuchPackage.Ghost' }],
+      }), 'utf8');
+
+      const { stub, posted, simulateMessage } = makeProvider({ kind: 'project', projectPath });
+      const backend = makeBackend();
+      backend.listAllForProject.mockResolvedValue({ installed: [], implicit: [] });
+
+      const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+      broker.attach();
+      simulateMessage({ type: 'WEBVIEW_READY' });
+      await waitFor(() => posted.some((m) => m.type === 'INSTALLED_PACKAGES'));
+
+      const msg = posted.find((m) => m.type === 'INSTALLED_PACKAGES') as any;
+      expect(msg.packages).toEqual([]);
+      expect(msg.unresolved).toEqual([expect.objectContaining({
+        id: 'Example.NoSuchPackage.Ghost', resolvedVersion: '1.0.0', unresolved: expect.objectContaining({ code: 'NU1101' }),
+      })]);
+    } finally {
+      await fsPromises.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('still sends the list when the unresolved references cannot be read (#138)', async () => {
+    const spy = jest.spyOn(unresolvedModule, 'unresolvedReferences').mockRejectedValue(new Error('EACCES'));
+    const { stub, posted, simulateMessage } = makeProvider(PROJECT_SCOPE);
+    const backend = makeBackend();
+    backend.listAllForProject.mockResolvedValue({ installed: [makeInstalledPkg('Serilog', '/p/App.csproj')], implicit: [] });
+
+    const broker = new WebviewMessageBroker(stub, backend, makeSolutionParser(), makeConfigResolver(), logger);
+    broker.attach();
+    simulateMessage({ type: 'WEBVIEW_READY' });
+    await waitFor(() => posted.some((m) => m.type === 'INSTALLED_PACKAGES'));
+
+    const msg = posted.find((m) => m.type === 'INSTALLED_PACKAGES') as any;
+    expect(msg.packages.map((p: any) => p.id)).toEqual(['Serilog']);
+    expect(msg.unresolved).toEqual([]);
+    spy.mockRestore();
   });
 
   it('reports a package restored with no compile asset for the project TFM as a Problems diagnostic (#107)', async () => {

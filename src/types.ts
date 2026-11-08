@@ -52,6 +52,26 @@ export interface ScopeChoices {
 // Packages
 // ─────────────────────────────────────────────
 
+/**
+ * Why a reference the project declares has no entry in the restore graph (#138).
+ * Present on an `InstalledPackage` only for such a reference, which lives in its
+ * own list: it is not installed, and nothing that reads the installed list
+ * (updates, groups, the dependents check) is meant to see it.
+ */
+export interface UnresolvedReference {
+  /** The restore log's code — `NU1101` (no such package), `NU1102` (no such version), … */
+  code?: string;
+  /** The log's own wording. */
+  message?: string;
+  /** The target frameworks it failed for. */
+  frameworks?: string[];
+  /**
+   * Restore has not run since the reference was added: the project file is
+   * newer than what restore last wrote, so there is no reason to give yet.
+   */
+  notRestored?: boolean;
+}
+
 export interface InstalledPackage {
   id: string;
   /** Version explicitly requested in .csproj / project file */
@@ -71,6 +91,8 @@ export interface InstalledPackage {
   dependencies?: string[];
   /** TFM from `dotnet list` (`net8.0`). RID is not in list JSON. */
   framework?: string;
+  /** Set only on a reference restore could not resolve; `resolvedVersion` then holds the declared version (#138). */
+  unresolved?: UnresolvedReference;
 }
 
 export type VulnerabilitySeverity = 'critical' | 'high' | 'moderate' | 'low' | 'unknown';

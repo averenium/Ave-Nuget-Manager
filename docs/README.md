@@ -11,6 +11,7 @@
 | [Протокол повідомлень](protocol.md) | `messages.ts`, `webviewMessageBroker.ts` |
 | [Install, restore-fail і rollback](install-and-rollback.md) | `dotnet add`, NU1605, snapshot csproj, `onFailedUpdate` |
 | [Залежні, що мусять рухатись разом](dependent-cascade.md) | `assetsEdgeTable.ts`, `dependentCascade*.ts`, `cascadeResult.ts`, попап і сторінка (#109) |
+| [Посилання, яке restore не розв'язав](unresolved-references.md) | `restoreOutcome.ts`, `declaredReferences.ts`, `unresolvedReferences.ts`, секція Unresolved в `InstalledList.tsx` |
 | [Пакетні оновлення](batch-updates.md) | Update all, родини `Microsoft.**.**`, вкладка Groups |
 | [Вразливості](vulnerabilities.md) | `dotnet list --vulnerable`, користувацький скрипт, ⚠ у Packages |
 | [Backend і CLI](backend.md) | `INuGetBackend`, `cliBackend.ts`, `cliRunner.ts`, `concurrency.ts` |

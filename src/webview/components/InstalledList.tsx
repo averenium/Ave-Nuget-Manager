@@ -45,7 +45,54 @@ function withUnionedDeps(entries: InstalledPackage[]): InstalledPackage {
   return deps.length > 0 ? { ...entries[0], dependencies: deps } : entries[0];
 }
 
+/**
+ * References the projects declare that restore could not resolve (#138): a
+ * section of its own above Installed, with the same rows, only when there is one.
+ * It cannot be a state on the Installed rows: those come from the restore graph,
+ * and a reference that never made it into the graph is not in it.
+ */
+function UnresolvedList() {
+  const { state, dispatch } = useNugetManager();
+  const { unresolved, searchQuery, isLoadingPackages } = state.packages;
+  const packageSourceMapping = state.sources.snapshot?.packageSourceMapping ?? [];
+  if (isLoadingPackages) return null;
+
+  const grouped = groupById(unresolved.filter((pkg) => matchesQuery(pkg.id, searchQuery)));
+  const rows = [...grouped.values()]
+    .map((entries) => entries[0])
+    .sort((a, b) => a.id.localeCompare(b.id));
+  if (rows.length === 0) return null;
+
+  return (
+    <section className="pkg-section" aria-label="Unresolved references">
+      <div className="pkg-section__header">Unresolved <span>{rows.length}</span></div>
+      <div className="pkg-section__list" role="listbox" aria-label="Unresolved references list">
+        {rows.map((pkg) => (
+          <PackageRow
+            key={pkg.id}
+            pkg={pkg}
+            kind="installed"
+            selected={state.detail.selectedPackageId === pkg.id}
+            allProjectEntries={grouped.get(pkg.id.toLowerCase())}
+            packageSourceMapping={packageSourceMapping}
+            onClick={() => dispatch({ type: 'SELECT_PACKAGE', packageId: pkg.id })}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function InstalledList() {
+  return (
+    <>
+      <UnresolvedList />
+      <InstalledSection />
+    </>
+  );
+}
+
+function InstalledSection() {
   const { state, dispatch } = useNugetManager();
   const { installed, implicit, searchQuery, isLoadingPackages, vulnerabilities, blockedPackages } = state.packages;
   const packageSourceMapping = state.sources.snapshot?.packageSourceMapping ?? [];
